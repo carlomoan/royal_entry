@@ -13,6 +13,13 @@ function resolvePageMeta(pathname: string) {
     };
   }
 
+  if (pathname.startsWith("/events/") && pathname.endsWith("/cards")) {
+    return {
+      title: "Invitation Card Studio",
+      subtitle: "Design branded guest cards, QR access and reminder flow",
+    };
+  }
+
   if (pathname.startsWith("/events/") && pathname.includes("/broadcast")) {
     return {
       title: "Broadcast center",
@@ -48,10 +55,38 @@ function resolvePageMeta(pathname: string) {
     };
   }
 
+  if (pathname.startsWith("/platform")) {
+    return {
+      title: "Platform control center",
+      subtitle: "Manage customer accounts, payments and SaaS operations",
+    };
+  }
+
   if (pathname.startsWith("/payments")) {
     return {
       title: "Payments",
       subtitle: "Follow collections, receipts and status updates",
+    };
+  }
+
+  if (pathname.startsWith("/reports")) {
+    return {
+      title: "Reports",
+      subtitle: "Workspace summaries and downloadable CSV exports",
+    };
+  }
+
+  if (pathname.startsWith("/audit")) {
+    return {
+      title: "Audit log",
+      subtitle: "Security trail of every authenticated action",
+    };
+  }
+
+  if (pathname.startsWith("/settings")) {
+    return {
+      title: "Settings",
+      subtitle: "Organization profile, team members and roles",
     };
   }
 

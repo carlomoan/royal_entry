@@ -1,0 +1,191 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.55s
+     Running `backend/target/debug/royalentry`
+  [2m2026-06-24T13:15:57.995759Z[0m [32m INFO[0m [1;32mroyalentry[0m[32m: [32mStarting RoyalEntry Backend[0m
+    [2;3mat[0m src/main.rs:25 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:15:57.996748Z[0m [32m INFO[0m [1;32mroyalentry[0m[32m: [32mConfiguration loaded: RoyalEntry in development mode[0m
+    [2;3mat[0m src/main.rs:28 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:15:57.996972Z[0m [32m INFO[0m [1;32mroyalentry[0m[32m: [32mConnecting to PostgreSQL database...[0m
+    [2;3mat[0m src/main.rs:34 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:16:00.043553Z[0m [32m INFO[0m [1;32msqlx::postgres::notice[0m[32m: [32mrelation "_sqlx_migrations" already exists, skipping[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-postgres-0.8.6/src/connection/stream.rs:185 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:16:01.660878Z[0m [32m INFO[0m [1;32mroyalentry_backend::services::bootstrap[0m[32m: [32mDefault admin user already exists, [1;32memail[0m[32m: admin@foctek.co.tz[0m
+    [2;3mat[0m src/services/bootstrap.rs:33 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:16:01.661116Z[0m [32m INFO[0m [1;32mroyalentry[0m[32m: [32mDatabase connected, migrations applied, and auth bootstrap completed[0m
+    [2;3mat[0m src/main.rs:38 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:16:01.688531Z[0m [32m INFO[0m [1;32mroyalentry[0m[32m: [32mServer listening on http://127.0.0.1:3001[0m
+    [2;3mat[0m src/main.rs:60 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-24T13:18:26.713469Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/auth/login, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.363711Z[0m [32m INFO[0m [1;32mroyalentry_backend::handlers::auth[0m[32m: [32mUser logged in successfully, [1;32muser_id[0m[32m: d258cc38-dc68-4c98-bf60-20c9e4997ea3, [1;32mlogin[0m[32m: admin, [1;32memail[0m[32m: admin@foctek.co.tz[0m
+    [2;3mat[0m src/handlers/auth.rs:100 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/auth/login, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.365252Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 5652 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/auth/login, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.365925Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/auth/login, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.383041Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /health, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.383602Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 0 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /health, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.384152Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /health, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.390885Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.412989Z[0m [32m INFO[0m [1;32mroyalentry_backend::repository::event_repository[0m[32m: [32mEvent created, [1;32mevent_id[0m[32m: 22fe3903-de19-4707-b676-a98000ed030d, [1;32morg_id[0m[32m: 00000000-0000-0000-0000-000000000000, [1;32mtitle[0m[32m: Smoke Test Event 8ea2b8ed[0m
+    [2;3mat[0m src/repository/event_repository.rs:68 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.413618Z[0m [32m INFO[0m [1;32mroyalentry_backend::handlers::event[0m[32m: [32mEvent created, [1;32muser_id[0m[32m: 00000000-0000-0000-0000-000000000000, [1;32mevent_id[0m[32m: 22fe3903-de19-4707-b676-a98000ed030d, [1;32mtitle[0m[32m: Smoke Test Event 8ea2b8ed[0m
+    [2;3mat[0m src/handlers/event.rs:64 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.414738Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 23 ms, [1;32mstatus[0m[32m: 201[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.415444Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:32.424670Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/guests, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.477686Z[0m [32m INFO[0m [1;32mroyalentry_backend::repository::guest_repository[0m[32m: [32mGuest created, [1;32mguest_id[0m[32m: cfdf0c1e-3b38-43df-8409-09d724ed2430, [1;32mevent_id[0m[32m: 22fe3903-de19-4707-b676-a98000ed030d, [1;32mphone[0m[32m: 255700000123[0m
+    [2;3mat[0m src/repository/guest_repository.rs:50 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/guests, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.477941Z[0m [32m INFO[0m [1;32mroyalentry_backend::handlers::guest[0m[32m: [32mGuest added to event, [1;32mevent_id[0m[32m: 22fe3903-de19-4707-b676-a98000ed030d, [1;32mguest_id[0m[32m: cfdf0c1e-3b38-43df-8409-09d724ed2430, [1;32mphone[0m[32m: 255700000123[0m
+    [2;3mat[0m src/handlers/guest.rs:126 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/guests, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.478575Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 1054 ms, [1;32mstatus[0m[32m: 201[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/guests, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.478962Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/guests, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.485735Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/invitations/generate, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.515098Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 29 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/invitations/generate, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.515593Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/invitations/generate, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.522201Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/scan, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.547055Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 25 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/scan, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.547805Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/scan, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.555289Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/scan-stats, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.578910Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 24 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/scan-stats, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.579518Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/scan-stats, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.586020Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.620968Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 35 ms, [1;32mstatus[0m[32m: 201[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.621513Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:33.630472Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango/reminders, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:36.060047Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 2429 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango/reminders, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:36.060926Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango/reminders, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:36.069660Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango/reminders, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:36.081985Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 12 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango/reminders, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:36.082633Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/michango/reminders, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:36.089884Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(2)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcast, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:37.828640Z[0m [32m INFO[0m [1;32mroyalentry_backend::handlers::broadcast[0m[32m: [32mBroadcast processed, [1;32mevent_id[0m[32m: 22fe3903-de19-4707-b676-a98000ed030d, [1;32mcampaign_id[0m[32m: 3342a07f-4d70-4ba8-9c8a-fcacd317a91c, [1;32mchannel[0m[32m: sms, [1;32mtarget[0m[32m: all, [1;32msent[0m[32m: 0, [1;32mfailed[0m[32m: 1[0m
+    [2;3mat[0m src/handlers/broadcast.rs:366 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcast, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:37.829728Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 1739 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcast, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:37.830877Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: POST, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcast, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:37.840059Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_request[0m[34m: [34mstarted processing request[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_request.rs:80 [2;3mon[0m ThreadId(5)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcasts/3342a07f-4d70-4ba8-9c8a-fcacd317a91c/deliveries, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:37.865475Z[0m [32m INFO[0m [1;32mtower_http::trace::on_response[0m[32m: [32mfinished processing request, [1;32mlatency[0m[32m: 25 ms, [1;32mstatus[0m[32m: 200[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_response.rs:114 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcasts/3342a07f-4d70-4ba8-9c8a-fcacd317a91c/deliveries, [1mversion[0m: HTTP/1.1
+
+  [2m2026-06-24T13:18:37.866182Z[0m [34mDEBUG[0m [1;34mtower_http::trace::on_eos[0m[34m: [34mend of stream, [1;34mstream_duration[0m[34m: 0 ms[0m
+    [2;3mat[0m /home/andrew/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.7.0/src/trace/on_eos.rs:103 [2;3mon[0m ThreadId(4)
+    [2;3min[0m tower_http::trace::make_span::[1mrequest[0m [2;3mwith[0m [1mmethod[0m: GET, [1muri[0m: /api/v1/events/22fe3903-de19-4707-b676-a98000ed030d/broadcasts/3342a07f-4d70-4ba8-9c8a-fcacd317a91c/deliveries, [1mversion[0m: HTTP/1.1
+

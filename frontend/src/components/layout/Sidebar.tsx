@@ -10,12 +10,17 @@ import {
   CreditCard,
   LayoutDashboard,
   LogOut,
+  ScrollText,
+  Settings2,
   Sparkles,
+  BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { cn } from "@/utils/cn";
+import { isPlatformAdmin, isAccountAdmin } from "@/utils/roles";
 
-const navItems = [
+const baseNavItems = [
   {
     to: "/dashboard",
     icon: LayoutDashboard,
@@ -26,7 +31,7 @@ const navItems = [
     to: "/events",
     icon: CalendarDays,
     label: "Events",
-    description: "Guests, scanner, broadcasts and more",
+    description: "Guests, scanner, invitations and campaigns",
   },
   {
     to: "/payments",
@@ -34,10 +39,46 @@ const navItems = [
     label: "Payments",
     description: "Track collections and transactions",
   },
+  {
+    to: "/reports",
+    icon: BarChart3,
+    label: "Reports",
+    description: "Summaries and CSV exports across events",
+  },
 ];
 
 export default function Sidebar() {
   const { logout, user } = useAuth();
+
+  const navItems = [
+    ...baseNavItems,
+    ...(isAccountAdmin(user?.role)
+      ? [
+          {
+            to: "/audit",
+            icon: ScrollText,
+            label: "Audit log",
+            description: "Track every action across the workspace",
+          },
+        ]
+      : []),
+    ...(isPlatformAdmin(user?.role)
+      ? [
+          {
+            to: "/platform",
+            icon: Settings2,
+            label: "Platform",
+            description: "Manage customer accounts and SaaS operations",
+          },
+        ]
+      : []),
+    {
+      to: "/settings",
+      icon: ShieldCheck,
+      label: "Settings",
+      description: "Organization profile, team and roles",
+    },
+  ];
 
   return (
     <aside className="flex w-72 flex-col rounded-[30px] border border-white/10 bg-gradient-to-b from-navy-950 via-navy-900 to-navy-800 p-4 text-white shadow-2xl shadow-navy-900/30">
@@ -66,14 +107,14 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="mt-5 flex-1 space-y-2">
+      <nav className="mt-5 flex-1 space-y-2 overflow-y-auto pr-1">
         {navItems.map(({ to, icon: Icon, label, description }) => (
           <NavLink
             key={to}
             to={to}
             className={({ isActive }) =>
               cn(
-                "group flex items-center gap-3 rounded-2xl px-4 py-3.5 transition-all duration-200",
+                "group flex items-start gap-3 rounded-2xl px-4 py-3.5 transition-all duration-200",
                 isActive
                   ? "bg-gradient-to-r from-gold-400 to-gold-500 text-navy-950 shadow-lg shadow-gold-500/30"
                   : "text-slate-200 hover:bg-white/8 hover:text-white",
@@ -92,11 +133,11 @@ export default function Sidebar() {
                 >
                   <Icon className="h-5 w-5" />
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 pt-0.5">
                   <p className="text-sm font-semibold">{label}</p>
                   <p
                     className={cn(
-                      "truncate text-xs",
+                      "mt-1 whitespace-normal break-words pr-2 text-xs leading-5",
                       isActive ? "text-navy-900/75" : "text-slate-400",
                     )}
                   >

@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod auth;
 pub mod broadcast;
 pub mod event;
@@ -5,8 +6,13 @@ pub mod guest;
 pub mod invitations;
 pub mod michango;
 pub mod payment;
+pub mod platform;
+pub mod public_invitation;
+pub mod reports;
 pub mod scanner;
+pub mod settings;
 
+pub use audit::*;
 pub use auth::*;
 pub use broadcast::*;
 pub use event::*;
@@ -14,4 +20,8 @@ pub use guest::*;
 pub use invitations::*;
 pub use michango::*;
 pub use payment::*;
+pub use platform::*;
+pub use public_invitation::*;
+pub use reports::*;
 pub use scanner::*;
+pub use settings::*;

@@ -14,7 +14,13 @@ import Guests from "@/pages/Guests";
 import Michango from "@/pages/Michango";
 import Broadcast from "@/pages/Broadcast";
 import Scanner from "@/pages/Scanner";
+import CardStudio from "@/pages/CardStudio";
+import Platform from "@/pages/Platform";
 import Payments from "@/pages/Payments";
+import Reports from "@/pages/Reports";
+import Audit from "@/pages/Audit";
+import Settings from "@/pages/Settings";
+import PublicInvitation from "@/pages/PublicInvitation";
 
 // Guard: redirect to /login if not authenticated
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -38,6 +44,7 @@ export default function App() {
       >
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/invite/:code" element={<PublicInvitation />} />
 
           <Route
             path="/"
@@ -55,7 +62,12 @@ export default function App() {
             <Route path="events/:id/michango" element={<Michango />} />
             <Route path="events/:id/broadcast" element={<Broadcast />} />
             <Route path="events/:id/scanner" element={<Scanner />} />
+            <Route path="events/:id/cards" element={<CardStudio />} />
+            <Route path="platform" element={<Platform />} />
             <Route path="payments" element={<Payments />} />
+            <Route path="reports" element={<Reports />} />
+            <Route path="audit" element={<Audit />} />
+            <Route path="settings" element={<Settings />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

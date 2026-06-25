@@ -5,7 +5,10 @@ use axum::{
 };
 use std::sync::Arc;
 use crate::{
-    handlers::{auth, broadcast, event, guest, invitations, michango, payment, scanner},
+    handlers::{
+        audit, auth, broadcast, event, guest, invitations, michango, payment, platform,
+        public_invitation, reports, scanner, settings,
+    },
     middleware::auth::auth_middleware,
     AppState,
 };
@@ -17,6 +20,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/auth/register", post(auth::register))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/refresh", post(auth::refresh_token))
+        .route(
+            "/api/v1/public/invitations/{code}",
+            get(public_invitation::get_public_invitation),
+        )
+        .route(
+            "/api/v1/public/invitations/{code}/rsvp",
+            post(public_invitation::submit_public_rsvp),
+        )
+        .route(
+            "/api/v1/public/g/{code}",
+            get(public_invitation::get_public_invitation),
+        )
+        .route(
+            "/api/v1/public/g/{code}/rsvp",
+            post(public_invitation::submit_public_rsvp),
+        )
         // M-Pesa callback — public, called by Safaricom (no JWT)
         .route("/api/v1/payments/mpesa/callback", post(payment::mpesa_callback));
 
@@ -74,6 +93,42 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/payments/{id}/status", get(payment::get_payment_status))
         .route("/api/v1/payments", get(payment::list_payments));
 
+    let platform_routes = Router::new()
+        .route("/api/v1/platform/summary", get(platform::get_platform_summary))
+        .route("/api/v1/platform/plans", get(platform::list_plans))
+        .route("/api/v1/platform/customers", get(platform::list_customers))
+        .route(
+            "/api/v1/platform/customers/{id}",
+            get(platform::get_customer_detail).put(platform::update_customer_status),
+        )
+        .route(
+            "/api/v1/platform/customers/{id}/subscription",
+            put(platform::update_customer_subscription),
+        )
+        .route(
+            "/api/v1/platform/customers/{id}/invoices",
+            post(platform::create_customer_invoice),
+        )
+        .route(
+            "/api/v1/platform/invoices/{id}/mark-paid",
+            post(platform::mark_invoice_paid),
+        );
+
+    let settings_routes = Router::new()
+        .route("/api/v1/settings/system", get(settings::get_system_settings).put(settings::update_system_settings))
+        .route("/api/v1/settings/account", get(settings::get_account_settings).put(settings::update_account_settings))
+        .route("/api/v1/settings/roles", get(settings::get_role_catalog))
+        .route("/api/v1/settings/users", post(settings::create_account_user))
+        .route("/api/v1/settings/users/{id}", put(settings::update_account_user));
+
+    let audit_routes = Router::new()
+        .route("/api/v1/audit/logs", get(audit::list_audit_logs))
+        .route("/api/v1/audit/export", get(audit::export_audit_logs));
+
+    let report_routes = Router::new()
+        .route("/api/v1/reports/summary", get(reports::report_summary))
+        .route("/api/v1/reports/export", get(reports::export_report));
+
     // Merge all protected routes and apply the JWT middleware
     let protected = auth_routes
         .merge(event_routes)
@@ -83,6 +138,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(michango_routes)
         .merge(broadcast_routes)
         .merge(payment_routes)
+        .merge(platform_routes)
+        .merge(settings_routes)
+        .merge(audit_routes)
+        .merge(report_routes)
         .layer(middleware::from_fn(auth_middleware));
 
     public_routes

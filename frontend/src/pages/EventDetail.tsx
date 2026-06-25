@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Banknote,
+  Palette,
   QrCode,
   Radio,
   ScanLine,
@@ -126,6 +127,15 @@ export default function EventDetail() {
                     <ScanLine className="h-4 w-4" /> Open scanner
                   </Button>
                 </Link>
+                <Link to={`/events/${id}/cards`}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="border-white/15 bg-white/10 text-white hover:bg-white/15 hover:text-white"
+                  >
+                    <Palette className="h-4 w-4" /> Card studio
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
@@ -194,18 +204,27 @@ export default function EventDetail() {
           <div className="space-y-4">
             <div className="rounded-3xl border border-dashed border-gold-300 bg-gradient-to-br from-gold-50 to-white p-4">
               <p className="text-sm font-semibold text-slate-900">
-                Invitation QR links now use a full scan URL
+                Invitations now have both a public guest-card link and a
+                scanner-ready QR URL
               </p>
               <p className="mt-1 text-sm text-slate-500">
-                Each invite opens the event scanner page with the guest code
-                already attached.
+                Guests open a public invitation page, while door staff can still
+                scan the QR payload into the authenticated scanner workspace.
               </p>
-              <Link
-                to={`/events/${id}/scanner`}
-                className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-gold-700 hover:text-gold-800"
-              >
-                Open scanner workspace <ArrowUpRight className="h-4 w-4" />
-              </Link>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Link
+                  to={`/events/${id}/scanner`}
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-gold-700 hover:text-gold-800"
+                >
+                  Open scanner workspace <ArrowUpRight className="h-4 w-4" />
+                </Link>
+                <Link
+                  to={`/events/${id}/cards`}
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-gold-700 hover:text-gold-800"
+                >
+                  Open card studio <ArrowUpRight className="h-4 w-4" />
+                </Link>
+              </div>
             </div>
 
             {recentInvitations.length === 0 ? (
@@ -224,17 +243,28 @@ export default function EventDetail() {
                       <button
                         type="button"
                         onClick={() => {
-                          navigator.clipboard.writeText(invitation.scan_url);
-                          toast.success("Invitation scan link copied");
+                          navigator.clipboard.writeText(invitation.public_url);
+                          toast.success("Guest invitation link copied");
                         }}
                         className="text-xs font-semibold text-gold-700 hover:text-gold-800"
                       >
-                        Copy link
+                        Copy guest link
                       </button>
                     </div>
-                    <p className="mt-3 break-all text-sm text-slate-600">
-                      {invitation.scan_url}
-                    </p>
+                    <div className="mt-3 space-y-2 text-sm text-slate-600">
+                      <p className="break-all">
+                        <span className="font-semibold text-slate-900">
+                          Guest:
+                        </span>{" "}
+                        {invitation.public_url}
+                      </p>
+                      <p className="break-all">
+                        <span className="font-semibold text-slate-900">
+                          Scanner:
+                        </span>{" "}
+                        {invitation.scan_url}
+                      </p>
+                    </div>
                   </div>
                 ))}
               </div>

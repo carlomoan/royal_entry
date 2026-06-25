@@ -10,6 +10,7 @@ use tracing::Level;
 use royalentry_backend::{
     config::Config,
     db::Database,
+    middleware::audit::audit_middleware,
     routes,
     services::BootstrapService,
     utils,
@@ -52,7 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(trace_layer)
         .layer(cors);
 
-    let app = routes::create_router(app_state).layer(middleware);
+    let app = routes::create_router(app_state.clone())
+        .layer(axum::middleware::from_fn_with_state(app_state.clone(), audit_middleware))
+        .layer(middleware);
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
