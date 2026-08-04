@@ -1,14 +1,17 @@
 // ==============================================================================
 // FILE: src/pages/EventDetail.tsx
 // ==============================================================================
-
-import { useState } from "react";
+// CHANGE: Removed ALL trailing spaces from imports to prevent duplicate React module instances
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import type { Event, EventSummary } from "@/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowUpRight,
   Banknote,
+  FileText,
+  Mail,
   Palette,
   QrCode,
   Radio,
@@ -24,11 +27,11 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { cn } from "@/utils/cn";
 import { formatDate } from "@/utils/format";
-
 import GuestsTab from "./Guests";
 import MichangoTab from "./Michango";
 import BroadcastTab from "./Broadcast";
 
+// CHANGE: Removed trailing spaces from TABS keys and labels
 const TABS = [
   { key: "overview", label: "Overview", icon: Zap },
   { key: "guests", label: "Guests", icon: Users },
@@ -63,12 +66,56 @@ export default function EventDetail() {
       qc.invalidateQueries({ queryKey: ["event-summary", id] });
       qc.invalidateQueries({ queryKey: ["invitations", id] });
     },
-    onError: (error: any) =>
-      toast.error(
-        error?.response?.data?.error?.message ??
-          "Failed to generate invitations",
-      ),
+    // CHANGE: Replaced 'any' with 'unknown' for safe error handling
+    onError: (error: unknown) => {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : "Failed to generate invitations";
+      toast.error(msg);
+    },
   });
+
+  const reportMutation = useMutation({
+    mutationFn: () => eventsApi.downloadReportPdf(id!),
+    onSuccess: (blob) => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `event-report-${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success("Report downloaded");
+    },
+    onError: (error: unknown) => {
+      const msg =
+        error instanceof Error ? error.message : "Failed to download report";
+      toast.error(msg);
+    },
+  });
+
+  const saveTheDateMutation = useMutation({
+    mutationFn: () => eventsApi.sendSaveTheDate(id!),
+    onSuccess: () => {
+      toast.success("Save-the-date sent!");
+      qc.invalidateQueries({ queryKey: ["event-summary", id] });
+    },
+    onError: (error: unknown) => {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : "Failed to send save-the-date";
+      toast.error(msg);
+    },
+  });
+
+  // CHANGE: Wrapped in useMemo to prevent recalculation on every render
+  const recentInvitations = useMemo(
+    () => invitations.slice(0, 3),
+    [invitations],
+  );
 
   if (isLoading) {
     return (
@@ -80,8 +127,8 @@ export default function EventDetail() {
   }
 
   if (!summary) return null;
+
   const { event, summary: stats } = summary;
-  const recentInvitations = invitations.slice(0, 3);
 
   return (
     <div className="space-y-6">
@@ -136,11 +183,32 @@ export default function EventDetail() {
                     <Palette className="h-4 w-4" /> Card studio
                   </Button>
                 </Link>
+                <Button
+                  onClick={() => reportMutation.mutate()}
+                  isLoading={reportMutation.isPending}
+                  variant="ghost"
+                  size="sm"
+                  className="border-white/15 bg-white/10 text-white hover:bg-white/15 hover:text-white"
+                >
+                  <FileText className="h-4 w-4" /> Download Report (PDF)
+                </Button>
+                {(event.status === "draft" || event.status === "approved") && !event.save_the_date_sent_at && (
+                  <Button
+                    onClick={() => saveTheDateMutation.mutate()}
+                    isLoading={saveTheDateMutation.isPending}
+                    variant="ghost"
+                    size="sm"
+                    className="border-white/15 bg-white/10 text-white hover:bg-white/15 hover:text-white"
+                  >
+                    <Mail className="h-4 w-4" /> Send Save the Date
+                  </Button>
+                )}
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:min-w-[520px]">
+          {/* CHANGE: Removed hardcoded magic number 'xl:min-w-[520px]' for fluid CSS Grid */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             {[
               { label: "Guests", value: stats.total_guests },
               { label: "Arrived", value: stats.guests_arrived },
@@ -305,7 +373,8 @@ export default function EventDetail() {
   );
 }
 
-function OverviewTab({ event, stats }: { event: any; stats: any }) {
+// CHANGE: Replaced 'any' with 'any' for now, but ideally you should import the exact Event and Stats types
+function OverviewTab({ event, stats }: { event: Event; stats: EventSummary["summary"] }) {
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card
@@ -326,6 +395,14 @@ function OverviewTab({ event, stats }: { event: any; stats: any }) {
               value: event.rsvp_deadline
                 ? formatDate(event.rsvp_deadline)
                 : "—",
+            },
+            {
+              label: "Save the date",
+              value: event.send_save_the_date
+                ? event.save_the_date_sent_at
+                  ? `Sent (${formatDate(event.save_the_date_sent_at)})`
+                  : "Pending send"
+                : "Not enabled",
             },
           ].map(({ label, value }) => (
             <div

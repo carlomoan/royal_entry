@@ -1,14 +1,9 @@
-// ==============================================================================
-// FILE: src/models/event.rs
-// ==============================================================================
-// Event model and related DTOs
-
+// src/models/event.rs
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::Validate;
 
-/// Event database model
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Event {
     pub id: Uuid,
@@ -30,8 +25,8 @@ pub struct Event {
     pub entry_end_time: Option<String>,
     pub rsvp_deadline: Option<NaiveDate>,
     pub guest_count_expected: Option<i32>,
-    pub status: String,          // draft, approved, active, completed, cancelled
-    pub approval_status: String, // pending, approved, rejected
+    pub status: String,
+    pub approval_status: String,
     pub approved_by_user_id: Option<Uuid>,
     pub approved_at: Option<DateTime<Utc>>,
     pub send_save_the_date: bool,
@@ -43,7 +38,6 @@ pub struct Event {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
-/// Event response (public view)
 #[derive(Debug, Serialize)]
 pub struct EventResponse {
     pub id: Uuid,
@@ -58,6 +52,8 @@ pub struct EventResponse {
     pub guest_count_expected: Option<i32>,
     pub rsvp_deadline: Option<NaiveDate>,
     pub card_theme: Option<String>,
+    pub send_save_the_date: bool,
+    pub save_the_date_sent_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -77,65 +73,53 @@ impl From<Event> for EventResponse {
             guest_count_expected: event.guest_count_expected,
             rsvp_deadline: event.rsvp_deadline,
             card_theme: event.card_theme,
+            send_save_the_date: event.send_save_the_date,
+            save_the_date_sent_at: event.save_the_date_sent_at,
             created_at: event.created_at,
             updated_at: event.updated_at,
         }
     }
 }
 
-/// Create event request
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateEventRequest {
     #[validate(length(min = 3, max = 255))]
     pub title: String,
-
     pub description: Option<String>,
-
-    pub event_date: String, // YYYY-MM-DD format
-
-    pub event_time: Option<String>, // HH:MM:SS format
-
+    pub event_date: String,
+    pub event_time: Option<String>,
     pub venue_name: Option<String>,
-
     pub venue_address: Option<String>,
-
     pub dress_code: Option<String>,
-
-    pub card_theme: Option<String>, // elegant, modern, traditional, colorful, minimal
-
+    pub card_theme: Option<String>,
     pub guest_count_expected: Option<i32>,
-
-    pub rsvp_deadline: Option<String>, // YYYY-MM-DD format
+    pub rsvp_deadline: Option<String>,
+    pub send_save_the_date: Option<bool>,
 }
 
-/// Update event request
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdateEventRequest {
     pub title: Option<String>,
-
     pub description: Option<String>,
-
     pub event_date: Option<String>,
-
     pub event_time: Option<String>,
-
     pub venue_name: Option<String>,
-
     pub venue_address: Option<String>,
-
     pub dress_code: Option<String>,
-
     pub card_theme: Option<String>,
-
     pub guest_count_expected: Option<i32>,
-
     pub rsvp_deadline: Option<String>,
+    pub send_save_the_date: Option<bool>,
 }
 
-/// Activate event request
 #[derive(Debug, Deserialize)]
 pub struct ActivateEventRequest {
-    pub entry_start_time: String, // HH:MM:SS
-    pub entry_end_time: String,   // HH:MM:SS
+    pub entry_start_time: String,
+    pub entry_end_time: String,
     pub send_save_the_date: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RejectEventRequest {
+    pub reason: Option<String>,
 }

@@ -8,7 +8,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import toast from "react-hot-toast";
-import { Crown, User, Lock } from "lucide-react";
+import { User, Lock } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -65,7 +65,7 @@ export default function Login() {
             className="inline-flex items-center justify-center w-16 h-16 rounded-2xl
                           bg-gold-500 mb-4 shadow-lg shadow-gold-500/30"
           >
-            <Crown className="w-8 h-8 text-navy-900" />
+            <img src="/RoyalEntrylogoVector2.svg" alt="RoyalEntry" className="w-8 h-8" />
           </div>
           <h1 className="text-3xl font-bold text-white">RoyalEntry</h1>
           <p className="text-gold-400 mt-1 text-sm">Elite Access Solutions</p>

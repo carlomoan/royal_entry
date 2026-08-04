@@ -71,7 +71,7 @@ pub async fn initiate_mpesa_payment(
         return Err(AppError::BadRequest("Invalid phone number".to_string()));
     }
 
-    let mpesa = MpesaService::new();
+    let mpesa = MpesaService::new(state.clone());
 
     // Build a short reference visible to customer on their M-Pesa screen
     let reference = format!("ROYALENTRY-{}", &payload.package_name.to_uppercase()[..4.min(payload.package_name.len())]);
@@ -221,7 +221,7 @@ pub async fn get_payment_status(
     let mut live_status: Option<String> = None;
     if payment.status == "pending" {
         if let Some(ref cid) = payment.checkout_request_id {
-            let mpesa = MpesaService::new();
+            let mpesa = MpesaService::new(state.clone());
             match mpesa.query_stk_status(cid).await {
                 Ok(q) => {
                     live_status = Some(format!(

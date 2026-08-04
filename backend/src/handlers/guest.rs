@@ -4,15 +4,17 @@
 // HTTP handlers for Guests CRUD
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, Multipart},
     http::StatusCode,
     Extension, Json,
 };
 use std::sync::Arc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
+use csv::ReaderBuilder;
+use std::io::Cursor;
 
 use crate::{
     error::{AppError, AppResult},
@@ -404,3 +406,142 @@ pub async fn guest_count(
         "data": { "total": total }
     })))
 }
+
+// ==============================================================================
+// POST /api/v1/events/:event_id/guests/import
+// ==============================================================================
+
+/// Import guests from CSV file
+///
+/// Expected CSV columns: full_name, phone, email, table_number, guest_category, plus_one_allowed, contact_method
+/// Example:
+/// full_name,phone,email,table_number,guest_category,plus_one_allowed,contact_method
+/// "John Doe","+255700001001","john@example.com","5","VIP",true,whatsapp
+/// "Jane Smith","+255700001002","jane@example.com","3","Regular",false,sms
+///
+/// Returns: { success: true, data: { imported: 2, skipped: 0, errors: [] } }
+pub async fn import_guests_csv(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id)
+        .map_err(|_| AppError::InvalidToken)?;
+
+    assert_event_ownership(&state, event_id, org_id).await?;
+
+    // Extract CSV file from multipart
+    let mut csv_data = None;
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        if field.name() == Some("file") {
+            let data = field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+            csv_data = Some(data);
+            break;
+        }
+    }
+
+    let csv_bytes = csv_data.ok_or_else(|| AppError::BadRequest("No CSV file provided".to_string()))?;
+    let csv_str = String::from_utf8(csv_bytes.to_vec()).map_err(|_| AppError::BadRequest("Invalid UTF-8 in CSV".to_string()))?;
+
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .trim(csv::Trim::All)
+        .from_reader(Cursor::new(csv_str));
+
+    let headers = reader.headers().map_err(|e| AppError::BadRequest(e.to_string()))?.clone();
+
+    // Validate required columns
+    let required = ["full_name", "phone"];
+    for req in required {
+        if !headers.iter().any(|h| h == req) {
+            return Err(AppError::BadRequest(format!("Missing required column: {}", req)));
+        }
+    }
+
+    let mut guests_to_import = Vec::new();
+    let mut errors = Vec::new();
+    let mut row_num = 1;
+
+    for result in reader.deserialize() {
+        row_num += 1;
+        let record: Result<CreateGuestRequest, _> = result;
+        match record {
+            Ok(mut guest) => {
+                // Validate
+                if let Err(e) = guest.validate() {
+                    errors.push(format!("Row {}: {}", row_num, e));
+                    continue;
+                }
+                guests_to_import.push(guest);
+            }
+            Err(e) => {
+                errors.push(format!("Row {}: {}", row_num, e));
+            }
+        }
+    }
+
+    if guests_to_import.is_empty() && errors.is_empty() {
+        return Err(AppError::BadRequest("No valid guests found in CSV".to_string()));
+    }
+
+    // Bulk insert valid guests
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut import_errors = Vec::new();
+
+    for guest in guests_to_import {
+        // Check for duplicate phone in this event
+        let existing = GuestRepository::get_by_phone(state.db.pool(), event_id, &guest.phone).await?;
+        if existing.is_some() {
+            skipped += 1;
+            import_errors.push(format!("Phone {} already exists in this event", guest.phone));
+            continue;
+        }
+
+        match GuestRepository::create(state.db.pool(), event_id, &guest).await {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                skipped += 1;
+                import_errors.push(format!("Failed to import guest {}: {}", guest.full_name, e));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "success": true,
+        "data": {
+            "imported": imported,
+            "skipped": skipped,
+            "errors": import_errors
+        }
+    })))
+}
+
+// ==============================================================================
+// GET /api/v1/events/:event_id/guests/template
+// ==============================================================================
+
+/// Download CSV template for guest import
+pub async fn download_guest_template(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+) -> AppResult<axum::response::Response> {
+    let org_id = Uuid::parse_str(&claims.org_id)
+        .map_err(|_| AppError::InvalidToken)?;
+
+    assert_event_ownership(&state, event_id, org_id).await?;
+
+    let csv = "full_name,phone,email,table_number,guest_category,plus_one_allowed,contact_method\nJohn Doe,+255700001001,john@example.com,5,VIP,true,whatsapp\nJane Smith,+255700001002,jane@example.com,3,Regular,false,sms\n";
+
+    let filename = format!("guest_import_template_{}.csv", event_id);
+
+    Ok(axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/csv")
+        .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
+        .body(csv.into())
+        .unwrap())
+}
+

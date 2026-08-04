@@ -1,28 +1,15 @@
 // ==============================================================================
 // FILE: src/services/mpesa.rs
 // ==============================================================================
-// Safaricom Daraja API integration for Tanzania M-Pesa payments.
-//
-// Flows implemented:
-//   1. OAuth token     → POST oauth/v1/generate?grant_type=client_credentials
-//   2. STK Push        → POST mpesa/stkpush/v1/processrequest
-//   3. Status query    → POST mpesa/stkpushquery/v1/query
-//   4. Callback verify → Validate incoming webhook from Safaricom
-//
-// All amounts are in TZS (Tanzanian Shillings).
-
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-
 use crate::error::{AppError, AppResult};
-
-// ==============================================================================
-// Environment helpers
-// ==============================================================================
+use crate::AppState;
 
 fn env(key: &str) -> AppResult<String> {
     std::env::var(key).map_err(|_| {
@@ -31,18 +18,12 @@ fn env(key: &str) -> AppResult<String> {
     })
 }
 
-// ==============================================================================
-// Request / Response types
-// ==============================================================================
-
-/// Internal cached OAuth token
 #[derive(Debug, Clone)]
 struct CachedToken {
     token: String,
     expires_at: Instant,
 }
 
-/// STK Push initiation request
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct StkPushRequest {
@@ -51,15 +32,14 @@ struct StkPushRequest {
     timestamp: String,
     transaction_type: String,
     amount: u64,
-    party_a: String,   // Customer phone
-    party_b: String,   // Shortcode
+    party_a: String,
+    party_b: String,
     phone_number: String,
     call_back_url: String,
     account_reference: String,
     transaction_desc: String,
 }
 
-/// STK Push response from Daraja
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct StkPushResponse {
@@ -70,7 +50,6 @@ pub struct StkPushResponse {
     pub customer_message: String,
 }
 
-/// STK Query request
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 struct StkQueryRequest {
@@ -80,7 +59,6 @@ struct StkQueryRequest {
     checkout_request_id: String,
 }
 
-/// STK Query response
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct StkQueryResponse {
@@ -92,14 +70,12 @@ pub struct StkQueryResponse {
     pub result_desc: String,
 }
 
-/// Daraja OAuth token response
 #[derive(Debug, Deserialize)]
 struct OAuthResponse {
     access_token: String,
     expires_in: String,
 }
 
-/// Callback payload sent by Safaricom to our webhook
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MpesaCallback {
@@ -135,7 +111,6 @@ pub struct CallbackItem {
     pub value: Option<serde_json::Value>,
 }
 
-/// Extracted payment details from a successful callback
 #[derive(Debug)]
 pub struct MpesaPaymentResult {
     pub checkout_request_id: String,
@@ -145,52 +120,39 @@ pub struct MpesaPaymentResult {
     pub transaction_date: String,
 }
 
-// ==============================================================================
-// MpesaService
-// ==============================================================================
-
+#[derive(Clone)]
 pub struct MpesaService {
     client: Client,
-    token_cache: Mutex<Option<CachedToken>>,
+    token_cache: Arc<Mutex<Option<CachedToken>>>,
 }
 
 impl MpesaService {
-    pub fn new() -> Self {
+    pub fn new(_state: Arc<AppState>) -> Self {
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("Failed to build HTTP client"),
-            token_cache: Mutex::new(None),
+            token_cache: Arc::new(Mutex::new(None)),
         }
     }
 
-    // ========================================================================
-    // Helpers
-    // ========================================================================
-
-    /// Return the Daraja base URL depending on environment variable
     fn base_url() -> AppResult<String> {
         let env_str = env("MPESA_ENVIRONMENT").unwrap_or_else(|_| "sandbox".to_string());
         Ok(match env_str.as_str() {
             "production" => "https://api.safaricom.co.tz".to_string(),
-            _            => "https://sandbox.safaricom.co.tz".to_string(),
+            _ => "https://sandbox.safaricom.co.tz".to_string(),
         })
     }
 
-    /// Generate STK password: base64(shortcode + passkey + timestamp)
     fn stk_password(shortcode: &str, passkey: &str, timestamp: &str) -> String {
         STANDARD.encode(format!("{}{}{}", shortcode, passkey, timestamp))
     }
 
-    /// Current timestamp in YYYYMMDDHHmmss format (Daraja requirement)
     fn timestamp() -> String {
         Utc::now().format("%Y%m%d%H%M%S").to_string()
     }
 
-    /// Normalize phone number to international format without leading +
-    /// +255700001001 → 255700001001
-    /// 0700001001    → 255700001001
     pub fn normalize_phone(phone: &str) -> String {
         let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
         if digits.starts_with("255") {
@@ -202,29 +164,25 @@ impl MpesaService {
         }
     }
 
-    // ========================================================================
-    // OAuth token (cached, auto-refreshed)
-    // ========================================================================
-
-    /// Get a valid OAuth bearer token, refreshing if expired.
     pub async fn access_token(&self) -> AppResult<String> {
         let mut cache = self.token_cache.lock().await;
-
-        // Return cached token if still valid (with 60s buffer)
         if let Some(ref cached) = *cache {
             if cached.expires_at > Instant::now() + Duration::from_secs(60) {
                 return Ok(cached.token.clone());
             }
         }
 
-        // Fetch new token
-        let consumer_key    = env("MPESA_CONSUMER_KEY")?;
+        let consumer_key = env("MPESA_CONSUMER_KEY")?;
         let consumer_secret = env("MPESA_CONSUMER_SECRET")?;
-        let credentials     = STANDARD.encode(format!("{}:{}", consumer_key, consumer_secret));
-        let base_url        = Self::base_url()?;
+        let credentials = STANDARD.encode(format!("{}:{}", consumer_key, consumer_secret));
+        let base_url = Self::base_url()?;
 
-        let response = self.client
-            .get(format!("{}/oauth/v1/generate?grant_type=client_credentials", base_url))
+        let response = self
+            .client
+            .get(format!(
+                "{}/oauth/v1/generate?grant_type=client_credentials",
+                base_url
+            ))
             .header("Authorization", format!("Basic {}", credentials))
             .send()
             .await
@@ -235,11 +193,12 @@ impl MpesaService {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body   = response.text().await.unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             tracing::error!(status = %status, body = %body, "M-Pesa OAuth failed");
-            return Err(AppError::MpesaError(
-                format!("OAuth failed with status {}", status),
-            ));
+            return Err(AppError::MpesaError(format!(
+                "OAuth failed with status {}",
+                status
+            )));
         }
 
         let oauth: OAuthResponse = response.json().await.map_err(|e| {
@@ -248,32 +207,17 @@ impl MpesaService {
         })?;
 
         let expires_secs: u64 = oauth.expires_in.parse().unwrap_or(3600);
-
         *cache = Some(CachedToken {
             token: oauth.access_token.clone(),
             expires_at: Instant::now() + Duration::from_secs(expires_secs),
         });
-
-        tracing::debug!("M-Pesa OAuth token refreshed (expires in {}s)", expires_secs);
-
+        tracing::debug!(
+            "M-Pesa OAuth token refreshed (expires in {}s)",
+            expires_secs
+        );
         Ok(oauth.access_token)
     }
 
-    // ========================================================================
-    // STK Push (Lipa Na M-Pesa)
-    // ========================================================================
-
-    /// Initiate an STK Push payment request.
-    ///
-    /// Sends a payment prompt to the customer's phone.
-    /// The customer enters their M-Pesa PIN to confirm.
-    /// Safaricom calls our webhook when complete.
-    ///
-    /// # Parameters
-    /// - `phone`     : Customer phone e.g. "+255700001001"
-    /// - `amount_tsh`: Amount in full Tanzanian Shillings (not cents)
-    /// - `reference` : Order/invoice reference shown to customer
-    /// - `description`: Short description shown on customer's phone
     pub async fn stk_push(
         &self,
         phone: &str,
@@ -281,21 +225,21 @@ impl MpesaService {
         reference: &str,
         description: &str,
     ) -> AppResult<StkPushResponse> {
-        let shortcode   = env("MPESA_SHORTCODE")?;
-        let passkey     = env("MPESA_PASSKEY")?;
-        let callback    = env("APP_URL")? + "/api/v1/payments/mpesa/callback";
-        let base_url    = Self::base_url()?;
-        let timestamp   = Self::timestamp();
-        let password    = Self::stk_password(&shortcode, &passkey, &timestamp);
-        let phone_norm  = Self::normalize_phone(phone);
-
-        // Clamp reference to 12 chars (Daraja limit)
+        let shortcode = env("MPESA_SHORTCODE")?;
+        let passkey = env("MPESA_PASSKEY")?;
+        let callback = format!(
+            "{}/api/v1/payments/mpesa/callback",
+            env("APP_URL").unwrap_or_else(|_| "http://localhost:3000".to_string())
+        );
+        let base_url = Self::base_url()?;
+        let timestamp = Self::timestamp();
+        let password = Self::stk_password(&shortcode, &passkey, &timestamp);
+        let phone_norm = Self::normalize_phone(phone);
         let reference_trimmed = if reference.len() > 12 {
             &reference[..12]
         } else {
             reference
         };
-
         let token = self.access_token().await?;
 
         let body = StkPushRequest {
@@ -319,7 +263,8 @@ impl MpesaService {
             "Initiating M-Pesa STK Push"
         );
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/mpesa/stkpush/v1/processrequest", base_url))
             .bearer_auth(&token)
             .json(&body)
@@ -332,11 +277,12 @@ impl MpesaService {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text   = response.text().await.unwrap_or_default();
+            let text = response.text().await.unwrap_or_default();
             tracing::error!(status = %status, body = %text, "STK Push rejected");
-            return Err(AppError::MpesaError(
-                format!("STK Push rejected: {}", text),
-            ));
+            return Err(AppError::MpesaError(format!(
+                "STK Push rejected: {}",
+                text
+            )));
         }
 
         let stk_response: StkPushResponse = response.json().await.map_err(|e| {
@@ -350,34 +296,28 @@ impl MpesaService {
                 desc = %stk_response.response_description,
                 "STK Push failed"
             );
-            return Err(AppError::MpesaError(stk_response.response_description.clone()));
+            return Err(AppError::MpesaError(
+                stk_response.response_description.clone(),
+            ));
         }
 
         tracing::info!(
             checkout_request_id = %stk_response.checkout_request_id,
             "STK Push initiated successfully"
         );
-
         Ok(stk_response)
     }
 
-    // ========================================================================
-    // STK Query (check payment status)
-    // ========================================================================
-
-    /// Query the status of a pending STK Push.
-    ///
-    /// Call this if the callback has not arrived within ~30 seconds.
     pub async fn query_stk_status(
         &self,
         checkout_request_id: &str,
     ) -> AppResult<StkQueryResponse> {
-        let shortcode  = env("MPESA_SHORTCODE")?;
-        let passkey    = env("MPESA_PASSKEY")?;
-        let base_url   = Self::base_url()?;
-        let timestamp  = Self::timestamp();
-        let password   = Self::stk_password(&shortcode, &passkey, &timestamp);
-        let token      = self.access_token().await?;
+        let shortcode = env("MPESA_SHORTCODE")?;
+        let passkey = env("MPESA_PASSKEY")?;
+        let base_url = Self::base_url()?;
+        let timestamp = Self::timestamp();
+        let password = Self::stk_password(&shortcode, &passkey, &timestamp);
+        let token = self.access_token().await?;
 
         let body = StkQueryRequest {
             business_short_code: shortcode,
@@ -386,7 +326,8 @@ impl MpesaService {
             checkout_request_id: checkout_request_id.to_string(),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/mpesa/stkpushquery/v1/query", base_url))
             .bearer_auth(&token)
             .json(&body)
@@ -408,22 +349,13 @@ impl MpesaService {
             result_desc = %query.result_desc,
             "STK status queried"
         );
-
         Ok(query)
     }
 
-    // ========================================================================
-    // Callback validation & extraction
-    // ========================================================================
-
-    /// Validate an incoming Daraja callback and extract payment details.
-    ///
-    /// Returns `Ok(Some(result))` on successful payment.
-    /// Returns `Ok(None)` when the user cancelled or payment failed.
-    /// Returns `Err` when the payload is malformed.
-    pub fn extract_callback(callback: &MpesaCallback) -> AppResult<Option<MpesaPaymentResult>> {
+    pub fn extract_callback(
+        callback: &MpesaCallback,
+    ) -> AppResult<Option<MpesaPaymentResult>> {
         let stk = &callback.body.stk_callback;
-
         tracing::info!(
             checkout_request_id = %stk.checkout_request_id,
             result_code = stk.result_code,
@@ -431,7 +363,6 @@ impl MpesaService {
             "M-Pesa callback received"
         );
 
-        // result_code 0 = success; anything else = failure/cancellation
         if stk.result_code != 0 {
             tracing::warn!(
                 code = stk.result_code,
@@ -441,17 +372,21 @@ impl MpesaService {
             return Ok(None);
         }
 
-        let metadata = stk.callback_metadata.as_ref()
+        let metadata = stk
+            .callback_metadata
+            .as_ref()
             .ok_or_else(|| AppError::MpesaError("Missing callback metadata".to_string()))?;
 
         let find = |name: &str| -> Option<String> {
-            metadata.item.iter()
+            metadata
+                .item
+                .iter()
                 .find(|i| i.name == name)
                 .and_then(|i| i.value.as_ref())
                 .map(|v| match v {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Number(n) => n.to_string(),
-                    other                         => other.to_string(),
+                    other => other.to_string(),
                 })
         };
 
@@ -463,9 +398,7 @@ impl MpesaService {
         let receipt = find("MpesaReceiptNumber")
             .ok_or_else(|| AppError::MpesaError("Missing MpesaReceiptNumber".to_string()))?;
 
-        let phone = find("PhoneNumber")
-            .unwrap_or_default();
-
+        let phone = find("PhoneNumber").unwrap_or_default();
         let transaction_date = find("TransactionDate")
             .unwrap_or_else(|| Utc::now().format("%Y%m%d%H%M%S").to_string());
 
@@ -481,6 +414,12 @@ impl MpesaService {
 
 impl Default for MpesaService {
     fn default() -> Self {
-        Self::new()
+        Self {
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client"),
+            token_cache: Arc::new(Mutex::new(None)),
+        }
     }
 }

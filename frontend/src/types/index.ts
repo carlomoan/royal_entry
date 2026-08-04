@@ -147,6 +147,8 @@ export interface Event {
   card_theme?: string;
   entry_start_time?: string;
   entry_end_time?: string;
+  send_save_the_date: boolean;
+  save_the_date_sent_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -162,6 +164,7 @@ export interface CreateEventInput {
   card_theme?: string;
   guest_count_expected?: number;
   rsvp_deadline?: string;
+  send_save_the_date?: boolean;
 }
 
 export interface EventSummary {

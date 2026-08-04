@@ -1,3 +1,4 @@
+// src/pages/PublicInvitation.tsx
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
@@ -36,11 +37,12 @@ export default function PublicInvitation() {
       qc.setQueryData(["public-invitation", code], updated);
       toast.success("Your RSVP has been saved");
     },
-    onError: (mutationError: any) => {
-      toast.error(
-        mutationError?.response?.data?.error?.message ??
-          "Unable to save RSVP right now",
-      );
+    onError: (mutationError: unknown) => {
+      const msg =
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Unable to save RSVP right now";
+      toast.error(msg);
     },
   });
 
@@ -75,9 +77,15 @@ export default function PublicInvitation() {
       <div className="flex min-h-screen items-center justify-center bg-slate-100 px-6 py-12">
         <div className="max-w-xl rounded-[32px] border border-white/70 bg-white/95 p-8 text-center shadow-2xl shadow-slate-200/60">
           <XCircle className="mx-auto h-12 w-12 text-rose-500" />
-          <h1 className="mt-4 text-2xl font-black text-slate-900">Invitation not available</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-500">
-            {String((error as any)?.response?.data?.error?.message ?? "This invitation link is invalid or has expired.")}
+          <h1 className="mt-4 text-2xl font-black text-slate-900">
+            Invitation not available
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            {String(
+              error instanceof Error
+                ? error.message
+                : "This invitation link is invalid or has expired.",
+            )}
           </p>
         </div>
       </div>
@@ -88,8 +96,8 @@ export default function PublicInvitation() {
     data.rsvp.response === "confirmed"
       ? "text-emerald-700 bg-emerald-50 border-emerald-200"
       : data.rsvp.response === "declined"
-        ? "text-rose-700 bg-rose-50 border-rose-200"
-        : "text-slate-700 bg-slate-50 border-slate-200";
+      ? "text-rose-700 bg-rose-50 border-rose-200"
+      : "text-slate-700 bg-slate-50 border-slate-200";
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,214,94,0.25),_transparent_36%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_100%)] px-4 py-8 sm:px-6 lg:px-8">
@@ -103,13 +111,19 @@ export default function PublicInvitation() {
               <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900 md:text-4xl">
                 Welcome, {data.guest.full_name}
               </h1>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500 md:text-base">
-                This is your personal RoyalEntry invitation card. Show the QR code at the door or share your secure link with the host if you need assistance.
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 md:text-base">
+                This is your personal RoyalEntry invitation card. Show the QR
+                code at the door or share your secure link with the host if you
+                need assistance.
               </p>
             </div>
-            <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${rsvpTone}`}>
+            <div
+              className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${rsvpTone}`}
+            >
               RSVP: {data.rsvp.response}
-              {data.rsvp.responded_at ? ` · ${formatDateTime(data.rsvp.responded_at)}` : ""}
+              {data.rsvp.responded_at
+                ? ` · ${formatDateTime(data.rsvp.responded_at)}`
+                : ""}
             </div>
           </div>
         </div>
@@ -122,12 +136,12 @@ export default function PublicInvitation() {
             invitation={data.invitation}
             subtitle="RoyalEntry guest pass"
           />
-
           <div className="space-y-6">
             <section className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-xl shadow-slate-200/50">
               <h2 className="text-lg font-black text-slate-900">RSVP now</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Help the organiser plan seating, catering, and reception by confirming or declining your attendance.
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Help the organiser plan seating, catering, and reception by
+                confirming or declining your attendance.
               </p>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <Button
@@ -146,30 +160,70 @@ export default function PublicInvitation() {
                   <XCircle className="h-5 w-5" /> I cannot attend
                 </Button>
               </div>
-              {data.event.rsvp_deadline ? (
-                <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {data.event.rsvp_deadline && (
+                <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-600">
                   RSVP deadline: {formatDate(data.event.rsvp_deadline)}
                 </p>
-              ) : null}
+              )}
             </section>
 
             <section className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-xl shadow-slate-200/50">
-              <h2 className="text-lg font-black text-slate-900">Event details</h2>
+              <h2 className="text-lg font-black text-slate-900">
+                Event details
+              </h2>
               <div className="mt-5 space-y-3 text-sm text-slate-600">
-                <DetailRow icon={CalendarDays} label="Date" value={formatDate(data.event.event_date)} />
-                <DetailRow icon={Clock3} label="Time" value={data.event.event_time ?? "To be announced"} />
-                <DetailRow icon={MapPin} label="Venue" value={data.event.venue_name ?? "Venue to be announced"} />
-                <DetailRow icon={ShieldCheck} label="Dress code" value={data.event.dress_code ?? "As communicated by the host"} />
-                <DetailRow icon={Smartphone} label="Table / category" value={`${data.guest.table_number ? `Table ${data.guest.table_number}` : "Table pending"} · ${data.guest.guest_category ?? "Regular"}`} />
+                <DetailRow
+                  icon={CalendarDays}
+                  label="Date"
+                  value={formatDate(data.event.event_date)}
+                />
+                <DetailRow
+                  icon={Clock3}
+                  label="Time"
+                  value={data.event.event_time ?? "To be announced"}
+                />
+                <DetailRow
+                  icon={MapPin}
+                  label="Venue"
+                  value={data.event.venue_name ?? "Venue to be announced"}
+                />
+                <DetailRow
+                  icon={ShieldCheck}
+                  label="Dress code"
+                  value={data.event.dress_code ?? "As communicated by the host"}
+                />
+                <DetailRow
+                  icon={Smartphone}
+                  label="Table / category"
+                  value={`${data.guest.table_number ? `Table ${data.guest.table_number}` : "Table pending"} · ${data.guest.guest_category ?? "Regular"}`}
+                />
               </div>
             </section>
 
             <section className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-xl shadow-slate-200/50">
-              <h2 className="text-lg font-black text-slate-900">Share & access</h2>
+              <h2 className="text-lg font-black text-slate-900">
+                Share & access
+              </h2>
               <div className="mt-5 space-y-4">
-                <ActionRow label="Guest card link" value={data.invitation.public_url} onCopy={() => copyText("Guest link", data.invitation.public_url)} />
-                <ActionRow label="Door scan URL" value={data.invitation.scan_url} onCopy={() => copyText("Scan URL", data.invitation.scan_url)} />
-                <ActionRow label="Manual short code" value={data.invitation.scan_payload} onCopy={() => copyText("Short code", data.invitation.scan_payload)} />
+                <ActionRow
+                  label="Guest card link"
+                  value={data.invitation.public_url}
+                  onCopy={() =>
+                    copyText("Guest link", data.invitation.public_url)
+                  }
+                />
+                <ActionRow
+                  label="Door scan URL"
+                  value={data.invitation.scan_url}
+                  onCopy={() => copyText("Scan URL", data.invitation.scan_url)}
+                />
+                <ActionRow
+                  label="Manual short code"
+                  value={data.invitation.scan_payload}
+                  onCopy={() =>
+                    copyText("Short code", data.invitation.scan_payload)
+                  }
+                />
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <a href={whatsappLink} target="_blank" rel="noreferrer">
@@ -182,7 +236,9 @@ export default function PublicInvitation() {
                     <Smartphone className="h-4 w-4" /> SMS
                   </Button>
                 </a>
-                <a href={`mailto:?subject=${encodeURIComponent(`Invitation: ${data.event.title}`)}&body=${encodeURIComponent(data.invitation.public_url)}`}>
+                <a
+                  href={`mailto:?subject=${encodeURIComponent(`Invitation: ${data.event.title}`)}&body=${encodeURIComponent(data.invitation.public_url)}`}
+                >
                   <Button variant="ghost" className="w-full">
                     <Mail className="h-4 w-4" /> Email
                   </Button>
@@ -211,7 +267,9 @@ function DetailRow({
         <Icon className="h-4 w-4" />
       </div>
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {label}
+        </p>
         <p className="mt-1 font-semibold text-slate-900">{value}</p>
       </div>
     </div>
@@ -230,16 +288,21 @@ function ActionRow({
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {label}
+        </p>
         <button
           type="button"
           onClick={onCopy}
+          aria-label={`Copy ${label}`}
           className="inline-flex items-center gap-1 text-xs font-semibold text-gold-700 hover:text-gold-800"
         >
           <Copy className="h-3.5 w-3.5" /> Copy
         </button>
       </div>
-      <p className="mt-2 break-all text-sm font-medium text-slate-800">{value}</p>
+      <p className="mt-2 break-all text-sm font-medium text-slate-800">
+        {value}
+      </p>
     </div>
   );
 }

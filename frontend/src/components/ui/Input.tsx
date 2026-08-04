@@ -29,7 +29,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             error ? "border-red-400" : "border-gray-300",
             className,
           )}
-          ref={ref} // 👈 2. Attach the forwarded ref to the actual HTML input element
+          ref={ref}
           {...props}
         />
         {error && <p className="text-xs text-red-500">{error}</p>}

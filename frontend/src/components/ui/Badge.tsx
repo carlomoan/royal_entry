@@ -32,19 +32,28 @@ const variants: Record<string, string> = {
   staff: "bg-sky-100 text-sky-700 ring-1 ring-sky-200",
   family: "bg-violet-100 text-violet-700 ring-1 ring-violet-200",
   friend: "bg-pink-100 text-pink-700 ring-1 ring-pink-200",
+  gold: "bg-gold-100 text-gold-800 ring-1 ring-gold-300",
+  blue: "bg-sky-100 text-sky-800 ring-1 ring-sky-200",
+  slate: "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
+  green: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+  rose: "bg-rose-100 text-rose-700 ring-1 ring-rose-200",
 };
 
 export default function Badge({
   label,
   className,
+  variant,
 }: {
   label: string;
   className?: string;
+  variant?: string;
 }) {
   const normalized = label?.toString?.().trim() ?? "";
   const key = normalized.toLowerCase();
   const lookup =
-    variants[key] ?? "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+    variant && variants[variant]
+      ? variants[variant]
+      : variants[key] ?? "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
 
   return (
     <span

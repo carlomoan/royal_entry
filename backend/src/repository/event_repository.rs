@@ -59,7 +59,7 @@ impl EventRepository {
         .bind(&rsvp_deadline)
         .bind("draft") // Initial status
         .bind("pending") // Initial approval status
-        .bind(true) // send_save_the_date default
+        .bind(req.send_save_the_date.unwrap_or(true)) // send_save_the_date default
         .bind(now)
         .bind(now)
         .fetch_one(pool)
@@ -160,7 +160,8 @@ impl EventRepository {
                 card_theme = COALESCE($9, card_theme),
                 guest_count_expected = COALESCE($10, guest_count_expected),
                 rsvp_deadline = $11,
-                updated_at = $12
+                send_save_the_date = COALESCE($12, send_save_the_date),
+                updated_at = $13
             WHERE id = $1
             RETURNING *
             "#
@@ -176,6 +177,7 @@ impl EventRepository {
         .bind(&req.card_theme)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)
+        .bind(&req.send_save_the_date)
         .bind(now)
         .fetch_one(pool)
         .await?;

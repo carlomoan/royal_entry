@@ -56,7 +56,7 @@ impl From<Guest> for GuestResponse {
 }
 
 /// Create guest request
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct CreateGuestRequest {
     #[validate(length(min = 2, max = 255))]
     pub full_name: String,

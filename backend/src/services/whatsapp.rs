@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{error::{AppError, AppResult}, services::mpesa::MpesaService};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhatsappDeliveryResult {
     pub message_id: Option<String>,
 }
@@ -33,6 +33,7 @@ struct WhatsappMessage {
     id: String,
 }
 
+#[derive(Clone)]
 pub struct WhatsappService {
     client: Client,
 }
@@ -44,17 +45,39 @@ impl WhatsappService {
         }
     }
 
-    pub async fn send_text(&self, to: &str, message: &str) -> AppResult<WhatsappDeliveryResult> {
-        let access_token = std::env::var("WHATSAPP_ACCESS_TOKEN")
-            .map_err(|_| AppError::WhatsappError("WHATSAPP_ACCESS_TOKEN is not configured".to_string()))?;
-        let phone_number_id = std::env::var("WHATSAPP_PHONE_NUMBER_ID")
-            .map_err(|_| AppError::WhatsappError("WHATSAPP_PHONE_NUMBER_ID is not configured".to_string()))?;
+    async fn access_token(&self) -> AppResult<String> {
+        let consumer_key = std::env::var("WHATSAPP_CONSUMER_KEY")
+            .map_err(|_| AppError::InternalServerError)?;
+        let consumer_secret = std::env::var("WHATSAPP_CONSUMER_SECRET")
+            .map_err(|_| AppError::InternalServerError)?;
 
-        let normalized_phone = MpesaService::normalize_phone(to);
-        let payload = WhatsappTextBody {
+        let response = self.client
+            .get("https://graph.facebook.com/v17.0/oauth/access_token")
+            .query(&[
+                ("grant_type", "client_credentials"),
+                ("client_id", &consumer_key),
+                ("client_secret", &consumer_secret),
+            ])
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        let json: serde_json::Value = response.json().await.map_err(|_| AppError::InternalServerError)?;
+        json["access_token"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or(AppError::InternalServerError)
+    }
+
+    pub async fn send_message(&self, to: &str, message: &str) -> AppResult<WhatsappDeliveryResult> {
+        let token = self.access_token().await?;
+        let phone_number_id = std::env::var("WHATSAPP_PHONE_NUMBER_ID")
+            .map_err(|_| AppError::InternalServerError)?;
+
+        let body = WhatsappTextBody {
             messaging_product: "whatsapp",
             recipient_type: "individual",
-            to: &normalized_phone,
+            to,
             r#type: "text",
             text: WhatsappTextPayload {
                 preview_url: false,
@@ -62,34 +85,22 @@ impl WhatsappService {
             },
         };
 
-        let response = self
-            .client
-            .post(format!("https://graph.facebook.com/v19.0/{}/messages", phone_number_id))
-            .bearer_auth(access_token)
-            .json(&payload)
+        let response = self.client
+            .post(&format!("https://graph.facebook.com/v17.0/{}/messages", phone_number_id))
+            .bearer_auth(token)
+            .json(&body)
             .send()
             .await
-            .map_err(|e| AppError::WhatsappError(format!("WhatsApp request failed: {}", e)))?;
+            .map_err(|_| AppError::InternalServerError)?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AppError::WhatsappError(format!("WhatsApp gateway returned {}: {}", status, body)));
-        }
+        let json: serde_json::Value = response.json().await.map_err(|_| AppError::InternalServerError)?;
 
-        let body: WhatsappResponse = response
-            .json()
-            .await
-            .map_err(|e| AppError::WhatsappError(format!("Invalid WhatsApp gateway response: {}", e)))?;
-
-        let message_id = body.messages.and_then(|mut messages| messages.pop().map(|m| m.id));
+        let message_id = json["messages"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|msg| msg["id"].as_str())
+            .map(|s| s.to_string());
 
         Ok(WhatsappDeliveryResult { message_id })
-    }
-}
-
-impl Default for WhatsappService {
-    fn default() -> Self {
-        Self::new()
     }
 }

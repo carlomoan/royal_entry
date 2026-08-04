@@ -1,5 +1,7 @@
+// ==============================================================================
+// FILE: src/handlers/invitations.rs
+// ==============================================================================
 use std::sync::Arc;
-
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -9,7 +11,6 @@ use chrono::Utc;
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
-
 use crate::{
     error::{AppError, AppResult},
     models::{
@@ -30,11 +31,9 @@ async fn assert_event_ownership(
     let event = EventRepository::get_by_id(state.db.pool(), event_id)
         .await?
         .ok_or(AppError::EventNotFound)?;
-
     if event.organization_id != org_id {
         return Err(AppError::Forbidden);
     }
-
     Ok(event)
 }
 
@@ -45,7 +44,6 @@ async fn list_event_guests(pool: &PgPool, event_id: Uuid) -> AppResult<Vec<Guest
     .bind(event_id)
     .fetch_all(pool)
     .await?;
-
     Ok(guests)
 }
 
@@ -58,13 +56,7 @@ pub async fn list_invitations(
     assert_event_ownership(&state, event_id, org_id).await?;
 
     let invitations = sqlx::query_as::<_, Invitation>(
-        r#"
-        SELECT i.*
-        FROM invitations i
-        JOIN guests g ON g.id = i.guest_id
-        WHERE g.event_id = $1
-        ORDER BY i.created_at DESC
-        "#,
+        r#"SELECT i.* FROM invitations i JOIN guests g ON g.id = i.guest_id WHERE g.event_id = $1 ORDER BY i.created_at DESC"#,
     )
     .bind(event_id)
     .fetch_all(state.db.pool())
@@ -76,10 +68,7 @@ pub async fn list_invitations(
         .map(|invitation| InvitationResponse::from_invitation(invitation, &frontend_url, event_id))
         .collect();
 
-    Ok(Json(json!({
-        "success": true,
-        "data": data,
-    })))
+    Ok(Json(json!({ "success": true, "data": data })))
 }
 
 pub async fn generate_invitations(
@@ -99,12 +88,7 @@ pub async fn generate_invitations(
             StatusCode::OK,
             Json(json!({
                 "success": true,
-                "data": GenerateInvitationsResult {
-                    generated: 0,
-                    skipped: 0,
-                    failed: 0,
-                    invitations: Vec::new(),
-                }
+                "data": GenerateInvitationsResult { generated: 0, skipped: 0, failed: 0, invitations: Vec::new() }
             })),
         ));
     }
@@ -134,25 +118,15 @@ pub async fn generate_invitations(
                 ));
                 continue;
             }
-
             let short_link = format!("inv-{}", Uuid::new_v4().simple());
             let updated = sqlx::query_as::<_, Invitation>(
-                r#"
-                UPDATE invitations
-                SET short_link = $2,
-                    status = 'sent',
-                    invitation_sent_at = $3,
-                    created_at = $3
-                WHERE guest_id = $1
-                RETURNING *
-                "#,
+                r#"UPDATE invitations SET short_link = $2, status = 'sent', invitation_sent_at = $3, created_at = $3 WHERE guest_id = $1 RETURNING *"#,
             )
             .bind(guest.id)
             .bind(short_link)
             .bind(now)
             .fetch_one(&mut *tx)
             .await?;
-
             generated += 1;
             results.push(InvitationResponse::from_invitation(
                 updated,
@@ -163,13 +137,7 @@ pub async fn generate_invitations(
         }
 
         let invitation = sqlx::query_as::<_, Invitation>(
-            r#"
-            INSERT INTO invitations (
-                id, guest_id, short_link, status, scan_count, invitation_sent_at, created_at
-            )
-            VALUES ($1, $2, $3, 'sent', 0, $4, $4)
-            RETURNING *
-            "#,
+            r#"INSERT INTO invitations (id, guest_id, short_link, status, scan_count, invitation_sent_at, created_at) VALUES ($1, $2, $3, 'sent', 0, $4, $4) RETURNING *"#,
         )
         .bind(Uuid::new_v4())
         .bind(guest.id)
@@ -192,12 +160,7 @@ pub async fn generate_invitations(
         StatusCode::OK,
         Json(json!({
             "success": true,
-            "data": GenerateInvitationsResult {
-                generated,
-                skipped,
-                failed,
-                invitations: results,
-            }
+            "data": GenerateInvitationsResult { generated, skipped, failed, invitations: results }
         })),
     ))
 }

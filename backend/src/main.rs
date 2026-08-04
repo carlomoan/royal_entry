@@ -12,7 +12,7 @@ use royalentry_backend::{
     db::Database,
     middleware::audit::audit_middleware,
     routes,
-    services::BootstrapService,
+    services::{BillingService, BootstrapService},
     utils,
     AppState,
 };
@@ -37,6 +37,77 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.run_migrations().await?;
     BootstrapService::bootstrap_auth(db.pool()).await?;
     tracing::info!("Database connected, migrations applied, and auth bootstrap completed");
+
+    let app_state = Arc::new(AppState {
+        config: config.clone(),
+        db: db.clone(),
+    });
+
+    let billing = BillingService::new(app_state.clone());
+    let scheduler = tokio_cron_scheduler::JobScheduler::new().await.unwrap();
+
+    // Generate invoices daily at midnight
+    {
+        let billing = billing.clone();
+        scheduler
+            .add(tokio_cron_scheduler::Job::new_async("0 0 0 * * *", move |_uuid, _l| {
+                let billing = billing.clone();
+                Box::pin(async move {
+                    if let Err(e) = billing.generate_recurring_invoices().await {
+                        tracing::error!(error = %e, "Failed to generate recurring invoices");
+                    }
+                    if let Err(e) = billing.convert_trials().await {
+                        tracing::error!(error = %e, "Failed to convert trials");
+                    }
+                    if let Err(e) = billing.handle_grace_periods().await {
+                        tracing::error!(error = %e, "Failed to handle grace periods");
+                    }
+                    if let Err(e) = billing.send_dunning_notices().await {
+                        tracing::error!(error = %e, "Failed to send dunning notices");
+                    }
+                })
+            })
+            .unwrap())
+            .await
+            .unwrap();
+    }
+
+    // Process due invoices every hour
+    {
+        let billing = billing.clone();
+        scheduler
+            .add(tokio_cron_scheduler::Job::new_async("0 0 * * * *", move |_uuid, _l| {
+                let billing = billing.clone();
+                Box::pin(async move {
+                    if let Err(e) = billing.process_due_invoices().await {
+                        tracing::error!(error = %e, "Failed to process due invoices");
+                    }
+                })
+            })
+            .unwrap())
+            .await
+            .unwrap();
+    }
+
+    // Retry failed payments every 6 hours
+    {
+        let billing = billing.clone();
+        scheduler
+            .add(tokio_cron_scheduler::Job::new_async("0 0 */6 * * *", move |_uuid, _l| {
+                let billing = billing.clone();
+                Box::pin(async move {
+                    if let Err(e) = billing.retry_failed_payments().await {
+                        tracing::error!(error = %e, "Failed to retry failed payments");
+                    }
+                })
+            })
+            .unwrap())
+            .await
+            .unwrap();
+    }
+
+    scheduler.start().await.unwrap();
+    tracing::info!("Billing scheduler started");
 
     let app_state = Arc::new(AppState {
         config: config.clone(),

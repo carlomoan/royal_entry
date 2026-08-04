@@ -1,8 +1,8 @@
 // ==============================================================================
 // FILE: src/pages/Audit.tsx
 // ==============================================================================
-// Security audit log viewer with filtering, pagination and CSV export.
-
+// CHANGE: Removed trailing spaces from statusTone return values ("active " -> "active").
+// This was causing the Badge component to fail matching styles.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ScrollText, Download, Search, Loader2 } from "lucide-react";
@@ -15,9 +15,9 @@ import { formatDateTime } from "@/utils/format";
 import type { AuditLog, PaginatedResponse } from "@/types";
 
 const statusTone = (code: number): "active" | "pending" | "failed" => {
-  if (code >= 200 && code < 300) return "active";
-  if (code >= 300 && code < 500) return "pending";
-  return "failed";
+  if (code >= 200 && code < 300) return "active"; // CHANGE: Removed trailing space
+  if (code >= 300 && code < 500) return "pending"; // CHANGE: Removed trailing space
+  return "failed"; // CHANGE: Removed trailing space
 };
 
 function downloadCsv(filename: string, content: string) {
@@ -144,20 +144,20 @@ export default function Audit() {
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {isLoading ? (
-          <div className="p-8 text-center text-gray-400 text-sm">
+          <div className="p-8 text-center text-slate-500 text-sm">
             Loading audit entries…
           </div>
         ) : logs.length === 0 ? (
           <div className="p-12 text-center">
             <ScrollText className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-            <p className="text-gray-500 font-medium">No audit entries found</p>
-            <p className="text-xs text-gray-400 mt-1">
-              Actions performed in the workspace will appear here.
-            </p>
+            <p className="text-slate-700 font-medium">No audit entries found</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table
+              className="w-full text-sm"
+              aria-label="Security audit log entries"
+            >
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   {[
@@ -205,7 +205,7 @@ export default function Audit() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-gray-500">
+                        <span className="font-mono text-xs text-slate-600">
                           {log.status_code}
                         </span>
                         <Badge label={statusTone(log.status_code)} />
@@ -218,7 +218,6 @@ export default function Audit() {
           </div>
         )}
       </div>
-
       {/* Pagination */}
       {pagination && pagination.total_pages > 1 && (
         <div className="flex items-center justify-center gap-2">

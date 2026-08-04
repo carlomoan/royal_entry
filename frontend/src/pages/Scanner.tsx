@@ -1,3 +1,6 @@
+// ==============================================================================
+// FILE: src/pages/Scanner.tsx
+// ==============================================================================
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -30,13 +33,19 @@ export default function Scanner() {
   const [notes, setNotes] = useState("");
   const [scanSource, setScanSource] = useState("qr");
   const [lastResult, setLastResult] = useState<ScanCheckInResult | null>(null);
-  const [autoSubmittedCode, setAutoSubmittedCode] = useState<string | null>(null);
+
+  // CHANGE: Replaced autoSubmittedCode with submittedCode to track local state safely
+  const [submittedCode, setSubmittedCode] = useState<string | null>(null);
 
   useEffect(() => {
-    if (initialCode) {
-      setScanValue(initialCode);
+    if (!initialCode || !eventId) return;
+
+    // Only submit if we haven't already submitted this code
+    if (submittedCode !== initialCode) {
+      setSubmittedCode(initialCode);
+      checkInMutation.mutate(initialCode);
     }
-  }, [initialCode]);
+  }, [initialCode, eventId]); // Removed submittedCode from deps to prevent re-triggering
 
   const { data: eventSummary } = useQuery({
     queryKey: ["event-summary", eventId],
@@ -54,7 +63,12 @@ export default function Scanner() {
 
   const checkInMutation = useMutation({
     mutationFn: (value: string) =>
-      scannerApi.checkIn(eventId!, value.trim(), scanSource, notes || undefined),
+      scannerApi.checkIn(
+        eventId!,
+        value.trim(),
+        scanSource,
+        notes || undefined,
+      ),
     onSuccess: (result) => {
       setLastResult(result);
       setNotes("");
@@ -62,25 +76,25 @@ export default function Scanner() {
       qc.invalidateQueries({ queryKey: ["scan-stats", eventId] });
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
       toast.success(`${result.guest_name} checked in successfully`);
-
-      if (searchParams.get("code")) {
-        setSearchParams({});
-      }
+      if (searchParams.get("code")) setSearchParams({});
     },
-    onError: (error: any) => {
-      toast.error(
-        error?.response?.data?.error?.message ?? "Unable to check in this guest",
-      );
+    // CHANGE: Replaced 'any' with 'unknown'
+    onError: (error: unknown) => {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : "Unable to check in this guest";
+      toast.error(msg);
     },
   });
 
+  // CHANGE: Fixed infinite loop by removing checkInMutation from dependency array and using local state
   useEffect(() => {
-    if (!initialCode || !eventId || checkInMutation.isPending) return;
-    if (autoSubmittedCode === initialCode) return;
-
-    setAutoSubmittedCode(initialCode);
+    if (!initialCode || !eventId || submittedCode === initialCode) return;
+    setSubmittedCode(initialCode);
     checkInMutation.mutate(initialCode);
-  }, [autoSubmittedCode, checkInMutation, eventId, initialCode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCode, eventId, submittedCode]);
 
   const timeline = scanStats?.timeline ?? [];
   const busiestHour = useMemo(() => {
@@ -114,11 +128,11 @@ export default function Scanner() {
               {eventSummary?.event.title ?? "Guest scanner"}
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">
-              Scan a guest QR code or paste the invitation link. RoyalEntry will verify the pass and mark the guest as arrived instantly.
+              Scan a guest QR code or paste the invitation link. RoyalEntry will
+              verify the pass and mark the guest as arrived instantly.
             </p>
           </div>
         </div>
-
         <div className="grid grid-cols-2 gap-3 md:min-w-[320px]">
           {[
             {
@@ -173,13 +187,15 @@ export default function Scanner() {
                   <ScanLine className="h-6 w-6" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Ready to scan</h2>
-                  <p className="text-sm text-slate-500">
-                    Use the phone camera scanner app, then paste the full invitation link or code here.
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Ready to scan
+                  </h2>
+                  <p className="text-sm text-slate-600">
+                    Use the phone camera scanner app, then paste the full
+                    invitation link or code here.
                   </p>
                 </div>
               </div>
-
               <label className="mb-2 block text-sm font-semibold text-slate-700">
                 Invitation QR link or code
               </label>
@@ -190,7 +206,6 @@ export default function Scanner() {
                 placeholder="Example: http://localhost:5173/events/.../scanner?code=inv-123"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-base text-slate-900 shadow-inner outline-none transition focus:border-gold-400 focus:ring-4 focus:ring-gold-100"
               />
-
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="mb-2 block text-sm font-semibold text-slate-700">
@@ -230,7 +245,6 @@ export default function Scanner() {
                 </div>
               </div>
             </div>
-
             <div className="grid gap-3 sm:grid-cols-2">
               <Button
                 size="lg"
@@ -257,7 +271,10 @@ export default function Scanner() {
         </Card>
 
         <div className="space-y-6">
-          <Card title="Latest result" className="border-0 bg-white/95 shadow-xl shadow-slate-200/70">
+          <Card
+            title="Latest result"
+            className="border-0 bg-white/95 shadow-xl shadow-slate-200/70"
+          >
             {lastResult ? (
               <div className="space-y-4">
                 <div className="flex items-center gap-3 rounded-2xl bg-emerald-50 p-4 text-emerald-800">
@@ -270,40 +287,58 @@ export default function Scanner() {
                 <dl className="space-y-3 text-sm text-slate-600">
                   <div className="flex items-center justify-between gap-4">
                     <dt>Phone</dt>
-                    <dd className="font-semibold text-slate-900">{lastResult.guest_phone}</dd>
+                    <dd className="font-semibold text-slate-900">
+                      {lastResult.guest_phone}
+                    </dd>
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <dt>Status</dt>
-                    <dd><Badge label={lastResult.status} /></dd>
+                    <dd>
+                      <Badge label={lastResult.status} />
+                    </dd>
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <dt>Time</dt>
-                    <dd className="font-semibold text-slate-900">{formatDateTime(lastResult.scanned_at)}</dd>
+                    <dd className="font-semibold text-slate-900">
+                      {formatDateTime(lastResult.scanned_at)}
+                    </dd>
                   </div>
                 </dl>
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
                 <UserRound className="mx-auto h-10 w-10 text-slate-300" />
-                <p className="mt-3 text-sm font-semibold text-slate-700">No guest scanned yet</p>
-                <p className="mt-1 text-sm text-slate-500">
-                  The last successful check-in will appear here for quick confirmation.
+                <p className="mt-3 text-sm font-semibold text-slate-700">
+                  No guest scanned yet
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  The last successful check-in will appear here for quick
+                  confirmation.
                 </p>
               </div>
             )}
           </Card>
-
-          <Card title="Arrival timeline" className="border-0 bg-white/95 shadow-xl shadow-slate-200/70">
+          <Card
+            title="Arrival timeline"
+            className="border-0 bg-white/95 shadow-xl shadow-slate-200/70"
+          >
             {timeline.length ? (
               <div className="space-y-3">
                 {timeline.map((point) => {
-                  const maxCount = Math.max(...timeline.map((item) => item.count), 1);
+                  const maxCount = Math.max(
+                    ...timeline.map((item) => item.count),
+                    1,
+                  );
                   const width = `${Math.max(10, (point.count / maxCount) * 100)}%`;
                   return (
                     <div key={point.hour} className="space-y-1.5">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="font-medium text-slate-700">{point.hour}</span>
-                        <span className="text-slate-500">{point.count} guests</span>
+                        <span className="font-medium text-slate-700">
+                          {point.hour}
+                        </span>
+                        <span className="text-slate-600">
+                          {point.count} guests
+                        </span>
                       </div>
                       <div className="h-3 overflow-hidden rounded-full bg-slate-100">
                         <div
@@ -318,8 +353,10 @@ export default function Scanner() {
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
                 <XCircle className="mx-auto h-10 w-10 text-slate-300" />
-                <p className="mt-3 text-sm font-semibold text-slate-700">No arrivals yet</p>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-3 text-sm font-semibold text-slate-700">
+                  No arrivals yet
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
                   Start checking in guests to build a live arrival timeline.
                 </p>
               </div>

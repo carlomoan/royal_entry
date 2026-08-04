@@ -1,10 +1,10 @@
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::form_urlencoded;
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmsDeliveryResult {
     pub message_id: Option<String>,
 }
@@ -28,6 +28,7 @@ struct AtRecipient {
     message_id: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct SmsService {
     client: Client,
 }

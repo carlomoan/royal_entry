@@ -1,14 +1,22 @@
-// ==============================================================================
-// FILE: src/models/user.rs
-// ==============================================================================
-// User model and authentication DTOs
-
+// src/models/user.rs
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 use validator::Validate;
 
-/// User database model
+/// Valid role constants — single source of truth
+pub const VALID_ROLES: &[&str] = &[
+    // Platform
+    "superadmin", "platform_admin", "system_admin",
+    // Account
+    "account_admin", "event_manager", "event_accountant",
+    "secretary", "scanner_attendant", "viewer",
+];
+
+pub fn is_valid_role(role: &str) -> bool {
+    VALID_ROLES.contains(&role)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
@@ -17,14 +25,13 @@ pub struct User {
     pub phone: Option<String>,
     pub full_name: String,
     pub password_hash: String,
-    pub role: String, // admin, mc, organizer, door_staff, viewer
+    pub role: String, // see VALID_ROLES above
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_login: Option<DateTime<Utc>>,
 }
 
-/// User response (never expose password hash)
 #[derive(Debug, Serialize)]
 pub struct UserResponse {
     pub id: Uuid,
@@ -50,50 +57,41 @@ impl From<User> for UserResponse {
     }
 }
 
-/// Login request
 #[derive(Debug, Deserialize, Validate)]
 pub struct LoginRequest {
     #[serde(alias = "email", alias = "username")]
     #[validate(length(min = 1, max = 255))]
     pub login: String,
-
     #[validate(length(min = 8, max = 128))]
     pub password: String,
 }
 
-/// Register request
 #[derive(Debug, Deserialize, Validate)]
 pub struct RegisterRequest {
     #[validate(email)]
     pub email: String,
-
     #[validate(length(min = 8, max = 128))]
     pub password: String,
-
     #[validate(length(min = 2, max = 255))]
     pub full_name: String,
-
     #[validate(length(min = 10, max = 15, message = "Invalid phone number length"))]
     pub phone: String,
 }
 
-/// Refresh token request
 #[derive(Debug, Deserialize)]
 pub struct RefreshTokenRequest {
     pub refresh_token: String,
 }
 
-/// Authentication response (contains tokens)
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
     pub user: UserResponse,
     pub access_token: String,
     pub refresh_token: String,
-    pub expires_in: i64, // seconds
-    pub token_type: String, // "Bearer"
+    pub expires_in: i64,
+    pub token_type: String,
 }
 
-/// Token refresh response
 #[derive(Debug, Serialize)]
 pub struct TokenRefreshResponse {
     pub access_token: String,
@@ -102,26 +100,24 @@ pub struct TokenRefreshResponse {
     pub token_type: String,
 }
 
-/// JWT Claims
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,          // User ID
-    pub org_id: String,       // Organization ID
-    pub email: String,        // Email
-    pub role: String,         // User role
-    pub exp: i64,             // Expiration time
-    pub iat: i64,             // Issued at
-    pub token_type: String,   // "access" or "refresh"
+    pub sub: String,
+    pub org_id: String,
+    pub email: String,
+    pub role: String,
+    pub exp: i64,
+    pub iat: i64,
+    pub token_type: String,
+    pub impersonated_by: Option<String>,
+    pub impersonated_at: Option<i64>,
 }
 
-/// Change password request
 #[derive(Debug, Deserialize, Validate)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
-
     #[validate(length(min = 8, max = 128))]
     pub new_password: String,
-
     #[validate(length(min = 8, max = 128))]
     pub confirm_password: String,
 }

@@ -1,7 +1,3 @@
-// ==============================================================================
-// FILE: src/utils/format.ts
-// ==============================================================================
-
 /** Format a TZS amount: 1500000 → "TZS 1,500,000" */
 export const formatTZS = (amount: number): string => {
   return `TZS ${amount.toLocaleString("en-TZ")}`;

@@ -1,10 +1,16 @@
+-- ==============================================================================
+-- Service Plans, Subscriptions, Invoices
+-- ==============================================================================
+
+-- Service Plans
 CREATE TABLE IF NOT EXISTS service_plans (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT,
-    price_tsh BIGINT NOT NULL,
-    billing_interval TEXT NOT NULL DEFAULT 'monthly',
+    price_tsh BIGINT NOT NULL CHECK (price_tsh >= 0),
+    billing_interval TEXT NOT NULL DEFAULT 'monthly'
+        CHECK (billing_interval IN ('monthly', 'yearly', 'weekly')),
     max_users INTEGER,
     max_events INTEGER,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -12,11 +18,13 @@ CREATE TABLE IF NOT EXISTS service_plans (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Organization Subscriptions
 CREATE TABLE IF NOT EXISTS organization_subscriptions (
-    id UUID PRIMARY KEY,
-    organization_id UUID NOT NULL UNIQUE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES service_plans(id),
-    status TEXT NOT NULL DEFAULT 'trialing',
+    status TEXT NOT NULL DEFAULT 'trialing'
+        CHECK (status IN ('trialing', 'active', 'past_due', 'cancelled', 'expired')),
     current_period_start TIMESTAMPTZ NOT NULL,
     current_period_end TIMESTAMPTZ NOT NULL,
     trial_ends_at TIMESTAMPTZ,
@@ -27,16 +35,18 @@ CREATE TABLE IF NOT EXISTS organization_subscriptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_organization_subscriptions_status
-    ON organization_subscriptions (status, current_period_end DESC);
+ON organization_subscriptions (status, current_period_end DESC);
 
+-- Billing Invoices
 CREATE TABLE IF NOT EXISTS billing_invoices (
-    id UUID PRIMARY KEY,
-    organization_id UUID NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     subscription_id UUID REFERENCES organization_subscriptions(id) ON DELETE SET NULL,
     plan_id UUID REFERENCES service_plans(id) ON DELETE SET NULL,
     invoice_number TEXT NOT NULL UNIQUE,
-    amount_tsh BIGINT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',
+    amount_tsh BIGINT NOT NULL CHECK (amount_tsh > 0),
+    status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'paid', 'void', 'overdue')),
     issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     due_at TIMESTAMPTZ,
     paid_at TIMESTAMPTZ,
@@ -48,12 +58,14 @@ CREATE TABLE IF NOT EXISTS billing_invoices (
 );
 
 CREATE INDEX IF NOT EXISTS idx_billing_invoices_org_status
-    ON billing_invoices (organization_id, status, issued_at DESC);
+ON billing_invoices (organization_id, status, issued_at DESC);
 
+-- Add subscription/invoice references to payments
 ALTER TABLE payments
-    ADD COLUMN IF NOT EXISTS subscription_id UUID,
-    ADD COLUMN IF NOT EXISTS invoice_id UUID;
+ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES organization_subscriptions(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS invoice_id UUID REFERENCES billing_invoices(id) ON DELETE SET NULL;
 
+-- Seed default service plans
 INSERT INTO service_plans (id, code, name, description, price_tsh, billing_interval, max_users, max_events, is_active)
 VALUES
     ('5ce02da8-f538-4d22-bb2d-12b41690ef21', 'starter', 'Starter', 'Ideal for small family events and basic guest entry.', 150000, 'monthly', 3, 3, TRUE),
@@ -69,6 +81,7 @@ ON CONFLICT (code) DO UPDATE SET
     is_active = EXCLUDED.is_active,
     updated_at = NOW();
 
+-- Auto-create starter subscriptions for existing organizations
 INSERT INTO organization_subscriptions (
     id,
     organization_id,
@@ -81,13 +94,7 @@ INSERT INTO organization_subscriptions (
     updated_at
 )
 SELECT
-    (
-        substr(md5(orgs.organization_id::text || '-starter-subscription'), 1, 8) || '-' ||
-        substr(md5(orgs.organization_id::text || '-starter-subscription'), 9, 4) || '-' ||
-        substr(md5(orgs.organization_id::text || '-starter-subscription'), 13, 4) || '-' ||
-        substr(md5(orgs.organization_id::text || '-starter-subscription'), 17, 4) || '-' ||
-        substr(md5(orgs.organization_id::text || '-starter-subscription'), 21, 12)
-    )::uuid,
+    gen_random_uuid(),
     orgs.organization_id,
     '5ce02da8-f538-4d22-bb2d-12b41690ef21'::UUID,
     'active',
@@ -100,6 +107,7 @@ FROM (
     SELECT DISTINCT organization_id
     FROM users
     WHERE organization_id IS NOT NULL
+      AND organization_id != '00000000-0000-0000-0000-000000000000'
 ) AS orgs
 WHERE NOT EXISTS (
     SELECT 1

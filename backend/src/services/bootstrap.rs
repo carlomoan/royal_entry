@@ -1,8 +1,9 @@
+// ==============================================================================
+// FILE: src/services/bootstrap.rs
+// ==============================================================================
 use std::env;
-
 use sqlx::PgPool;
 use uuid::Uuid;
-
 use crate::{
     error::AppResult,
     repository::user_repository::UserRepository,
@@ -35,14 +36,19 @@ impl BootstrapService {
         }
 
         let password_hash = AuthService::hash_password(&admin_password)?;
+
+        // Platform organization ID
+        let platform_org_id = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
+
+        // FIX: Changed role from "admin" to "superadmin" to match the new DB CHECK constraint
         let user = UserRepository::create(
             pool,
-            Uuid::new_v4(),
+            platform_org_id,
             &admin_email,
             &password_hash,
             &admin_name,
             &admin_phone,
-            "admin",
+            "superadmin",
         )
         .await?;
 
@@ -55,9 +61,8 @@ impl BootstrapService {
             user_id = %user.id,
             email = %user.email,
             username = %username,
-            "Bootstrapped default admin user"
+            "Bootstrapped default superadmin user"
         );
-
         Ok(())
     }
 }

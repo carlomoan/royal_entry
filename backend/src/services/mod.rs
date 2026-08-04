@@ -1,13 +1,30 @@
+// ==============================================================================
+// FILE: src/services/mod.rs
+// ==============================================================================
 pub mod auth;
 pub mod bootstrap;
+pub mod billing;
+pub mod csv_import; // ✅ ADD THIS LINE
 pub mod messaging;
 pub mod mpesa;
+pub mod pdf;
+pub mod scheduler;
 pub mod sms;
+pub mod templates;
+pub mod usage;
+pub mod webhooks;
 pub mod whatsapp;
 
 pub use auth::AuthService;
 pub use bootstrap::BootstrapService;
+pub use billing::BillingService;
+pub use csv_import::CsvImportService; // ✅ ADD THIS LINE
 pub use messaging::MessagingService;
 pub use mpesa::MpesaService;
+pub use pdf::PdfService;
+pub use scheduler::start_scheduler;
 pub use sms::SmsService;
+pub use templates::TemplateService;
+pub use usage::UsageService;
+pub use webhooks::WebhookService;
 pub use whatsapp::WhatsappService;

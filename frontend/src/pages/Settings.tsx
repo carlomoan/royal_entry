@@ -1,9 +1,5 @@
-// ==============================================================================
-// FILE: src/pages/Settings.tsx
-// ==============================================================================
-// Organization profile, team members and role management (RBAC UI).
-
-import { useState } from "react";
+// src/pages/Settings.tsx
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ShieldCheck,
@@ -15,6 +11,7 @@ import {
   Phone,
   Save,
   Settings as SettingsIcon,
+  AlertCircle,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { settingsApi } from "@/api/settings";
@@ -43,9 +40,10 @@ export default function Settings() {
   const canManage = canManageUsers(user?.role);
   const isPlatform = isPlatformAdmin(user?.role);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["account-settings"],
     queryFn: () => settingsApi.getAccount(),
+    retry: 1,
   });
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -55,7 +53,6 @@ export default function Settings() {
   const team = data?.users ?? [];
   const assignableRoles = allowedAssignableRoles(user?.role);
 
-  // ── Create user mutation ───────────────────────────────────────────────────
   const createMutation = useMutation({
     mutationFn: (payload: CreateAccountUserInput) =>
       settingsApi.createUser(payload),
@@ -66,13 +63,11 @@ export default function Settings() {
     },
     onError: (err: unknown) => {
       const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ?? "Failed to add team member";
+        err instanceof Error ? err.message : "Failed to add team member";
       toast.error(msg);
     },
   });
 
-  // ── Update user mutation ───────────────────────────────────────────────────
   const updateMutation = useMutation({
     mutationFn: ({
       id,
@@ -88,8 +83,7 @@ export default function Settings() {
     },
     onError: (err: unknown) => {
       const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ?? "Failed to update team member";
+        err instanceof Error ? err.message : "Failed to update team member";
       toast.error(msg);
     },
   });
@@ -98,19 +92,45 @@ export default function Settings() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-slate-600 mt-1">
           Manage your organization profile, team members and their roles.
         </p>
       </div>
 
-      {/* System settings — platform admins only (SaaS global config) */}
       {isPlatform && <SystemSettingsCard />}
 
-      {/* Organization profile */}
       <Card title="Organization">
-        {isLoading || !org ? (
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-slate-600">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading organization…
+          </div>
+        ) : isError ? (
+          <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4">
+            <AlertCircle className="h-5 w-5 text-rose-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-rose-900">
+                Unable to load organization
+              </p>
+              <p className="text-xs text-rose-700 mt-1">
+                {error instanceof Error
+                  ? error.message
+                  : "You may not have access to organization settings."}
+              </p>
+            </div>
+          </div>
+        ) : !org ? (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-900">
+                No organization assigned
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                {isPlatform
+                  ? "Platform administrators can view system settings but don't belong to a specific organization."
+                  : "Your account is not associated with an organization. Contact your administrator."}
+              </p>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -148,7 +168,6 @@ export default function Settings() {
         )}
       </Card>
 
-      {/* Team & roles */}
       <Card
         title="Team & roles"
         action={
@@ -160,28 +179,33 @@ export default function Settings() {
         }
       >
         {isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-slate-600">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading team…
           </div>
         ) : team.length === 0 ? (
           <div className="p-8 text-center">
             <Users className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-            <p className="text-gray-500 font-medium">No team members yet</p>
+            <p className="text-slate-700 font-medium">No team members yet</p>
+            {canManage && (
+              <p className="text-xs text-slate-500 mt-1">
+                Click "Add member" to invite your first team member.
+              </p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm" aria-label="Team members list">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   {["Name", "Email", "Role", "Status", "Joined", ""].map(
                     (h) => (
                       <th
                         key={h}
-                        className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
+                        className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap"
                       >
                         {h}
                       </th>
-                    ),
+                    )
                   )}
                 </tr>
               </thead>
@@ -196,14 +220,17 @@ export default function Settings() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{m.email}</td>
+                    <td className="px-4 py-3 text-slate-600">{m.email}</td>
                     <td className="px-4 py-3">
-                      <Badge label={m.role} />
+                      <Badge label={roleLabel(m.role)} />
                     </td>
                     <td className="px-4 py-3">
-                      <Badge label={m.is_active ? "active" : "pending"} />
+                      <Badge
+                        label={m.is_active ? "active" : "suspended"}
+                        variant={m.is_active ? "green" : "rose"}
+                      />
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">
+                    <td className="px-4 py-3 text-xs text-slate-600">
                       {formatDate(m.created_at)}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -222,15 +249,13 @@ export default function Settings() {
             </table>
           </div>
         )}
-
-        {!canManage && (
-          <p className="mt-4 text-xs text-gray-400">
+        {!canManage && team.length > 0 && (
+          <p className="mt-4 text-xs text-slate-600">
             Only account administrators can add or modify team members.
           </p>
         )}
       </Card>
 
-      {/* Create member modal */}
       <CreateMemberModal
         isOpen={createOpen}
         onClose={() => setCreateOpen(false)}
@@ -239,8 +264,8 @@ export default function Settings() {
         isSubmitting={createMutation.isPending}
       />
 
-      {/* Edit member modal */}
       <EditMemberModal
+        key={editTarget?.id}
         member={editTarget}
         assignableRoles={assignableRoles}
         onClose={() => setEditTarget(null)}
@@ -253,9 +278,6 @@ export default function Settings() {
   );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-// Platform-wide (SaaS) system settings — JSON key/value editor.
 function SystemSettingsCard() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -264,13 +286,12 @@ function SystemSettingsCard() {
   });
 
   const [draft, setDraft] = useState("");
-  const [initialized, setInitialized] = useState(false);
 
-  // Seed the editor once data loads
-  if (!initialized && data) {
-    setDraft(JSON.stringify(data, null, 2));
-    setInitialized(true);
-  }
+  useEffect(() => {
+    if (data) {
+      setDraft(JSON.stringify(data, null, 2));
+    }
+  }, [data]);
 
   const saveMutation = useMutation({
     mutationFn: (settings: Record<string, unknown>) =>
@@ -281,8 +302,7 @@ function SystemSettingsCard() {
     },
     onError: (err: unknown) => {
       const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ?? "Failed to update system settings";
+        err instanceof Error ? err.message : "Failed to update system settings";
       toast.error(msg);
     },
   });
@@ -320,12 +340,11 @@ function SystemSettingsCard() {
     >
       <div className="space-y-3">
         <div className="flex items-center gap-2 rounded-xl border border-gold-200 bg-gold-50/60 p-3 text-xs text-gold-800">
-          <SettingsIcon className="h-4 w-4" />
-          Platform-wide configuration shared across all tenants. Edit the JSON
-          below and save.
+          <SettingsIcon className="h-4 w-4" /> Platform-wide configuration
+          shared across all tenants.
         </div>
         {isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-slate-600">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading system
             settings…
           </div>
@@ -358,7 +377,7 @@ function ProfileRow({
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
           {label}
         </p>
         <p className="mt-0.5 truncate text-sm font-semibold text-gray-900">
@@ -478,22 +497,11 @@ function EditMemberModal({
   isSubmitting: boolean;
 }) {
   const [role, setRole] = useState(
-    member?.role ?? assignableRoles[0] ?? "viewer",
+    member?.role ?? assignableRoles[0] ?? "viewer"
   );
   const [isActive, setIsActive] = useState(member?.is_active ?? true);
   const [fullName, setFullName] = useState(member?.full_name ?? "");
   const [phone, setPhone] = useState(member?.phone ?? "");
-
-  // Reset state when a different member is opened
-  const key = member?.id;
-  const [lastKey, setLastKey] = useState<string | null>(key ?? null);
-  if (key && key !== lastKey) {
-    setLastKey(key);
-    setRole(member?.role ?? assignableRoles[0] ?? "viewer");
-    setIsActive(member?.is_active ?? true);
-    setFullName(member?.full_name ?? "");
-    setPhone(member?.phone ?? "");
-  }
 
   if (!member) return null;
 

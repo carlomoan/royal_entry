@@ -1,7 +1,4 @@
-// ==============================================================================
-// FILE: src/pages/Events.tsx
-// ==============================================================================
-
+// src/pages/Events.tsx
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -29,7 +26,9 @@ const schema = z.object({
   card_theme: z
     .enum(["elegant", "modern", "traditional", "colorful", "minimal"])
     .optional(),
+  send_save_the_date: z.boolean().default(true),
 });
+
 type EventForm = z.infer<typeof schema>;
 
 export default function Events() {
@@ -46,9 +45,14 @@ export default function Events() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["events"] });
       setShowCreate(false);
+      reset();
       toast.success("Event created!");
     },
-    onError: () => toast.error("Failed to create event"),
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to create event";
+      toast.error(message);
+    },
   });
 
   const {
@@ -56,22 +60,22 @@ export default function Events() {
     handleSubmit,
     formState: { errors },
     reset,
-  } = useForm<EventForm>({ resolver: zodResolver(schema) });
+  } = useForm<EventForm>({
+    resolver: zodResolver(schema),
+  });
 
   const onSubmit = (data: EventForm) => {
     createMutation.mutate(data as CreateEventInput);
-    reset();
   };
 
   const events = data?.data ?? [];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Events</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-slate-600 mt-1">
             {events.length} events total
           </p>
         </div>
@@ -80,7 +84,6 @@ export default function Events() {
         </Button>
       </div>
 
-      {/* Event grid */}
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
@@ -93,8 +96,8 @@ export default function Events() {
       ) : events.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-2xl border border-gray-200">
           <CalendarDays className="w-14 h-14 text-gray-200 mx-auto mb-4" />
-          <h3 className="font-semibold text-gray-500">No events yet</h3>
-          <p className="text-sm text-gray-400 mt-1">
+          <h3 className="font-semibold text-slate-700">No events yet</h3>
+          <p className="text-sm text-slate-500 mt-1">
             Create your first event to get started
           </p>
           <Button className="mt-4" onClick={() => setShowCreate(true)}>
@@ -107,42 +110,34 @@ export default function Events() {
             <Link
               key={event.id}
               to={`/events/${event.id}`}
-              className="bg-white rounded-2xl border border-gray-200 shadow-sm
-                         hover:shadow-md hover:border-gold-300 transition-all p-6 group"
+              className="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md hover:border-gold-300 transition-all p-6 group"
             >
-              {/* Status + date */}
               <div className="flex items-center justify-between mb-4">
                 <Badge label={event.status} />
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-slate-500">
                   {formatDate(event.event_date)}
                 </span>
               </div>
-
-              {/* Title */}
               <h3 className="font-bold text-gray-900 text-lg leading-snug group-hover:text-gold-600 transition-colors">
                 {event.title}
               </h3>
-
-              {/* Meta */}
               <div className="mt-3 space-y-1.5">
                 {event.venue_name && (
-                  <div className="flex items-center gap-2 text-gray-500 text-sm">
+                  <div className="flex items-center gap-2 text-slate-600 text-sm">
                     <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
                     <span className="truncate">{event.venue_name}</span>
                   </div>
                 )}
                 {event.guest_count_expected && (
-                  <div className="flex items-center gap-2 text-gray-500 text-sm">
+                  <div className="flex items-center gap-2 text-slate-600 text-sm">
                     <Users className="w-3.5 h-3.5 flex-shrink-0" />
                     <span>{event.guest_count_expected} expected guests</span>
                   </div>
                 )}
               </div>
-
-              {/* Dress code pill */}
               {event.dress_code && (
                 <div className="mt-4 pt-4 border-t border-gray-100">
-                  <span className="text-xs text-gray-400">Dress code: </span>
+                  <span className="text-xs text-slate-500">Dress code: </span>
                   <span className="text-xs font-medium text-gray-700">
                     {event.dress_code}
                   </span>
@@ -153,7 +148,6 @@ export default function Events() {
         </div>
       )}
 
-      {/* Create Event Modal */}
       <Modal
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
@@ -210,8 +204,7 @@ export default function Events() {
                 Card Theme
               </label>
               <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                           focus:ring-2 focus:ring-gold-400 focus:border-transparent outline-none"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gold-400 focus:border-transparent outline-none"
                 {...register("card_theme")}
               >
                 <option value="">Select theme</option>
@@ -221,6 +214,18 @@ export default function Events() {
                 <option value="colorful">Colorful</option>
                 <option value="minimal">Minimal</option>
               </select>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <input
+                type="checkbox"
+                id="send_save_the_date"
+                defaultChecked
+                {...register("send_save_the_date")}
+                className="h-4 w-4 rounded border-gray-300 text-gold-600 focus:ring-gold-500"
+              />
+              <label htmlFor="send_save_the_date" className="text-sm font-medium text-gray-700">
+                Send Save the Date
+              </label>
             </div>
           </div>
           <div className="flex gap-3 pt-2">

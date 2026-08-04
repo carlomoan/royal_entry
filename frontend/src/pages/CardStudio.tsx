@@ -1,4 +1,7 @@
-import { useMemo, useState } from "react";
+// ==============================================================================
+// FILE: src/pages/CardStudio.tsx
+// ==============================================================================
+import { useEffect, useMemo, useState } from "react"; // CHANGE: Added useEffect
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,6 +17,7 @@ import {
   ShieldCheck,
   Smartphone,
   Sparkles,
+  Wand2,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { eventsApi } from "@/api/events";
@@ -45,7 +49,6 @@ export default function CardStudio() {
   const { id: eventId } = useParams<{ id: string }>();
   const qc = useQueryClient();
 
-  // Initialise selected theme from the event's saved theme, if any.
   const { data: event } = useQuery({
     queryKey: ["event", eventId],
     queryFn: () => eventsApi.get(eventId!),
@@ -63,6 +66,11 @@ export default function CardStudio() {
 
   // Sync selected theme once the event loads.
   const eventTheme = event?.card_theme;
+  useEffect(() => {
+    if (eventTheme) {
+      setSelectedTheme(eventTheme);
+    }
+  }, [eventTheme]);
   const [themeSynced, setThemeSynced] = useState(false);
   if (!themeSynced && eventTheme) {
     setSelectedTheme(eventTheme);
@@ -105,10 +113,11 @@ export default function CardStudio() {
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
       toast.success("Card theme saved");
     },
-    onError: (error: any) =>
-      toast.error(
-        error?.response?.data?.error?.message ?? "Failed to save card theme",
-      ),
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to save card theme";
+      toast.error(message);
+    },
   });
 
   const generateMutation = useMutation({
@@ -121,11 +130,13 @@ export default function CardStudio() {
           : "Invitations already existed for the current guest list",
       );
     },
-    onError: (error: any) =>
-      toast.error(
-        error?.response?.data?.error?.message ??
-          "Failed to generate invitations",
-      ),
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to generate invitations";
+      toast.error(message);
+    },
   });
 
   const activeTemplate = getTemplate(selectedTheme);
@@ -163,6 +174,11 @@ export default function CardStudio() {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
+          <Link to={`/events/${eventId}/customize`}>
+            <Button variant="ghost">
+              <Wand2 className="h-4 w-4" /> Open customizer
+            </Button>
+          </Link>
           <Button
             variant="ghost"
             isLoading={generateMutation.isPending}

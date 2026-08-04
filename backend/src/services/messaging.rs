@@ -11,6 +11,7 @@ pub struct DeliveryAttempt {
     pub error_message: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct MessagingService {
     sms: SmsService,
     whatsapp: WhatsappService,
@@ -70,7 +71,7 @@ impl MessagingService {
     }
 
     async fn send_whatsapp(&self, to: &str, message: &str) -> DeliveryAttempt {
-        match self.whatsapp.send_text(to, message).await {
+        match self.whatsapp.send_message(to, message).await {
             Ok(result) => DeliveryAttempt {
                 channel: "whatsapp".to_string(),
                 success: true,

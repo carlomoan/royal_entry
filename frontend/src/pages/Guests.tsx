@@ -1,9 +1,7 @@
 // ==============================================================================
 // FILE: src/pages/Guests.tsx
 // ==============================================================================
-// Guest management — list, add single, bulk import, edit, delete
-
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,6 +12,11 @@ import {
   Search,
   Phone,
   TableProperties,
+  Download,
+  X,
+  
+  AlertCircle,
+  FileText,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -37,20 +40,39 @@ const schema = z.object({
   plus_one_allowed: z.boolean().optional(),
   contact_method: z.enum(["whatsapp", "sms", "email", "telegram"]).optional(),
 });
+
 type GuestForm = z.infer<typeof schema>;
 
 const CATEGORIES = ["VIP", "Regular", "Staff", "Family", "Friend"];
 const METHODS = ["whatsapp", "sms", "email", "telegram"];
 
+interface ImportResult {
+  summary: {
+    total_rows: number;
+    successful: number;
+    failed: number;
+    skipped_duplicates: number;
+  };
+  errors: Array<{
+    row_number: number;
+    field: string | null;
+    message: string;
+    raw_data: string | null;
+  }>;
+}
+
 export default function Guests() {
   const { id: eventId } = useParams<{ id: string }>();
   const qc = useQueryClient();
-
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [editingGuest, setEditingGuest] = useState<GuestWithRsvp | null>(null);
   const [page, setPage] = useState(1);
   const [filterRsvp, setFilterRsvp] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["guests", eventId, page, filterRsvp],
@@ -66,11 +88,9 @@ export default function Guests() {
     ? guests.filter(
         (g) =>
           g.full_name.toLowerCase().includes(search.toLowerCase()) ||
-          g.phone.includes(search),
+          g.phone.includes(search)
       )
     : guests;
-
-  // ── Mutations ───────────────────────────────────────────────────────────────
 
   const addMutation = useMutation({
     mutationFn: (d: CreateGuestInput) => guestsApi.add(eventId!, d),
@@ -79,8 +99,10 @@ export default function Guests() {
       setShowAdd(false);
       toast.success("Guest added");
     },
-    onError: (e: any) =>
-      toast.error(e?.response?.data?.error?.message ?? "Failed to add guest"),
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Failed to add guest";
+      toast.error(msg);
+    },
   });
 
   const updateMutation = useMutation({
@@ -102,8 +124,6 @@ export default function Guests() {
     },
     onError: () => toast.error("Failed to remove guest"),
   });
-
-  // ── Form ────────────────────────────────────────────────────────────────────
 
   const {
     register,
@@ -129,57 +149,125 @@ export default function Guests() {
     reset();
   };
 
-  // ── Bulk CSV import ─────────────────────────────────────────────────────────
-
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const text = await file.text();
-    const lines = text.trim().split("\n").slice(1); // skip header
-    const guests: CreateGuestInput[] = lines
-      .map((line) => {
-        const [full_name, phone, email, table_number, guest_category] = line
-          .split(",")
-          .map((s) => s.trim());
-        return {
-          full_name,
-          phone,
-          email: email || undefined,
-          table_number: table_number || undefined,
-          guest_category: (guest_category || "Regular") as any,
-        };
-      })
-      .filter((g) => g.full_name && g.phone);
-
-    if (!guests.length) {
-      toast.error("No valid guests found in CSV");
+  // ── CSV Import Handler ──────────────────────────────────────────────────────
+  const handleFileUpload = useCallback(async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      toast.error("Please upload a CSV file");
       return;
     }
 
-    try {
-      const result = await guestsApi.bulkAdd(eventId!, guests);
-      qc.invalidateQueries({ queryKey: ["guests", eventId] });
-      toast.success(`${result.length} guests imported`);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message ?? "Import failed");
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File too large. Maximum size is 5MB");
+      return;
     }
-    e.target.value = "";
+
+    setIsUploading(true);
+    setImportResult(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch(
+        `/api/v1/events/${eventId}/guests/import`,
+        {
+          method: "POST",
+          body: formData,
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+          },
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Import failed");
+      }
+
+      setImportResult(result.data);
+      qc.invalidateQueries({ queryKey: ["guests", eventId] });
+
+      if (result.data.summary.successful > 0) {
+        toast.success(
+          `Successfully imported ${result.data.summary.successful} guests`
+        );
+      }
+
+      if (result.data.summary.failed > 0) {
+        toast.error(
+          `${result.data.summary.failed} rows had errors. See details below.`
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Import failed";
+      toast.error(msg);
+    } finally {
+      setIsUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }, [eventId, qc]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Drag and Drop ───────────────────────────────────────────────────────────
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  };
+
+  // ── Download Template ───────────────────────────────────────────────────────
+  const downloadTemplate = async () => {
+    try {
+      const response = await fetch(
+        `/api/v1/events/${eventId}/guests/template`,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+          },
+        }
+      );
+      
+      if (!response.ok) throw new Error("Failed to download template");
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "guest_import_template.csv";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Template downloaded");
+    } catch (err) {
+      toast.error("Failed to download template");
+    }
+  };
 
   return (
     <div className="space-y-4">
-      {/* Controls */}
+      {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
           <input
-            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg
-                       focus:ring-2 focus:ring-gold-400 focus:border-transparent outline-none"
+            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-gold-400 focus:border-transparent outline-none"
             placeholder="Search by name or phone…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -198,20 +286,32 @@ export default function Guests() {
           Show RSVP
         </label>
         <span className="text-sm text-gray-500 ml-auto">{total} guests</span>
+        
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={downloadTemplate}
+        >
+          <Download className="w-4 h-4" /> Template
+        </Button>
+        
         <input
           ref={fileRef}
           type="file"
           accept=".csv"
           className="hidden"
-          onChange={handleBulkUpload}
+          onChange={handleFileChange}
         />
         <Button
           variant="ghost"
           size="sm"
           onClick={() => fileRef.current?.click()}
+          disabled={isUploading}
         >
-          <Upload className="w-4 h-4" /> Import CSV
+          <Upload className="w-4 h-4" />
+          {isUploading ? "Importing…" : "Import CSV"}
         </Button>
+        
         <Button
           size="sm"
           onClick={() => {
@@ -224,15 +324,103 @@ export default function Guests() {
         </Button>
       </div>
 
-      {/* CSV format hint */}
-      <p className="text-xs text-gray-400">
-        CSV format:{" "}
-        <code className="bg-gray-100 px-1 rounded">
-          full_name, phone, email, table_number, category
-        </code>
-      </p>
+      {/* Drag and Drop Zone */}
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+          isDragging
+            ? "border-gold-500 bg-gold-50"
+            : "border-gray-300 bg-gray-50"
+        }`}
+      >
+        <FileText className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+        <p className="text-sm text-gray-600">
+          Drag and drop your CSV file here, or click "Import CSV" above
+        </p>
+        <p className="text-xs text-gray-400 mt-1">
+          Max file size: 5MB · Max 500 guests per import
+        </p>
+      </div>
 
-      {/* Table */}
+      {/* Import Results */}
+      {importResult && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-900">
+              Import Results
+            </h3>
+            <button
+              onClick={() => setImportResult(null)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div className="bg-blue-50 rounded-lg p-3">
+              <p className="text-xs text-blue-600 font-medium">Total Rows</p>
+              <p className="text-xl font-bold text-blue-900">
+                {importResult.summary.total_rows}
+              </p>
+            </div>
+            <div className="bg-green-50 rounded-lg p-3">
+              <p className="text-xs text-green-600 font-medium">Successful</p>
+              <p className="text-xl font-bold text-green-900">
+                {importResult.summary.successful}
+              </p>
+            </div>
+            <div className="bg-red-50 rounded-lg p-3">
+              <p className="text-xs text-red-600 font-medium">Failed</p>
+              <p className="text-xl font-bold text-red-900">
+                {importResult.summary.failed}
+              </p>
+            </div>
+            <div className="bg-amber-50 rounded-lg p-3">
+              <p className="text-xs text-amber-600 font-medium">
+                Duplicates Skipped
+              </p>
+              <p className="text-xl font-bold text-amber-900">
+                {importResult.summary.skipped_duplicates}
+              </p>
+            </div>
+          </div>
+
+          {importResult.errors.length > 0 && (
+            <div className="max-h-64 overflow-y-auto">
+              <p className="text-xs font-semibold text-gray-700 mb-2">
+                Errors ({importResult.errors.length}):
+              </p>
+              <div className="space-y-1">
+                {importResult.errors.slice(0, 20).map((err, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-start gap-2 text-xs bg-red-50 border border-red-200 rounded p-2"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <span className="font-medium">
+                        Row {err.row_number}
+                        {err.field && ` (${err.field})`}:
+                      </span>{" "}
+                      <span className="text-red-700">{err.message}</span>
+                    </div>
+                  </div>
+                ))}
+                {importResult.errors.length > 20 && (
+                  <p className="text-xs text-gray-500 text-center py-2">
+                    …and {importResult.errors.length - 20} more errors
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Guest List */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-gray-400 text-sm">
@@ -296,8 +484,8 @@ export default function Guests() {
                   </td>
                   {filterRsvp && (
                     <td className="px-4 py-3">
-                      {(g as any).rsvp_response ? (
-                        <Badge label={(g as any).rsvp_response} />
+                      {g.rsvp_response ? (
+                        <Badge label={g.rsvp_response} />
                       ) : (
                         <span className="text-gray-400 text-xs">—</span>
                       )}
@@ -354,7 +542,7 @@ export default function Guests() {
         </div>
       )}
 
-      {/* Add / Edit Modal */}
+      {/* Add/Edit Guest Modal */}
       <Modal
         isOpen={showAdd || !!editingGuest}
         onClose={() => {
@@ -390,8 +578,7 @@ export default function Guests() {
                 Category
               </label>
               <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                                 focus:ring-2 focus:ring-gold-400 outline-none"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gold-400 outline-none"
                 {...register("guest_category")}
               >
                 <option value="">Select…</option>
@@ -407,8 +594,7 @@ export default function Guests() {
                 Contact Via
               </label>
               <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                                 focus:ring-2 focus:ring-gold-400 outline-none"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-gold-400 outline-none"
                 {...register("contact_method")}
               >
                 {METHODS.map((m) => (

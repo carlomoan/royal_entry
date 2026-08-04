@@ -1,0 +1,12 @@
+Dear {{organization_name}},
+
+SECOND NOTICE - Payment Overdue
+
+Invoice {{invoice_number}} for {{amount}} is now {{days_overdue}} days overdue.
+
+Please pay immediately to avoid service suspension.
+
+Pay here: {{payment_url}}
+
+Regards,
+RoyalEntry Team

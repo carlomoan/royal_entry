@@ -1,5 +1,7 @@
+// ==============================================================================
+// FILE: src/handlers/michango.rs
+// ==============================================================================
 use std::sync::Arc;
-
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -8,9 +10,8 @@ use axum::{
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::Row;
 use uuid::Uuid;
-
+use sqlx::Row;
 use crate::{
     error::{AppError, AppResult},
     models::{event::Event, user::Claims},
@@ -111,53 +112,27 @@ async fn assert_event_ownership(
     let event = EventRepository::get_by_id(state.db.pool(), event_id)
         .await?
         .ok_or(AppError::EventNotFound)?;
-
     if event.organization_id != org_id {
         return Err(AppError::Forbidden);
     }
-
     Ok(event)
 }
 
 fn resolve_status(pledged_amount: i64, amount_paid: i64, payment_deadline: Option<NaiveDate>) -> String {
     let today = Utc::now().date_naive();
-
     if amount_paid >= pledged_amount {
         return "paid".to_string();
     }
-
     if let Some(deadline) = payment_deadline {
         if deadline < today {
             return "overdue".to_string();
         }
     }
-
     if amount_paid > 0 {
         "partial".to_string()
     } else {
         "pending".to_string()
     }
-}
-
-async fn sync_overdue_statuses(state: &Arc<AppState>, event_id: Uuid) -> AppResult<()> {
-    sqlx::query(
-        r#"
-        UPDATE pledge_tracker
-        SET payment_status = CASE
-            WHEN amount_paid >= pledged_amount THEN 'paid'
-            WHEN payment_deadline IS NOT NULL AND payment_deadline < CURRENT_DATE THEN 'overdue'
-            WHEN amount_paid > 0 THEN 'partial'
-            ELSE 'pending'
-        END,
-        updated_at = NOW()
-        WHERE event_id = $1
-        "#,
-    )
-    .bind(event_id)
-    .execute(state.db.pool())
-    .await?;
-
-    Ok(())
 }
 
 async fn guest_belongs_to_event(state: &Arc<AppState>, event_id: Uuid, guest_id: Uuid) -> AppResult<bool> {
@@ -168,33 +143,13 @@ async fn guest_belongs_to_event(state: &Arc<AppState>, event_id: Uuid, guest_id:
     .bind(event_id)
     .fetch_one(state.db.pool())
     .await?;
-
     Ok(count > 0)
 }
 
 async fn fetch_pledges(state: &Arc<AppState>, event_id: Uuid, status: Option<&str>) -> AppResult<Vec<PledgeResponse>> {
     let pledges = if let Some(status) = status {
         sqlx::query_as::<_, PledgeResponse>(
-            r#"
-            SELECT
-                pt.id,
-                pt.guest_id,
-                g.full_name AS guest_name,
-                g.phone AS guest_phone,
-                pt.pledged_amount,
-                pt.amount_paid,
-                GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount,
-                pt.payment_status,
-                pt.payment_deadline,
-                pt.reminder_count,
-                pt.last_reminder_sent_at,
-                pt.notes,
-                pt.created_at
-            FROM pledge_tracker pt
-            JOIN guests g ON g.id = pt.guest_id
-            WHERE pt.event_id = $1 AND pt.payment_status = $2
-            ORDER BY pt.created_at DESC
-            "#,
+            r#"SELECT pt.id, pt.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, pt.pledged_amount, pt.amount_paid, GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount, pt.payment_status, pt.payment_deadline, pt.reminder_count, pt.last_reminder_sent_at, pt.notes, pt.created_at FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status = $2 ORDER BY pt.created_at DESC"#,
         )
         .bind(event_id)
         .bind(status)
@@ -202,32 +157,12 @@ async fn fetch_pledges(state: &Arc<AppState>, event_id: Uuid, status: Option<&st
         .await?
     } else {
         sqlx::query_as::<_, PledgeResponse>(
-            r#"
-            SELECT
-                pt.id,
-                pt.guest_id,
-                g.full_name AS guest_name,
-                g.phone AS guest_phone,
-                pt.pledged_amount,
-                pt.amount_paid,
-                GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount,
-                pt.payment_status,
-                pt.payment_deadline,
-                pt.reminder_count,
-                pt.last_reminder_sent_at,
-                pt.notes,
-                pt.created_at
-            FROM pledge_tracker pt
-            JOIN guests g ON g.id = pt.guest_id
-            WHERE pt.event_id = $1
-            ORDER BY pt.created_at DESC
-            "#,
+            r#"SELECT pt.id, pt.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, pt.pledged_amount, pt.amount_paid, GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount, pt.payment_status, pt.payment_deadline, pt.reminder_count, pt.last_reminder_sent_at, pt.notes, pt.created_at FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 ORDER BY pt.created_at DESC"#,
         )
         .bind(event_id)
         .fetch_all(state.db.pool())
         .await?
     };
-
     Ok(pledges)
 }
 
@@ -239,14 +174,9 @@ pub async fn list_pledges(
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     assert_event_ownership(&state, event_id, org_id).await?;
-    sync_overdue_statuses(&state, event_id).await?;
 
-    let pledges = fetch_pledges(&state, event_id, filter.status.as_deref()).await?;
-
-    Ok(Json(json!({
-        "success": true,
-        "data": pledges,
-    })))
+    let pledges: Vec<PledgeResponse> = fetch_pledges(&state, event_id, filter.status.as_deref()).await?;
+    Ok(Json(json!({ "success": true, "data": pledges })))
 }
 
 pub async fn get_summary(
@@ -256,22 +186,9 @@ pub async fn get_summary(
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     assert_event_ownership(&state, event_id, org_id).await?;
-    sync_overdue_statuses(&state, event_id).await?;
 
     let row = sqlx::query(
-        r#"
-        SELECT
-            COUNT(*) AS total_pledgers,
-            COALESCE(SUM(pledged_amount), 0) AS total_pledged_tsh,
-            COALESCE(SUM(amount_paid), 0) AS total_collected_tsh,
-            COALESCE(SUM(GREATEST(pledged_amount - amount_paid, 0)), 0) AS total_outstanding_tsh,
-            COUNT(*) FILTER (WHERE payment_status = 'pending') AS pending_count,
-            COUNT(*) FILTER (WHERE payment_status = 'partial') AS partial_count,
-            COUNT(*) FILTER (WHERE payment_status = 'paid') AS paid_count,
-            COUNT(*) FILTER (WHERE payment_status = 'overdue') AS overdue_count
-        FROM pledge_tracker
-        WHERE event_id = $1
-        "#,
+        r#"SELECT COUNT(*) AS total_pledgers, COALESCE(SUM(pledged_amount), 0) AS total_pledged_tsh, COALESCE(SUM(amount_paid), 0) AS total_collected_tsh, COALESCE(SUM(GREATEST(pledged_amount - amount_paid, 0)), 0) AS total_outstanding_tsh, COUNT(*) FILTER (WHERE payment_status = 'pending') AS pending_count, COUNT(*) FILTER (WHERE payment_status = 'partial') AS partial_count, COUNT(*) FILTER (WHERE payment_status = 'paid') AS paid_count, COUNT(*) FILTER (WHERE payment_status = 'overdue') AS overdue_count FROM pledge_tracker WHERE event_id = $1"#,
     )
     .bind(event_id)
     .fetch_one(state.db.pool())
@@ -279,6 +196,7 @@ pub async fn get_summary(
 
     let total_pledged_tsh: i64 = row.try_get("total_pledged_tsh").unwrap_or(0);
     let total_collected_tsh: i64 = row.try_get("total_collected_tsh").unwrap_or(0);
+
     let response = MichangoSummaryResponse {
         total_pledgers: row.try_get("total_pledgers").unwrap_or(0),
         total_pledged_tsh,
@@ -291,10 +209,7 @@ pub async fn get_summary(
         overdue_count: row.try_get("overdue_count").unwrap_or(0),
     };
 
-    Ok(Json(json!({
-        "success": true,
-        "data": response,
-    })))
+    Ok(Json(json!({ "success": true, "data": response })))
 }
 
 pub async fn create_pledge(
@@ -309,7 +224,6 @@ pub async fn create_pledge(
     if payload.pledged_amount <= 0 {
         return Err(AppError::ValidationError("Pledged amount must be greater than 0".to_string()));
     }
-
     if !guest_belongs_to_event(&state, event_id, payload.guest_id).await? {
         return Err(AppError::GuestNotFound);
     }
@@ -326,9 +240,7 @@ pub async fn create_pledge(
         return Err(AppError::Conflict("Pledge already exists for this guest".to_string()));
     }
 
-    let deadline = payload
-        .payment_deadline
-        .as_deref()
+    let deadline = payload.payment_deadline.as_deref()
         .map(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d"))
         .transpose()
         .map_err(|_| AppError::ValidationError("Invalid payment_deadline format".to_string()))?;
@@ -338,13 +250,7 @@ pub async fn create_pledge(
     let pledge_id = Uuid::new_v4();
 
     sqlx::query(
-        r#"
-        INSERT INTO pledge_tracker (
-            id, event_id, guest_id, pledged_amount, amount_paid, payment_status,
-            payment_deadline, reminder_count, notes, created_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, 0, $5, $6, 0, $7, $8, $8)
-        "#,
+        r#"INSERT INTO pledge_tracker (id, event_id, guest_id, pledged_amount, amount_paid, payment_status, payment_deadline, reminder_count, notes, created_at, updated_at) VALUES ($1, $2, $3, $4, 0, $5, $6, 0, $7, $8, $8)"#,
     )
     .bind(pledge_id)
     .bind(event_id)
@@ -363,13 +269,7 @@ pub async fn create_pledge(
         .find(|item| item.id == pledge_id)
         .ok_or(AppError::InternalServerError)?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
-            "success": true,
-            "data": pledge,
-        })),
-    ))
+    Ok((StatusCode::CREATED, Json(json!({ "success": true, "data": pledge }))))
 }
 
 pub async fn record_payment(
@@ -386,11 +286,7 @@ pub async fn record_payment(
     }
 
     let row = sqlx::query(
-        r#"
-        SELECT pledged_amount, amount_paid, payment_deadline
-        FROM pledge_tracker
-        WHERE id = $1 AND event_id = $2
-        "#,
+        r#"SELECT pledged_amount, amount_paid, payment_deadline FROM pledge_tracker WHERE id = $1 AND event_id = $2"#,
     )
     .bind(pledge_id)
     .bind(event_id)
@@ -401,8 +297,10 @@ pub async fn record_payment(
     let pledged_amount: i64 = row.try_get("pledged_amount").unwrap_or(0);
     let current_paid: i64 = row.try_get("amount_paid").unwrap_or(0);
     let payment_deadline: Option<NaiveDate> = row.try_get("payment_deadline").ok();
+
     let new_amount_paid = current_paid + payload.amount_paid;
     let status = resolve_status(pledged_amount, new_amount_paid, payment_deadline);
+
     let notes = payload.notes.unwrap_or_else(|| {
         let method = payload.payment_method.unwrap_or_else(|| "manual".to_string());
         match payload.payment_reference {
@@ -412,17 +310,7 @@ pub async fn record_payment(
     });
 
     sqlx::query(
-        r#"
-        UPDATE pledge_tracker
-        SET amount_paid = $3,
-            payment_status = $4,
-            notes = CASE
-                WHEN notes IS NULL OR notes = '' THEN $5
-                ELSE notes || E'\n' || $5
-            END,
-            updated_at = NOW()
-        WHERE id = $1 AND event_id = $2
-        "#,
+        r#"UPDATE pledge_tracker SET amount_paid = $3, payment_status = $4, notes = CASE WHEN notes IS NULL OR notes = '' THEN $5 ELSE notes || E'\n' || $5 END, updated_at = NOW() WHERE id = $1 AND event_id = $2"#,
     )
     .bind(pledge_id)
     .bind(event_id)
@@ -432,10 +320,7 @@ pub async fn record_payment(
     .execute(state.db.pool())
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Payment recorded successfully",
-    })))
+    Ok(Json(json!({ "success": true, "message": "Payment recorded successfully" })))
 }
 
 pub async fn list_reminder_deliveries(
@@ -447,34 +332,13 @@ pub async fn list_reminder_deliveries(
     assert_event_ownership(&state, event_id, org_id).await?;
 
     let deliveries = sqlx::query_as::<_, ReminderDeliveryResponse>(
-        r#"
-        SELECT
-            rd.id,
-            rd.pledge_id,
-            rd.guest_id,
-            g.full_name AS guest_name,
-            g.phone AS guest_phone,
-            rd.channel,
-            rd.status,
-            rd.provider_message_id,
-            rd.error_message,
-            rd.message,
-            rd.delivered_at
-        FROM reminder_deliveries rd
-        JOIN guests g ON g.id = rd.guest_id
-        WHERE rd.event_id = $1
-        ORDER BY rd.delivered_at DESC, g.full_name ASC
-        LIMIT 100
-        "#,
+        r#"SELECT rd.id, rd.pledge_id, rd.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, rd.channel, rd.status, rd.provider_message_id, rd.error_message, rd.message, rd.delivered_at FROM reminder_deliveries rd JOIN guests g ON g.id = rd.guest_id WHERE rd.event_id = $1 ORDER BY rd.delivered_at DESC, g.full_name ASC LIMIT 100"#,
     )
     .bind(event_id)
     .fetch_all(state.db.pool())
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": deliveries,
-    })))
+    Ok(Json(json!({ "success": true, "data": deliveries })))
 }
 
 pub async fn send_reminders(
@@ -485,31 +349,12 @@ pub async fn send_reminders(
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     assert_event_ownership(&state, event_id, org_id).await?;
-    sync_overdue_statuses(&state, event_id).await?;
 
     let custom_message = payload.custom_message.clone();
-    let statuses = payload.statuses.unwrap_or_else(|| vec![
-        "pending".to_string(),
-        "partial".to_string(),
-        "overdue".to_string(),
-    ]);
+    let statuses = payload.statuses.unwrap_or_else(|| vec!["pending".to_string(), "partial".to_string(), "overdue".to_string()]);
 
     let recipients = sqlx::query_as::<_, ReminderRecipient>(
-        r#"
-        SELECT
-            pt.id AS pledge_id,
-            g.id AS guest_id,
-            g.phone,
-            g.contact_method,
-            g.full_name,
-            pt.pledged_amount,
-            pt.amount_paid,
-            pt.payment_deadline
-        FROM pledge_tracker pt
-        JOIN guests g ON g.id = pt.guest_id
-        WHERE pt.event_id = $1 AND pt.payment_status = ANY($2)
-        ORDER BY g.full_name ASC
-        "#,
+        r#"SELECT pt.id AS pledge_id, g.id AS guest_id, g.phone, g.contact_method, g.full_name, pt.pledged_amount, pt.amount_paid, pt.payment_deadline FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status = ANY($2) ORDER BY g.full_name ASC"#,
     )
     .bind(event_id)
     .bind(&statuses)
@@ -523,14 +368,8 @@ pub async fn send_reminders(
     for recipient in recipients {
         let outstanding = (recipient.pledged_amount - recipient.amount_paid).max(0);
         let default_message = match recipient.payment_deadline {
-            Some(deadline) => format!(
-                "Hello {}, this is a RoyalEntry michango reminder. Outstanding amount: TZS {}. Payment deadline: {}.",
-                recipient.full_name, outstanding, deadline
-            ),
-            None => format!(
-                "Hello {}, this is a RoyalEntry michango reminder. Outstanding amount: TZS {}.",
-                recipient.full_name, outstanding
-            ),
+            Some(deadline) => format!("Hello {}, this is a RoyalEntry michango reminder. Outstanding amount: TZS {}. Payment deadline: {}.", recipient.full_name, outstanding, deadline),
+            None => format!("Hello {}, this is a RoyalEntry michango reminder. Outstanding amount: TZS {}.", recipient.full_name, outstanding),
         };
         let message = custom_message.clone().unwrap_or(default_message);
         let channel = match recipient.contact_method.as_str() {
@@ -544,13 +383,7 @@ pub async fn send_reminders(
 
         for attempt in attempts {
             sqlx::query(
-                r#"
-                INSERT INTO reminder_deliveries (
-                    id, event_id, pledge_id, guest_id, channel, status,
-                    provider_message_id, error_message, message, delivered_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-                "#,
+                r#"INSERT INTO reminder_deliveries (id, event_id, pledge_id, guest_id, channel, status, provider_message_id, error_message, message, delivered_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())"#,
             )
             .bind(Uuid::new_v4())
             .bind(event_id)
@@ -568,13 +401,7 @@ pub async fn send_reminders(
         if success {
             sent += 1;
             sqlx::query(
-                r#"
-                UPDATE pledge_tracker
-                SET reminder_count = reminder_count + 1,
-                    last_reminder_sent_at = NOW(),
-                    updated_at = NOW()
-                WHERE id = $1
-                "#,
+                r#"UPDATE pledge_tracker SET reminder_count = reminder_count + 1, last_reminder_sent_at = NOW(), updated_at = NOW() WHERE id = $1"#,
             )
             .bind(recipient.pledge_id)
             .execute(state.db.pool())
@@ -585,13 +412,5 @@ pub async fn send_reminders(
     }
 
     let message = custom_message.unwrap_or_else(|| "Michango reminders processed".to_string());
-
-    Ok(Json(json!({
-        "success": true,
-        "data": {
-            "sent": sent,
-            "failed": failed,
-            "message": message,
-        }
-    })))
+    Ok(Json(json!({ "success": true, "data": { "sent": sent, "failed": failed, "message": message } })))
 }

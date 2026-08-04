@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px;">
+  <div style="max-width: 600px; margin: auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+    <div style="background: linear-gradient(135deg, #991b1b, #7f1d1d); padding: 24px; text-align: center;">
+      <h1 style="color: #fca5a5; margin: 0; font-size: 20px;">⚠ FINAL NOTICE</h1>
+    </div>
+    <div style="padding: 32px;">
+      <h2 style="color: #991b1b;">Final Notice - Service Suspension Imminent</h2>
+      <p>Dear {{organization_name}},</p>
+      <p><strong>This is your final notice.</strong> Invoice <strong>{{invoice_number}}</strong> for <strong>{{amount}}</strong> is outstanding and now <strong>{{days_overdue}} days overdue</strong>.</p>
+      <div style="background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 16px; margin: 16px 0;">
+        <p style="margin: 0;"><strong>Invoice:</strong> {{invoice_number}}<br>
+        <strong>Amount:</strong> {{amount}}<br>
+        <strong>Original Due Date:</strong> {{due_date}}<br>
+        <strong>Days Overdue:</strong> {{days_overdue}}<br>
+        <strong style="color: #dc2626;">Suspension Date: {{suspension_date}}</strong></p>
+      </div>
+      <p>Your account will be <strong>suspended</strong> on <strong>{{suspension_date}}</strong> if payment is not received. All events, guests, and services will be inaccessible.</p>
+      <a href="{{payment_url}}" style="display: inline-block; background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold;">Pay Immediately</a>
+    </div>
+    <div style="background: #f8f8f8; padding: 16px; text-align: center; font-size: 12px; color: #666;">
+      <p>RoyalEntry - Event Guest Management Platform</p>
+      <p><a href="mailto:{{support_email}}" style="color: #d4a843;">{{support_email}}</a></p>
+    </div>
+  </div>
+</body>
+</html>

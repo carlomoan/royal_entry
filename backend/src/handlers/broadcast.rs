@@ -1,15 +1,16 @@
+// ==============================================================================
+// FILE: src/handlers/broadcast.rs
+// ==============================================================================
 use std::sync::Arc;
-
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Extension, Json,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
-
 use crate::{
     error::{AppError, AppResult},
     models::{event::Event, user::Claims},
@@ -37,8 +38,8 @@ pub struct CampaignResponse {
     pub total_recipients: Option<i32>,
     pub successfully_sent: i32,
     pub failed_count: i32,
-    pub sent_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    pub sent_at: Option<chrono::DateTime<Utc>>,
+    pub created_at: chrono::DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -52,7 +53,7 @@ pub struct BroadcastDeliveryResponse {
     pub status: String,
     pub provider_message_id: Option<String>,
     pub error_message: Option<String>,
-    pub delivered_at: DateTime<Utc>,
+    pub delivered_at: chrono::DateTime<Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -69,11 +70,9 @@ async fn assert_event_ownership(
     let event = EventRepository::get_by_id(state.db.pool(), event_id)
         .await?
         .ok_or(AppError::EventNotFound)?;
-
     if event.organization_id != org_id {
         return Err(AppError::Forbidden);
     }
-
     Ok(event)
 }
 
@@ -84,92 +83,33 @@ async fn fetch_recipients(
     guest_category: Option<&str>,
 ) -> AppResult<Vec<RecipientRow>> {
     let category = guest_category.map(|s| s.to_string());
-
     let rows = match target {
         "vip" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"
-                SELECT g.id AS guest_id, g.phone
-                FROM guests g
-                WHERE g.event_id = $1
-                  AND UPPER(COALESCE(g.guest_category, '')) = 'VIP'
-                  AND ($2::text IS NULL OR g.guest_category = $2)
-                ORDER BY g.full_name ASC
-                "#,
-            )
-            .bind(event_id)
-            .bind(category)
-            .fetch_all(state.db.pool())
-            .await?
+                r#"SELECT g.id AS guest_id, g.phone FROM guests g WHERE g.event_id = $1 AND UPPER(COALESCE(g.guest_category, '')) = 'VIP' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         "confirmed" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"
-                SELECT g.id AS guest_id, g.phone
-                FROM guests g
-                JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id
-                WHERE g.event_id = $1
-                  AND r.response = 'confirmed'
-                  AND ($2::text IS NULL OR g.guest_category = $2)
-                ORDER BY g.full_name ASC
-                "#,
-            )
-            .bind(event_id)
-            .bind(category)
-            .fetch_all(state.db.pool())
-            .await?
+                r#"SELECT g.id AS guest_id, g.phone FROM guests g JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND r.response = 'confirmed' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         "declined" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"
-                SELECT g.id AS guest_id, g.phone
-                FROM guests g
-                JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id
-                WHERE g.event_id = $1
-                  AND r.response = 'declined'
-                  AND ($2::text IS NULL OR g.guest_category = $2)
-                ORDER BY g.full_name ASC
-                "#,
-            )
-            .bind(event_id)
-            .bind(category)
-            .fetch_all(state.db.pool())
-            .await?
+                r#"SELECT g.id AS guest_id, g.phone FROM guests g JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND r.response = 'declined' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         "not_rsvp" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"
-                SELECT g.id AS guest_id, g.phone
-                FROM guests g
-                LEFT JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id
-                WHERE g.event_id = $1
-                  AND (r.guest_id IS NULL OR r.response = 'pending')
-                  AND ($2::text IS NULL OR g.guest_category = $2)
-                ORDER BY g.full_name ASC
-                "#,
-            )
-            .bind(event_id)
-            .bind(category)
-            .fetch_all(state.db.pool())
-            .await?
+                r#"SELECT g.id AS guest_id, g.phone FROM guests g LEFT JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND (r.guest_id IS NULL OR r.response = 'pending') AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         _ => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"
-                SELECT g.id AS guest_id, g.phone
-                FROM guests g
-                WHERE g.event_id = $1
-                  AND ($2::text IS NULL OR g.guest_category = $2)
-                ORDER BY g.full_name ASC
-                "#,
-            )
-            .bind(event_id)
-            .bind(category)
-            .fetch_all(state.db.pool())
-            .await?
+                r#"SELECT g.id AS guest_id, g.phone FROM guests g WHERE g.event_id = $1 AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
     };
-
     Ok(rows)
 }
 
@@ -182,31 +122,13 @@ pub async fn list_broadcasts(
     assert_event_ownership(&state, event_id, org_id).await?;
 
     let campaigns = sqlx::query_as::<_, CampaignResponse>(
-        r#"
-        SELECT
-            id,
-            campaign_name,
-            message_channel,
-            target_audience,
-            status,
-            total_recipients,
-            successfully_sent,
-            failed_count,
-            sent_at,
-            created_at
-        FROM broadcast_campaigns
-        WHERE event_id = $1
-        ORDER BY created_at DESC
-        "#,
+        r#"SELECT id, campaign_name, message_channel, target_audience, status, total_recipients, successfully_sent, failed_count, sent_at, created_at FROM broadcast_campaigns WHERE event_id = $1 ORDER BY created_at DESC"#,
     )
     .bind(event_id)
     .fetch_all(state.db.pool())
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": campaigns,
-    })))
+    Ok(Json(json!({ "success": true, "data": campaigns })))
 }
 
 pub async fn list_broadcast_deliveries(
@@ -230,32 +152,13 @@ pub async fn list_broadcast_deliveries(
     }
 
     let deliveries = sqlx::query_as::<_, BroadcastDeliveryResponse>(
-        r#"
-        SELECT
-            bd.id,
-            bd.campaign_id,
-            bd.guest_id,
-            g.full_name AS guest_name,
-            g.phone AS guest_phone,
-            bd.channel,
-            bd.status,
-            bd.provider_message_id,
-            bd.error_message,
-            bd.delivered_at
-        FROM broadcast_deliveries bd
-        JOIN guests g ON g.id = bd.guest_id
-        WHERE bd.campaign_id = $1
-        ORDER BY bd.delivered_at DESC, g.full_name ASC
-        "#,
+        r#"SELECT bd.id, bd.campaign_id, bd.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, bd.channel, bd.status, bd.provider_message_id, bd.error_message, bd.delivered_at FROM broadcast_deliveries bd JOIN guests g ON g.id = bd.guest_id WHERE bd.campaign_id = $1 ORDER BY bd.delivered_at DESC, g.full_name ASC"#,
     )
     .bind(campaign_id)
     .fetch_all(state.db.pool())
     .await?;
 
-    Ok(Json(json!({
-        "success": true,
-        "data": deliveries,
-    })))
+    Ok(Json(json!({ "success": true, "data": deliveries })))
 }
 
 pub async fn send_broadcast(
@@ -276,19 +179,25 @@ pub async fn send_broadcast(
     let target = payload.target.unwrap_or_else(|| "all".to_string());
     let campaign_name = payload.campaign_name.clone();
     let guest_category = payload.guest_category.clone();
+
     let recipients = fetch_recipients(&state, event_id, &target, guest_category.as_deref()).await?;
+
+    if recipients.is_empty() {
+        return Ok((
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "data": { "sent": 0, "failed": 0, "campaign_id": null, "message": "No recipients matched the target audience" }
+            })),
+        ));
+    }
+
     let now = Utc::now();
     let campaign_id = Uuid::new_v4();
+    let total_recipients = recipients.len() as i32;
 
     sqlx::query(
-        r#"
-        INSERT INTO broadcast_campaigns (
-            id, event_id, campaign_name, message, message_channel, target_audience,
-            guest_category, status, total_recipients, successfully_sent, failed_count,
-            sent_at, created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing', $8, 0, 0, $9, $9)
-        "#,
+        r#"INSERT INTO broadcast_campaigns (id, event_id, campaign_name, message, message_channel, target_audience, guest_category, status, total_recipients, successfully_sent, failed_count, sent_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing', $8, 0, 0, $9, $9)"#,
     )
     .bind(campaign_id)
     .bind(event_id)
@@ -297,7 +206,7 @@ pub async fn send_broadcast(
     .bind(&channel)
     .bind(&target)
     .bind(guest_category)
-    .bind(recipients.len() as i32)
+    .bind(total_recipients)
     .bind(now)
     .execute(state.db.pool())
     .await?;
@@ -309,22 +218,11 @@ pub async fn send_broadcast(
     for recipient in recipients {
         let attempts = messaging.send(&channel, &recipient.phone, &message).await?;
         let recipient_success = attempts.iter().any(|attempt| attempt.success);
-
-        if recipient_success {
-            sent += 1;
-        } else {
-            failed += 1;
-        }
+        if recipient_success { sent += 1; } else { failed += 1; }
 
         for attempt in attempts {
             sqlx::query(
-                r#"
-                INSERT INTO broadcast_deliveries (
-                    id, campaign_id, guest_id, channel, status,
-                    provider_message_id, error_message, delivered_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-                "#,
+                r#"INSERT INTO broadcast_deliveries (id, campaign_id, guest_id, channel, status, provider_message_id, error_message, delivered_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())"#,
             )
             .bind(Uuid::new_v4())
             .bind(campaign_id)
@@ -338,23 +236,10 @@ pub async fn send_broadcast(
         }
     }
 
-    let status = if failed == 0 {
-        "sent"
-    } else if sent > 0 {
-        "partial"
-    } else {
-        "failed"
-    };
+    let status = if failed == 0 { "sent" } else if sent > 0 { "partial" } else { "failed" };
 
     sqlx::query(
-        r#"
-        UPDATE broadcast_campaigns
-        SET status = $2,
-            successfully_sent = $3,
-            failed_count = $4,
-            sent_at = NOW()
-        WHERE id = $1
-        "#,
+        r#"UPDATE broadcast_campaigns SET status = $2, successfully_sent = $3, failed_count = $4, sent_at = NOW() WHERE id = $1"#,
     )
     .bind(campaign_id)
     .bind(status)
@@ -363,25 +248,11 @@ pub async fn send_broadcast(
     .execute(state.db.pool())
     .await?;
 
-    tracing::info!(
-        event_id = %event_id,
-        campaign_id = %campaign_id,
-        channel = %channel,
-        target = %target,
-        sent = sent,
-        failed = failed,
-        "Broadcast processed"
-    );
-
     Ok((
         StatusCode::OK,
         Json(json!({
             "success": true,
-            "data": {
-                "sent": sent,
-                "failed": failed,
-                "campaign_id": campaign_id,
-            }
+            "data": { "sent": sent, "failed": failed, "campaign_id": campaign_id }
         })),
     ))
 }

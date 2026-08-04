@@ -55,4 +55,21 @@ export const eventsApi = {
   delete: async (id: string): Promise<void> => {
     await apiClient.delete(`/events/${id}`);
   },
+
+  downloadReportPdf: async (id: string): Promise<Blob> => {
+    const res = await apiClient.get(`/events/${id}/report/pdf`, {
+      responseType: "blob",
+    });
+    return res.data;
+  },
+
+  sendSaveTheDate: async (id: string): Promise<Event> => {
+    const res = await apiClient.post(`/events/${id}/send-save-the-date`);
+    return res.data.data;
+  },
+
+  complete: async (id: string): Promise<Event> => {
+    const res = await apiClient.post(`/events/${id}/complete`);
+    return res.data.data;
+  },
 };
