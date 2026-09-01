@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px;">
+  <div style="max-width: 600px; margin: auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+    <div style="background: linear-gradient(135deg, #0a1628, #1a2744); padding: 24px; text-align: center;">
+      <h1 style="color: #d4a843; margin: 0; font-size: 20px;">RoyalEntry</h1>
+    </div>
+    <div style="padding: 32px;">
+      <h2 style="color: #1a2744;">Welcome to RoyalEntry!</h2>
+      <p>Dear {{user_name}},</p>
+      <p>Welcome to <strong>RoyalEntry</strong>! Your account for <strong>{{organization_name}}</strong> is ready.</p>
+      <p>With RoyalEntry you can:</p>
+      <ul>
+        <li>Create and manage events</li>
+        <li>Send digital invitations</li>
+        <li>Track guest arrivals with QR scanning</li>
+        <li>Collect payments and manage pledges</li>
+        <li>Access real-time reports and analytics</li>
+      </ul>
+      <a href="{{login_url}}" style="display: inline-block; background: linear-gradient(135deg, #d4a843, #b8932e); color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold;">Login to Your Account</a>
+    </div>
+    <div style="background: #f8f8f8; padding: 16px; text-align: center; font-size: 12px; color: #666;">
+      <p>Need help? Contact us at <a href="mailto:{{support_email}}" style="color: #d4a843;">{{support_email}}</a></p>
+    </div>
+  </div>
+</body>
+</html>

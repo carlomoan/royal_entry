@@ -20,6 +20,7 @@ use crate::{
         user::Claims,
     },
     repository::event_repository::EventRepository,
+    services::MessagingService,
     AppState,
 };
 
@@ -163,4 +164,103 @@ pub async fn generate_invitations(
             "data": GenerateInvitationsResult { generated, skipped, failed, invitations: results }
         })),
     ))
+}
+
+// ==============================================================================
+// POST /api/v1/events/:eid/invitations/send
+// ==============================================================================
+
+/// Send personalized invitation cards to all guests. Each message includes the
+/// guest's pledge amount, event title/date/venue, main characters, and their
+/// check-in link (QR for smartphones, SMS link for feature phones).
+pub async fn send_invitations(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
+
+    let guests = list_event_guests(state.db.pool(), event_id).await?;
+    if guests.is_empty() {
+        return Err(AppError::BadRequest("No guests to invite".to_string()));
+    }
+
+    let frontend_url = state.config.app.frontend_url.clone();
+    let messaging = MessagingService::new();
+    let mut sent = 0_i64;
+    let mut failed = 0_i64;
+    let mut errors = Vec::new();
+
+    for guest in &guests {
+        // Fetch the guest's invitation (short_link)
+        let invitation = sqlx::query_as::<_, Invitation>(
+            "SELECT * FROM invitations WHERE guest_id = $1",
+        )
+        .bind(guest.id)
+        .fetch_optional(state.db.pool())
+        .await?;
+
+        let Some(invitation) = invitation else {
+            failed += 1;
+            errors.push(format!("{}: no invitation link generated", guest.full_name));
+            continue;
+        };
+
+        // Fetch pledge amount if any
+        let pledge: Option<i64> = sqlx::query_scalar(
+            "SELECT pledged_amount FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
+        )
+        .bind(event_id)
+        .bind(guest.id)
+        .fetch_optional(state.db.pool())
+        .await?;
+
+        // Build the check-in link: QR scan URL for smartphones, SMS link for feature phones
+        let check_in_link = crate::models::invitation::build_scan_url(&frontend_url, event_id, &invitation.short_link);
+        let device_type = guest.device_type.as_str();
+        let channel = if device_type == "feature_phone" { "sms" } else { "whatsapp" };
+
+        let pledge_line = match pledge {
+            Some(amount) => format!("Your pledge: TZS {}", amount),
+            None => "No pledge required".to_string(),
+        };
+
+        let message = format!(
+            "Dear {name},\n\nYou are cordially invited to {title} on {date} at {venue}.\n{characters}\n{pledge}\n\nYour check-in card: {link}\n\nRoyalEntry",
+            name = guest.full_name,
+            title = event.title,
+            date = event.event_date.format("%B %d, %Y"),
+            venue = event.venue_name.as_deref().unwrap_or("the venue"),
+            characters = event.main_characters.as_deref().map(|c| format!("Main characters: {}", c)).unwrap_or_default(),
+            pledge = pledge_line,
+            link = check_in_link,
+        );
+
+        let attempts = messaging.send(channel, &guest.phone, &message).await?;
+        let ok = attempts.iter().any(|a| a.success);
+        if ok {
+            sent += 1;
+            sqlx::query(
+                "UPDATE invitations SET status = 'sent', invitation_sent_at = NOW() WHERE id = $1",
+            )
+            .bind(invitation.id)
+            .execute(state.db.pool())
+            .await?;
+        } else {
+            failed += 1;
+            errors.push(format!("{}: delivery failed", guest.full_name));
+        }
+    }
+
+    // Mark the event's invitation_sent_at
+    sqlx::query("UPDATE events SET invitation_sent_at = NOW(), updated_at = NOW() WHERE id = $1")
+        .bind(event_id)
+        .execute(state.db.pool())
+        .await?;
+
+    Ok(Json(json!({
+        "success": true,
+        "data": { "sent": sent, "failed": failed, "errors": errors }
+    })))
 }

@@ -230,7 +230,24 @@ pub async fn get_current_user(
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    Ok(Json(UserResponse::from(user)))
+    let org_name: Option<String> = sqlx::query_scalar("SELECT display_name FROM organizations WHERE id = $1")
+        .bind(user.organization_id)
+        .fetch_optional(state.db.pool())
+        .await
+        .ok()
+        .flatten();
+
+    Ok(Json(UserResponse {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        phone: user.phone,
+        role: user.role,
+        is_active: user.is_active,
+        organization_id: Some(user.organization_id),
+        organization_name: org_name,
+        created_at: user.created_at,
+    }))
 }
 
 /// POST /api/v1/auth/change-password

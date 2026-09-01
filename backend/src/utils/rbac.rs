@@ -22,6 +22,30 @@ pub const ACCOUNT_ROLES: &[&str] = &[
     "viewer",
 ];
 
+// ── Permission catalog ────────────────────────────────────────────────────────
+// All available permissions across every object in the system.
+pub const ALL_PERMISSIONS: &[&str] = &[
+    "events:read", "events:write", "events:delete", "events:activate", "events:approve", "events:reject", "events:complete",
+    "guests:read", "guests:write", "guests:delete", "guests:import", "guests:csv",
+    "invitations:read", "invitations:write", "invitations:generate", "invitations:send",
+    "scanner:read", "scanner:write", "scanner:otp",
+    "michango:read", "michango:write", "michango:payment", "michango:remind",
+    "broadcast:read", "broadcast:write", "broadcast:sms", "broadcast:whatsapp", "broadcast:email", "broadcast:telegram",
+    "payments:read", "payments:write", "payments:receipt", "payments:invoice",
+    "reports:read", "reports:export",
+    "audit:read", "audit:export",
+    "team:read", "team:write",
+    "settings:read", "settings:write",
+    "platform:read", "platform:write", "platform:manage_users", "platform:manage_plans", "platform:manage_templates", "platform:manage_global_variables",
+    "webhooks:read", "webhooks:write",
+    "cards:read", "cards:write", "cards:design", "cards:checkin",
+    "otp:send", "otp:verify",
+    "roles:read", "roles:write", "roles:assign",
+    "invoices:read", "invoices:write",
+];
+
+pub const PLATFORM_ROLES_ALL: &[&str] = ALL_PERMISSIONS;
+
 // ── Permission matrix ─────────────────────────────────────────────────────────
 // Format: "resource:action" — e.g. "events:read", "guests:write"
 // Wildcard "*" means "all actions on this resource"

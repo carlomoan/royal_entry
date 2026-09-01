@@ -22,14 +22,15 @@ impl GuestRepository {
         let guest_id = Uuid::new_v4();
         let now = Utc::now();
         let contact_method = req.contact_method.clone().unwrap_or_else(|| "whatsapp".to_string());
+        let device_type = req.device_type.clone().unwrap_or_else(|| "smartphone".to_string());
 
         let guest = sqlx::query_as::<_, Guest>(
             r#"
             INSERT INTO guests (
-                id, event_id, full_name, phone, email, table_number,
-                guest_category, plus_one_allowed, contact_method, created_at, updated_at
+                id, event_id, full_name, phone, email, whatsapp_phone, device_type,
+                table_number, guest_category, plus_one_allowed, contact_method, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
             "#
         )
@@ -38,6 +39,8 @@ impl GuestRepository {
         .bind(&req.full_name)
         .bind(&req.phone)
         .bind(&req.email)
+        .bind(&req.whatsapp_phone)
+        .bind(&device_type)
         .bind(&req.table_number)
         .bind(&req.guest_category)
         .bind(req.plus_one_allowed.unwrap_or(false))
@@ -70,14 +73,15 @@ impl GuestRepository {
         for req in guests {
             let guest_id = Uuid::new_v4();
             let contact_method = req.contact_method.clone().unwrap_or_else(|| "whatsapp".to_string());
+            let device_type = req.device_type.clone().unwrap_or_else(|| "smartphone".to_string());
 
             let guest = sqlx::query_as::<_, Guest>(
                 r#"
                 INSERT INTO guests (
-                    id, event_id, full_name, phone, email, table_number,
-                    guest_category, plus_one_allowed, contact_method, created_at, updated_at
+                    id, event_id, full_name, phone, email, whatsapp_phone, device_type,
+                    table_number, guest_category, plus_one_allowed, contact_method, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING *
                 "#
             )
@@ -86,6 +90,8 @@ impl GuestRepository {
             .bind(&req.full_name)
             .bind(&req.phone)
             .bind(&req.email)
+            .bind(&req.whatsapp_phone)
+            .bind(&device_type)
             .bind(&req.table_number)
             .bind(&req.guest_category)
             .bind(req.plus_one_allowed.unwrap_or(false))
@@ -162,7 +168,7 @@ impl GuestRepository {
         let guests = sqlx::query_as::<_, GuestWithRsvp>(
             r#"
             SELECT
-                g.id, g.full_name, g.phone, g.guest_category, g.table_number, g.contact_method,
+                g.id, g.full_name, g.phone, g.device_type, g.guest_category, g.table_number, g.contact_method,
                 r.response as rsvp_response, r.responded_at as rsvp_responded_at
             FROM guests g
             LEFT JOIN rsvp_responses r ON g.id = r.guest_id AND g.event_id = r.event_id
@@ -202,12 +208,14 @@ impl GuestRepository {
                 full_name = COALESCE($2, full_name),
                 phone = COALESCE($3, phone),
                 email = COALESCE($4, email),
-                table_number = COALESCE($5, table_number),
-                guest_category = COALESCE($6, guest_category),
-                plus_one_allowed = COALESCE($7, plus_one_allowed),
-                contact_method = COALESCE($8, contact_method),
-                notes = COALESCE($9, notes),
-                updated_at = $10
+                whatsapp_phone = COALESCE($5, whatsapp_phone),
+                device_type = COALESCE($6, device_type),
+                table_number = COALESCE($7, table_number),
+                guest_category = COALESCE($8, guest_category),
+                plus_one_allowed = COALESCE($9, plus_one_allowed),
+                contact_method = COALESCE($10, contact_method),
+                notes = COALESCE($11, notes),
+                updated_at = $12
             WHERE id = $1
             RETURNING *
             "#
@@ -216,6 +224,8 @@ impl GuestRepository {
         .bind(&req.full_name)
         .bind(&req.phone)
         .bind(&req.email)
+        .bind(&req.whatsapp_phone)
+        .bind(&req.device_type)
         .bind(&req.table_number)
         .bind(&req.guest_category)
         .bind(&req.plus_one_allowed)

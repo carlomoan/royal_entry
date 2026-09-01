@@ -1,0 +1,10 @@
+Payment Receipt
+
+Amount: {{amount}}
+Method: {{payment_method}}
+Transaction ID: {{transaction_id}}
+Date: {{date}}
+Invoice: {{invoice_number}}
+
+Thank you for your payment!
+RoyalEntry - {{organization_name}}

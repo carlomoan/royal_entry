@@ -29,6 +29,8 @@ pub struct CheckInResponse {
     pub guest_id: Uuid,
     pub guest_name: String,
     pub guest_phone: String,
+    pub guest_category: Option<String>,
+    pub table_number: Option<String>,
     pub invitation_id: Uuid,
     pub scanned_at: DateTime<Utc>,
     pub status: String,

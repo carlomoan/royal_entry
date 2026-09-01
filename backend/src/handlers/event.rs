@@ -26,6 +26,13 @@ pub async fn create_event(
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?;
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
 
+    // Enforce package event limit
+    if !crate::utils::rbac::is_platform_role(&claims.role) {
+        crate::services::UsageService::new(state.clone())
+            .enforce_event_limit(org_id)
+            .await?;
+    }
+
     let event = EventRepository::create(state.db.pool(), org_id, user_id, &payload).await?;
     Ok((StatusCode::CREATED, Json(json!({ "success": true, "data": EventResponse::from(event) }))))
 }
@@ -340,6 +347,20 @@ pub async fn send_save_the_date(
     if event.save_the_date_sent_at.is_some() {
         return Err(AppError::Conflict(
             "Save-the-date has already been sent for this event".to_string(),
+        ));
+    }
+
+    // Verify guests have fully paid pledges before issuing save-the-date / check-in cards
+    let unpaid_or_partial: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status NOT IN ('paid')"#,
+    )
+    .bind(event_id)
+    .fetch_one(state.db.pool())
+    .await?;
+
+    if unpaid_or_partial > 0 {
+        return Err(AppError::BadRequest(
+            "Save-the-date can only be sent when all guests have fully paid their pledges. Some guests still have unpaid or partial pledges.".to_string(),
         ));
     }
 

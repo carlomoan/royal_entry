@@ -1,0 +1,67 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the RoyalEntry Desktop Hub. Locks down file writes, hardware serial access, and network binding to only the IPC commands the React frontend actually invokes.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:webview:allow-internal-toggle-devtools",
+    "core:event:default",
+    "core:path:default",
+    "core:resources:default",
+    "core:menu:default",
+    "core:tray:default",
+    "shell:allow-open",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        { "name": "spawn", "cmd": "backend/royalentry" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        { "path": "$APPDATA/com.royalentry.desktop/**" },
+        { "path": "$LOCALDATA/com.royalentry.desktop/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        { "path": "$APPDATA/com.royalentry.desktop/**" },
+        { "path": "$LOCALDATA/com.royalentry.desktop/**" }
+      ]
+    },
+    {
+      "identifier": "serialport:allow-write",
+      "allow": [
+        { "vid": "0x0A5F", "pid": "*", "label": "Zebra ZPL thermal printer" },
+        { "vid": "0x04B8", "pid": "*", "label": "Epson thermal" },
+        { "vid": "0x04F9", "pid": "*", "label": "Brother thermal" },
+        { "vid": "0x1203", "pid": "*", "label": "Star Micronics" }
+      ]
+    },
+    {
+      "identifier": "serialport:allow-list",
+      "allow": [
+        { "vid": "0x0A5F", "pid": "*" },
+        { "vid": "0x04B8", "pid": "*" },
+        { "vid": "0x04F9", "pid": "*" },
+        { "vid": "0x1203", "pid": "*" }
+      ]
+    },
+    "network:default",
+    "store:default",
+    "fs:allow-app-write",
+    "fs:allow-app-read"
+  ]
+}

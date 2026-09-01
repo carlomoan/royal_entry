@@ -1,0 +1,12 @@
+Scheduled Maintenance Notice
+
+Affected Services: {{affected_services}}
+Start: {{maintenance_start}}
+End: {{maintenance_end}}
+
+During this time, some services may be unavailable.
+
+For updates: {{support_url}}
+
+Regards,
+RoyalEntry Team

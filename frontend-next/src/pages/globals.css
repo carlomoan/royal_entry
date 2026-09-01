@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy-950: #0a1628;
+  --navy-900: #102a43;
+  --gold-500: #c9a84c;
+  --gold-400: #fbbf24;
+}
+
+body {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: #f1f5f9;
+}
+
+/* DashCode-style scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

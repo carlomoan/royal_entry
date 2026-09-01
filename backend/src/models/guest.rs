@@ -16,8 +16,10 @@ pub struct Guest {
     pub full_name: String,
     pub phone: String,
     pub email: Option<String>,
+    pub whatsapp_phone: Option<String>,
+    pub device_type: String, // smartphone | feature_phone
     pub table_number: Option<String>,
-    pub guest_category: Option<String>, // VIP, Regular, Staff, Family, Friend
+    pub guest_category: Option<String>, // VVIP, VIP, Normal, Premium, Staff, Family, Friend, Service Provider, Special Guest, Regular
     pub plus_one_allowed: bool,
     pub contact_method: String, // whatsapp, sms, email, telegram
     pub notes: Option<String>,
@@ -32,6 +34,8 @@ pub struct GuestResponse {
     pub full_name: String,
     pub phone: String,
     pub email: Option<String>,
+    pub whatsapp_phone: Option<String>,
+    pub device_type: String,
     pub table_number: Option<String>,
     pub guest_category: Option<String>,
     pub plus_one_allowed: bool,
@@ -46,6 +50,8 @@ impl From<Guest> for GuestResponse {
             full_name: guest.full_name,
             phone: guest.phone,
             email: guest.email,
+            whatsapp_phone: guest.whatsapp_phone,
+            device_type: guest.device_type,
             table_number: guest.table_number,
             guest_category: guest.guest_category,
             plus_one_allowed: guest.plus_one_allowed,
@@ -65,6 +71,10 @@ pub struct CreateGuestRequest {
     pub phone: String,
 
     pub email: Option<String>,
+
+    pub whatsapp_phone: Option<String>,
+
+    pub device_type: Option<String>, // smartphone | feature_phone (default smartphone)
 
     pub table_number: Option<String>,
 
@@ -90,6 +100,10 @@ pub struct UpdateGuestRequest {
 
     pub email: Option<String>,
 
+    pub whatsapp_phone: Option<String>,
+
+    pub device_type: Option<String>,
+
     pub table_number: Option<String>,
 
     pub guest_category: Option<String>,
@@ -107,6 +121,7 @@ pub struct GuestWithRsvp {
     pub id: Uuid,
     pub full_name: String,
     pub phone: String,
+    pub device_type: String,
     pub guest_category: Option<String>,
     pub table_number: Option<String>,
     pub contact_method: String,

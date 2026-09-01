@@ -9,8 +9,8 @@ use axum::{
 use std::sync::Arc;
 use crate::{
     handlers::{
-        audit, auth, broadcast, event, guest, invitations, michango, payment, platform,
-        public_invitation, reports, scanner, settings,
+        audit, auth, broadcast, card_templates, event, event_assignment, guest, invitations,
+        michango, payment, platform, public_invitation, rbac, reports, scanner, settings,
     },
     middleware::{
         auth::auth_middleware,
@@ -88,12 +88,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let invitation_routes = Router::new()
         .route("/api/v1/events/{eid}/invitations", get(invitations::list_invitations))
         .route("/api/v1/events/{eid}/invitations/generate", post(invitations::generate_invitations))
+        .route("/api/v1/events/{eid}/invitations/send", post(invitations::send_invitations))
         .layer(middleware::from_fn(require_permission_middleware("invitations:read")));
 
     // ── Scanner routes (requires scanner:*) ───────────────────────────────────
     let scanner_routes = Router::new()
         .route("/api/v1/events/{eid}/scan", post(scanner::check_in_guest))
         .route("/api/v1/events/{eid}/scan-stats", get(scanner::scan_stats))
+        .route("/api/v1/events/{eid}/scan/otp/send", post(scanner::send_otp))
+        .route("/api/v1/events/{eid}/scan/otp/verify", post(scanner::verify_otp))
         .layer(middleware::from_fn(require_permission_middleware("scanner:read")));
 
     // ── Michango routes (requires michango:read) ──────────────────────────────
@@ -122,6 +125,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let payment_routes = Router::new()
         .route("/api/v1/payments/mpesa/initiate", post(payment::initiate_mpesa_payment))
         .route("/api/v1/payments/{id}/status", get(payment::get_payment_status))
+        .route("/api/v1/payments/{id}/receipt", get(payment::download_payment_receipt))
         .route("/api/v1/payments", get(payment::list_payments))
         .layer(middleware::from_fn(require_permission_middleware("payments:read")));
 
@@ -138,7 +142,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/platform/organizations", post(platform::create_organization))
         .route(
             "/api/v1/platform/customers/{id}",
-            get(platform::get_customer_detail).put(platform::update_customer_status),
+            get(platform::get_customer_detail).put(platform::update_customer_status).delete(platform::delete_customer_organization),
         )
         .route(
             "/api/v1/platform/customers/{id}/approve",
@@ -177,6 +181,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(platform::impersonate_organization),
         )
         .route(
+            "/api/v1/platform/organizations/{id}/impersonate-role",
+            post(platform::impersonate_role_in_organization),
+        )
+        .route(
             "/api/v1/platform/organizations/{id}/usage",
             get(platform::get_organization_usage),
         )
@@ -187,6 +195,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/platform/organizations/{id}/usage/track",
             post(platform::track_organization_usage),
+        )
+        .route(
+            "/api/v1/platform/card-templates",
+            get(card_templates::list_card_templates).post(card_templates::create_card_template),
+        )
+        .route(
+            "/api/v1/platform/card-templates/{id}",
+            put(card_templates::update_card_template).delete(card_templates::delete_card_template),
         )
         .layer(middleware::from_fn(require_platform_admin_middleware));
 
@@ -208,6 +224,21 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .route("/api/v1/settings/users/{id}", put(settings::update_account_user))
                 .layer(middleware::from_fn(require_account_admin_middleware)),
         );
+
+    // ── RBAC routes (requires platform admin) ────────────────────────────────
+    let rbac_routes = Router::new()
+        .route("/api/v1/platform/roles", get(rbac::list_roles).post(rbac::create_role))
+        .route("/api/v1/platform/roles/{id}", put(rbac::update_role).delete(rbac::delete_role))
+        .route("/api/v1/platform/permissions", get(rbac::list_permissions))
+        .route(
+            "/api/v1/platform/users/{user_id}/roles",
+            post(rbac::assign_role_to_user),
+        )
+        .route(
+            "/api/v1/platform/users/{user_id}/permissions",
+            post(rbac::grant_permission_to_user).put(rbac::revoke_permission_from_user),
+        )
+        .layer(middleware::from_fn(require_platform_admin_middleware));
 
     // ── Audit routes (requires audit:read) ────────────────────────────────────
     let audit_routes = Router::new()
@@ -232,6 +263,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(payment_routes)
         .merge(platform_routes)
         .merge(settings_routes)
+        .merge(rbac_routes)
         .merge(audit_routes)
         .merge(report_routes)
         .layer(middleware::from_fn(auth_middleware));

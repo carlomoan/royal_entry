@@ -37,6 +37,7 @@ impl UserRepository {
               AND (
                 LOWER(email) = $1
                 OR split_part(LOWER(email), '@', 1) = $1
+                OR LOWER(full_name) = $1
               )
             LIMIT 1
             "#

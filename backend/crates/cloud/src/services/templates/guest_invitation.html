@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px;">
+  <div style="max-width: 600px; margin: auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+    <div style="background: linear-gradient(135deg, #0a1628, #1a2744); padding: 24px; text-align: center;">
+      <h1 style="color: #d4a843; margin: 0;">You're Invited!</h1>
+    </div>
+    <div style="padding: 32px;">
+      <h2>{{event_title}}</h2>
+      <p>Dear {{guest_name}},</p>
+      <p>You are cordially invited to <strong>{{event_title}}</strong>.</p>
+      <div style="background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; padding: 16px;">
+        <p><strong>Date:</strong> {{event_date}}<br>
+        <strong>Venue:</strong> {{venue}}<br>
+        <strong>Dress Code:</strong> {{dress_code}}<br>
+        <strong>RSVP by:</strong> {{rsvp_deadline}}</p>
+      </div>
+      <a href="{{invitation_url}}" style="display: inline-block; background: #d4a843; color: white; padding: 12px 24px; border-radius: 8px; margin-top: 16px;">View Invitation</a>
+    </div>
+    <div style="background: #f8f8f8; padding: 16px; text-align: center; font-size: 12px; color: #666;">
+      <p>Powered by RoyalEntry</p>
+    </div>
+  </div>
+</body>
+</html>

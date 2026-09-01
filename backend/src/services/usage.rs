@@ -152,7 +152,7 @@ impl UsageService {
     pub async fn get_plan_limits(&self, org_id: Uuid) -> AppResult<PlanLimits> {
         let row = sqlx::query(
             r#"
-            SELECT sp.max_users, sp.max_events, sp.max_guests, sp.max_storage_mb, sp.max_api_calls_per_month
+            SELECT sp.max_users, sp.max_events, sp.max_guests, sp.max_storage_mb, sp.max_api_calls_per_month, sp.features
             FROM organization_subscriptions os
             JOIN service_plans sp ON sp.id = os.plan_id
             WHERE os.organization_id = $1 AND os.status IN ('active', 'trialing')
@@ -176,12 +176,110 @@ impl UsageService {
             // Default free tier limits
             Ok(PlanLimits {
                 max_users: Some(3),
-                max_events: Some(3),
-                max_guests: Some(10),
+                max_events: Some(1),
+                max_guests: Some(55),
                 max_storage_mb: Some(100),
                 max_api_calls_per_month: Some(10000),
             })
         }
+    }
+
+    /// Check if a feature is enabled for an organization based on its package.
+    /// Returns true if the feature is enabled or the org is on an unlimited plan.
+    pub async fn can_use_feature(&self, org_id: Uuid, feature: &str) -> AppResult<bool> {
+        let features: Option<serde_json::Value> = sqlx::query_scalar(
+            r#"
+            SELECT sp.features
+            FROM organization_subscriptions os
+            JOIN service_plans sp ON sp.id = os.plan_id
+            WHERE os.organization_id = $1 AND os.status IN ('active', 'trialing')
+            ORDER BY os.created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(org_id)
+        .fetch_optional(&*self.state.db.pool())
+        .await?;
+
+        match features {
+            Some(features) => Ok(features.get(feature).and_then(|v| v.as_bool()).unwrap_or(true)),
+            None => Ok(true),
+        }
+    }
+
+    /// Get the features JSON for an organization's active plan.
+    pub async fn get_plan_features(&self, org_id: Uuid) -> AppResult<serde_json::Value> {
+        let features: Option<serde_json::Value> = sqlx::query_scalar(
+            r#"
+            SELECT sp.features
+            FROM organization_subscriptions os
+            JOIN service_plans sp ON sp.id = os.plan_id
+            WHERE os.organization_id = $1 AND os.status IN ('active', 'trialing')
+            ORDER BY os.created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(org_id)
+        .fetch_optional(&*self.state.db.pool())
+        .await?;
+
+        Ok(features.unwrap_or_else(|| serde_json::json!({})))
+    }
+
+    /// Count the org's current (non-deleted) events.
+    pub async fn count_org_events(&self, org_id: Uuid) -> AppResult<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM events WHERE organization_id = $1 AND deleted_at IS NULL"
+        )
+        .bind(org_id)
+        .fetch_one(&*self.state.db.pool())
+        .await?;
+        Ok(count)
+    }
+
+    /// Count the org's current total guests across all events.
+    pub async fn count_org_guests(&self, org_id: Uuid) -> AppResult<i64> {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM guests g
+            JOIN events e ON e.id = g.event_id
+            WHERE e.organization_id = $1 AND e.deleted_at IS NULL
+            "#
+        )
+        .bind(org_id)
+        .fetch_one(&*self.state.db.pool())
+        .await?;
+        Ok(count)
+    }
+
+    /// Enforce the max-events limit before creating a new event.
+    pub async fn enforce_event_limit(&self, org_id: Uuid) -> AppResult<()> {
+        let limits = self.get_plan_limits(org_id).await?;
+        if let Some(max_events) = limits.max_events {
+            let current = self.count_org_events(org_id).await?;
+            if current >= max_events {
+                return Err(crate::error::AppError::BadRequest(format!(
+                    "Your package allows only {} event(s). You have reached this limit. Upgrade your package to add more events.",
+                    max_events
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Enforce the max-guests limit before adding guests (delta = number being added).
+    pub async fn enforce_guest_limit(&self, org_id: Uuid, delta: i64) -> AppResult<()> {
+        let limits = self.get_plan_limits(org_id).await?;
+        if let Some(max_guests) = limits.max_guests {
+            let current = self.count_org_guests(org_id).await?;
+            if current + delta > max_guests {
+                return Err(crate::error::AppError::BadRequest(format!(
+                    "Your package allows only {} guest(s). You have {} now and cannot add {} more. Upgrade your package to add more guests.",
+                    max_guests, current, delta
+                )));
+            }
+        }
+        Ok(())
     }
 
     async fn count_events(&self, org_id: Uuid, start: DateTime<Utc>, end: DateTime<Utc>) -> AppResult<i64> {

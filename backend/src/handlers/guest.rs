@@ -28,6 +28,7 @@ use crate::{
         event_repository::EventRepository,
         guest_repository::GuestRepository,
     },
+    services::UsageService,
     AppState,
 };
 
@@ -108,6 +109,13 @@ pub async fn create_guest(
     // Ensure event belongs to the caller
     assert_event_ownership(&state, event_id, org_id).await?;
 
+    // Enforce package guest limit (1 new guest)
+    if !crate::utils::rbac::is_platform_role(&claims.role) {
+        UsageService::new(state.clone())
+            .enforce_guest_limit(org_id, 1)
+            .await?;
+    }
+
     // Check for duplicate phone in this event
     let existing = GuestRepository::get_by_phone(
         state.db.pool(),
@@ -176,6 +184,13 @@ pub async fn bulk_create_guests(
         return Err(AppError::BadRequest(
             "Maximum 500 guests per bulk import. Split into batches.".to_string(),
         ));
+    }
+
+    // Enforce package guest limit for the batch
+    if !crate::utils::rbac::is_platform_role(&claims.role) {
+        UsageService::new(state.clone())
+            .enforce_guest_limit(org_id, payload.guests.len() as i64)
+            .await?;
     }
 
     // Validate all guests before inserting any
@@ -533,7 +548,7 @@ pub async fn download_guest_template(
 
     assert_event_ownership(&state, event_id, org_id).await?;
 
-    let csv = "full_name,phone,email,table_number,guest_category,plus_one_allowed,contact_method\nJohn Doe,+255700001001,john@example.com,5,VIP,true,whatsapp\nJane Smith,+255700001002,jane@example.com,3,Regular,false,sms\n";
+    let csv = "full_name,phone,email,whatsapp_phone,device_type,table_number,guest_category,plus_one_allowed,contact_method\nJohn Doe,+255700001001,john@example.com,+255700001001,smartphone,5,VIP,true,whatsapp\nJane Smith,+255700001002,jane@example.com,,feature_phone,3,Regular,false,sms\n";
 
     let filename = format!("guest_import_template_{}.csv", event_id);
 
@@ -544,4 +559,3 @@ pub async fn download_guest_template(
         .body(csv.into())
         .unwrap())
 }
-

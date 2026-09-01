@@ -291,3 +291,40 @@ pub async fn list_payments(
         "pagination": PaginationMeta::new(page, per_page, total)
     })))
 }
+
+// ==============================================================================
+// GET /api/v1/payments/:id/receipt
+// ==============================================================================
+
+/// Download a PDF receipt for a completed payment.
+pub async fn download_payment_receipt(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    axum::extract::Path(payment_id): axum::extract::Path<Uuid>,
+) -> AppResult<(StatusCode, [(String, String); 2], Vec<u8>)> {
+    let org_id = Uuid::parse_str(&claims.org_id)
+        .map_err(|_| AppError::InvalidToken)?;
+
+    let payment = PaymentRepository::get_by_id(state.db.pool(), payment_id)
+        .await?
+        .ok_or(AppError::NotFound("Payment not found".to_string()))?;
+
+    if payment.organization_id != org_id {
+        return Err(AppError::Forbidden);
+    }
+
+    let pdf_bytes = crate::services::PdfService::new(state.clone())
+        .generate_payment_receipt(payment_id)
+        .await?;
+
+    let filename = format!("receipt-{}.pdf", payment_id.simple());
+    let headers = [
+        ("Content-Type".to_string(), "application/pdf".to_string()),
+        (
+            "Content-Disposition".to_string(),
+            format!(r#"attachment; filename="{}""#, filename),
+        ),
+    ];
+
+    Ok((StatusCode::OK, headers, pdf_bytes))
+}

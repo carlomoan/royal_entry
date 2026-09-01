@@ -40,6 +40,8 @@ pub struct UserResponse {
     pub phone: Option<String>,
     pub role: String,
     pub is_active: bool,
+    pub organization_id: Option<Uuid>,
+    pub organization_name: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -52,6 +54,8 @@ impl From<User> for UserResponse {
             phone: user.phone,
             role: user.role,
             is_active: user.is_active,
+            organization_id: Some(user.organization_id),
+            organization_name: None,
             created_at: user.created_at,
         }
     }

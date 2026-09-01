@@ -85,6 +85,8 @@ pub struct PlatformPlanResponse {
     pub billing_interval: String,
     pub max_users: Option<i32>,
     pub max_events: Option<i32>,
+    pub max_guests: Option<i32>,
+    pub features: serde_json::Value,
     pub is_active: bool,
 }
 
@@ -136,6 +138,7 @@ pub struct PlatformUserResponse {
     pub full_name: String,
     pub role: String,
     pub organization_id: Option<Uuid>,
+    pub organization_name: Option<String>,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
 }
@@ -186,6 +189,7 @@ pub struct CreatePlanRequest {
     pub max_users: Option<i32>,
     pub max_events: Option<i32>,
     pub max_guests: Option<i32>,
+    pub features: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +201,7 @@ pub struct UpdatePlanRequest {
     pub max_users: Option<i32>,
     pub max_events: Option<i32>,
     pub max_guests: Option<i32>,
+    pub features: Option<serde_json::Value>,
     pub is_active: Option<bool>,
 }
 
@@ -233,6 +238,7 @@ pub struct UpdatePlatformUserRequest {
     pub full_name: Option<String>,
     pub role: Option<String>,
     pub is_active: Option<bool>,
+    pub organization_id: Option<Option<Uuid>>,
 }
 
 // ==============================================================================
@@ -262,6 +268,27 @@ fn billing_duration(interval: &str) -> Duration {
 
 fn generate_invoice_number() -> String {
     format!("INV-{}-{}", Utc::now().format("%Y%m%d%H%M%S"), &Uuid::new_v4().simple().to_string()[..8])
+}
+
+/// Default feature-flag object for a new service plan. Each key maps to a
+/// feature resource the plan enables (see UtilsService::can_use_feature).
+fn default_plan_features() -> serde_json::Value {
+    serde_json::json!({
+        "events": true,
+        "guests": true,
+        "invitations": true,
+        "scanner": true,
+        "michango": true,
+        "broadcast": true,
+        "payments": true,
+        "reports": true,
+        "audit": true,
+        "team": true,
+        "settings": true,
+        "cards": true,
+        "webhooks": false,
+        "api": false
+    })
 }
 
 // Around line 259
@@ -349,7 +376,7 @@ pub async fn get_platform_summary(State(state): State<Arc<AppState>>, Extension(
 pub async fn list_plans(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
     let plans = sqlx::query_as::<_, PlatformPlanResponse>(
-        "SELECT id, code, name, description, price_tsh, billing_interval, max_users, max_events, is_active FROM service_plans ORDER BY price_tsh ASC, name ASC",
+        "SELECT id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, features, is_active FROM service_plans ORDER BY price_tsh ASC, name ASC",
     ).fetch_all(state.db.pool()).await?;
     Ok(Json(json!({ "success": true, "data": plans })))
 }
@@ -357,18 +384,20 @@ pub async fn list_plans(State(state): State<Arc<AppState>>, Extension(claims): E
 pub async fn create_plan(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Json(payload): Json<CreatePlanRequest>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
     let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO service_plans (id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, NOW(), NOW())")
+    let features = payload.features.unwrap_or_else(default_plan_features);
+    sqlx::query("INSERT INTO service_plans (id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, features, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, NOW(), NOW())")
         .bind(id).bind(&payload.code).bind(&payload.name).bind(&payload.description).bind(payload.price_tsh)
         .bind(&payload.billing_interval).bind(payload.max_users).bind(payload.max_events).bind(payload.max_guests)
+        .bind(features)
         .execute(state.db.pool()).await?;
     Ok(Json(json!({ "success": true, "message": "Plan created", "data": { "id": id } })))
 }
 
 pub async fn update_plan(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Path(id): Path<Uuid>, Json(payload): Json<UpdatePlanRequest>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
-    sqlx::query("UPDATE service_plans SET name = COALESCE($2, name), description = COALESCE($3, description), price_tsh = COALESCE($4, price_tsh), billing_interval = COALESCE($5, billing_interval), max_users = COALESCE($6, max_users), max_events = COALESCE($7, max_events), max_guests = COALESCE($8, max_guests), is_active = COALESCE($9, is_active), updated_at = NOW() WHERE id = $1")
+    sqlx::query("UPDATE service_plans SET name = COALESCE($2, name), description = COALESCE($3, description), price_tsh = COALESCE($4, price_tsh), billing_interval = COALESCE($5, billing_interval), max_users = COALESCE($6, max_users), max_events = COALESCE($7, max_events), max_guests = COALESCE($8, max_guests), features = COALESCE($9, features), is_active = COALESCE($10, is_active), updated_at = NOW() WHERE id = $1")
         .bind(id).bind(&payload.name).bind(&payload.description).bind(payload.price_tsh).bind(&payload.billing_interval)
-        .bind(payload.max_users).bind(payload.max_events).bind(payload.max_guests).bind(payload.is_active)
+        .bind(payload.max_users).bind(payload.max_events).bind(payload.max_guests).bind(payload.features).bind(payload.is_active)
         .execute(state.db.pool()).await?;
     Ok(Json(json!({ "success": true, "message": "Plan updated" })))
 }
@@ -482,7 +511,7 @@ pub async fn suspend_organization(State(state): State<Arc<AppState>>, Extension(
 pub async fn update_customer_subscription(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Path(organization_id): Path<Uuid>, Json(payload): Json<UpdateCustomerSubscriptionRequest>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
     let status = normalize_subscription_status(&payload.status)?;
-    let plan = sqlx::query_as::<_, PlatformPlanResponse>("SELECT id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, is_active FROM service_plans WHERE id = $1 AND is_active = TRUE").bind(payload.plan_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("Service plan not found".to_string()))?;
+    let plan = sqlx::query_as::<_, PlatformPlanResponse>("SELECT id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, features, is_active FROM service_plans WHERE id = $1 AND is_active = TRUE").bind(payload.plan_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("Service plan not found".to_string()))?;
 
     let now = Utc::now();
     let period_end = now + billing_duration(&plan.billing_interval);
@@ -509,7 +538,7 @@ pub async fn create_customer_invoice(State(state): State<Arc<AppState>>, Extensi
     require_platform_admin(&claims)?;
     let subscription = fetch_subscription(&state, organization_id).await?.ok_or_else(|| AppError::BadRequest("Customer does not have an active subscription yet".to_string()))?;
     let plan_id = payload.plan_id.unwrap_or(subscription.plan_id);
-    let plan = sqlx::query_as::<_, PlatformPlanResponse>("SELECT id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, is_active FROM service_plans WHERE id = $1").bind(plan_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("Service plan not found".to_string()))?;
+    let plan = sqlx::query_as::<_, PlatformPlanResponse>("SELECT id, code, name, description, price_tsh, billing_interval, max_users, max_events, max_guests, features, is_active FROM service_plans WHERE id = $1").bind(plan_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("Service plan not found".to_string()))?;
 
     let now = Utc::now();
     let period_end = now + billing_duration(&plan.billing_interval);
@@ -551,35 +580,72 @@ pub async fn mark_invoice_paid(State(state): State<Arc<AppState>>, Extension(cla
 
 pub async fn list_platform_users(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
-    let users = sqlx::query_as::<_, PlatformUserResponse>("SELECT id, email, full_name, role, organization_id, is_active, created_at FROM users ORDER BY created_at DESC").fetch_all(state.db.pool()).await?;
+    let users = sqlx::query_as::<_, PlatformUserResponse>(
+        "SELECT u.id, u.email, u.full_name, u.role, u.organization_id, o.display_name AS organization_name, u.is_active, u.created_at FROM users u LEFT JOIN organizations o ON o.id = u.organization_id ORDER BY u.created_at DESC"
+    ).fetch_all(state.db.pool()).await?;
     Ok(Json(json!({ "success": true, "data": users })))
 }
 
 pub async fn create_platform_user(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Json(payload): Json<CreatePlatformUserRequest>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
-    let id = Uuid::new_v4();
 
-    // ✅ FIX: Use AuthService::hash_password
+    // Enforce: only platform roles (superadmin, system_admin) can be unassigned to any org
+    let is_platform_role = matches!(payload.role.as_str(), "superadmin" | "platform_admin" | "system_admin");
+    if !is_platform_role && payload.organization_id.is_none() {
+        return Err(AppError::BadRequest("Account users must be assigned to an organization".to_string()));
+    }
+
+    let id = Uuid::new_v4();
     let password_hash = AuthService::hash_password(&payload.password)?;
 
     sqlx::query("INSERT INTO users (id, email, full_name, role, password_hash, is_active, organization_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, TRUE, $6, NOW(), NOW())")
         .bind(id).bind(&payload.email).bind(&payload.full_name).bind(&payload.role).bind(password_hash).bind(payload.organization_id)
         .execute(state.db.pool()).await?;
-    Ok(Json(json!({ "success": true, "message": "Platform user created", "data": { "id": id } })))
+    Ok(Json(json!({ "success": true, "message": "User created", "data": { "id": id } })))
 }
 
 pub async fn update_platform_user(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Path(id): Path<Uuid>, Json(payload): Json<UpdatePlatformUserRequest>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
+
+    // Handle organization assignment / removal
+    if let Some(org) = payload.organization_id {
+        sqlx::query("UPDATE users SET organization_id = $2, updated_at = NOW() WHERE id = $1")
+            .bind(id).bind(org)
+            .execute(state.db.pool()).await?;
+    }
+
     sqlx::query("UPDATE users SET full_name = COALESCE($2, full_name), role = COALESCE($3, role), is_active = COALESCE($4, is_active), updated_at = NOW() WHERE id = $1")
         .bind(id).bind(&payload.full_name).bind(&payload.role).bind(payload.is_active)
         .execute(state.db.pool()).await?;
-    Ok(Json(json!({ "success": true, "message": "Platform user updated" })))
+
+    Ok(Json(json!({ "success": true, "message": "User updated" })))
 }
 
 pub async fn delete_platform_user(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Path(id): Path<Uuid>) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
     sqlx::query("DELETE FROM users WHERE id = $1").bind(id).execute(state.db.pool()).await?;
     Ok(Json(json!({ "success": true, "message": "Platform user deleted" })))
+}
+
+/// Delete a customer organization (platform admin)
+pub async fn delete_customer_organization(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Path(organization_id): Path<Uuid>) -> AppResult<Json<serde_json::Value>> {
+    require_platform_admin(&claims)?;
+
+    // Prevent deleting the platform's own org (all-zero UUID)
+    if organization_id == Uuid::nil() {
+        return Err(AppError::BadRequest("Cannot delete the platform organization".to_string()));
+    }
+
+    let result = sqlx::query("DELETE FROM organizations WHERE id = $1")
+        .bind(organization_id)
+        .execute(state.db.pool())
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("Organization not found".to_string()));
+    }
+
+    Ok(Json(json!({ "success": true, "message": "Organization deleted" })))
 }
 
 // ==============================================================================
@@ -590,20 +656,65 @@ pub async fn impersonate_organization(State(state): State<Arc<AppState>>, Extens
     require_platform_admin(&claims)?;
     let _org = sqlx::query("SELECT id, display_name FROM organizations WHERE id = $1").bind(organization_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("Organization not found".to_string()))?;
 
+    // Impersonate the first active user in the org (defaults to account_admin)
     let target_user = sqlx::query("SELECT id, email, full_name, role, organization_id FROM users WHERE organization_id = $1 AND is_active = TRUE ORDER BY created_at ASC LIMIT 1")
-        .bind(organization_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("No active account_admin found in organization".to_string()))?;
+        .bind(organization_id).fetch_optional(state.db.pool()).await?.ok_or_else(|| AppError::NotFound("No active user found in organization".to_string()))?;
 
     let target_user_id: Uuid = target_user.try_get::<Uuid, _>("id")?;
     let target_email: String = target_user.try_get::<String, _>("email")?;
     let target_role: String = target_user.try_get::<String, _>("role")?;
     let target_org_id: Uuid = target_user.try_get::<Uuid, _>("organization_id")?;
 
-    // ✅ FIX: Use AuthService::generate_tokens
-    let (access_token, _refresh_token) = AuthService::generate_tokens(target_user_id, target_org_id, target_email, target_role)?;
+    let (access_token, _refresh_token) = AuthService::generate_tokens(target_user_id, target_org_id, target_email, target_role.clone())?;
 
     Ok(Json(json!({
         "success": true,
-        "data": { "access_token": access_token, "expires_in": 3600, "token_type": "Bearer" }
+        "data": { "access_token": access_token, "expires_in": 3600, "token_type": "Bearer", "role": target_role, "user_id": target_user_id }
+    })))
+}
+
+/// Impersonate a specific role within a specific account.
+/// Superuser picks an account + role (e.g. event_manager, viewer) to experience
+/// the system exactly as a user with that role in that account.
+#[derive(Debug, Deserialize)]
+pub struct ImpersonateRoleRequest {
+    pub role: String,
+}
+
+pub async fn impersonate_role_in_organization(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(organization_id): Path<Uuid>,
+    Json(payload): Json<ImpersonateRoleRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_platform_admin(&claims)?;
+
+    let _org = sqlx::query("SELECT id, display_name FROM organizations WHERE id = $1")
+        .bind(organization_id)
+        .fetch_optional(state.db.pool())
+        .await?
+        .ok_or_else(|| AppError::NotFound("Organization not found".to_string()))?;
+
+    // Find an active user with the requested role in the org
+    let target_user = sqlx::query(
+        "SELECT id, email, full_name, role, organization_id FROM users WHERE organization_id = $1 AND role = $2 AND is_active = TRUE ORDER BY created_at ASC LIMIT 1"
+    )
+    .bind(organization_id)
+    .bind(&payload.role)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("No active user with role '{}' found in organization", payload.role)))?;
+
+    let target_user_id: Uuid = target_user.try_get::<Uuid, _>("id")?;
+    let target_email: String = target_user.try_get::<String, _>("email")?;
+    let target_role: String = target_user.try_get::<String, _>("role")?;
+    let target_org_id: Uuid = target_user.try_get::<Uuid, _>("organization_id")?;
+
+    let (access_token, _refresh_token) = AuthService::generate_tokens(target_user_id, target_org_id, target_email, target_role.clone())?;
+
+    Ok(Json(json!({
+        "success": true,
+        "data": { "access_token": access_token, "expires_in": 3600, "token_type": "Bearer", "role": target_role, "user_id": target_user_id }
     })))
 }
 

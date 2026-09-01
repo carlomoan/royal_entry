@@ -1,0 +1,10 @@
+Payment Failed
+
+A payment of {{amount}} via {{payment_method}} has failed.
+
+Reason: {{error_reason}}
+
+Retry: {{retry_url}}
+
+Regards,
+RoyalEntry Team

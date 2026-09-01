@@ -1,0 +1,17 @@
+Dear {{user_name}},
+
+Welcome to RoyalEntry! Your account for {{organization_name}} is ready.
+
+With RoyalEntry you can:
+- Create and manage events
+- Send digital invitations
+- Track guest arrivals with QR scanning
+- Collect payments and manage pledges
+- Access real-time reports and analytics
+
+Login to your account: {{login_url}}
+
+Need help? Contact us at {{support_email}}
+
+Best regards,
+RoyalEntry Team

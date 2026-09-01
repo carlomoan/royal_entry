@@ -59,6 +59,8 @@ impl CsvImportService {
         let name_idx = header_names.iter().position(|h| h == "full_name").unwrap();
         let phone_idx = header_names.iter().position(|h| h == "phone").unwrap();
         let email_idx = header_names.iter().position(|h| h == "email");
+        let whatsapp_idx = header_names.iter().position(|h| h == "whatsapp_phone" || h == "whatsapp");
+        let device_idx = header_names.iter().position(|h| h == "device_type" || h == "device");
         let table_idx = header_names.iter().position(|h| h == "table_number");
         let category_idx = header_names.iter().position(|h| h == "guest_category" || h == "category");
         let plus_one_idx = header_names.iter().position(|h| h == "plus_one_allowed" || h == "plus_one");
@@ -142,6 +144,8 @@ impl CsvImportService {
 
             // Extract optional fields
             let email = email_idx.and_then(|i| record.get(i)).map(|v| v.trim().to_string()).filter(|s| !s.is_empty());
+            let whatsapp_phone = whatsapp_idx.and_then(|i| record.get(i)).map(|v| v.trim().to_string()).filter(|s| !s.is_empty());
+            let device_type = device_idx.and_then(|i| record.get(i)).map(|v| v.trim().to_lowercase()).filter(|s| !s.is_empty());
             let table_number = table_idx.and_then(|i| record.get(i)).map(|v| v.trim().to_string()).filter(|s| !s.is_empty());
             let guest_category = category_idx.and_then(|i| record.get(i)).map(|v| v.trim().to_string()).filter(|s| !s.is_empty());
             let contact_method = contact_idx.and_then(|i| record.get(i)).map(|v| v.trim().to_string()).filter(|s| !s.is_empty());
@@ -161,13 +165,27 @@ impl CsvImportService {
             }
 
             // Validate category if provided
-            let valid_categories = ["VIP", "Regular", "Staff", "Family", "Friend"];
+            let valid_categories = ["VVIP", "VIP", "Normal", "Premium", "Staff", "Family", "Friend", "Service Provider", "Special Guest", "Regular"];
             if let Some(ref cat) = guest_category {
                 if !valid_categories.iter().any(|c| c.eq_ignore_ascii_case(cat)) {
                     errors.push(CsvRowError {
                         row_number,
                         field: Some("guest_category".to_string()),
                         message: format!("Invalid category '{}'. Must be one of: {:?}", cat, valid_categories),
+                        raw_data: Some(raw_line.clone()),
+                    });
+                    row_number += 1;
+                    continue;
+                }
+            }
+
+            // Validate device type if provided
+            if let Some(ref dt) = device_type {
+                if dt != "smartphone" && dt != "feature_phone" {
+                    errors.push(CsvRowError {
+                        row_number,
+                        field: Some("device_type".to_string()),
+                        message: format!("Invalid device_type '{}'. Must be 'smartphone' or 'feature_phone'", dt),
                         raw_data: Some(raw_line.clone()),
                     });
                     row_number += 1;
@@ -205,10 +223,13 @@ impl CsvImportService {
                 let lower = c.to_lowercase();
                 match lower.as_str() {
                     "vip" => "VIP".to_string(),
+                    "vvip" => "VVIP".to_string(),
                     "regular" => "Regular".to_string(),
                     "staff" => "Staff".to_string(),
                     "family" => "Family".to_string(),
                     "friend" => "Friend".to_string(),
+                    "service provider" => "Service Provider".to_string(),
+                    "special guest" => "Special Guest".to_string(),
                     _ => c,
                 }
             });
@@ -220,6 +241,8 @@ impl CsvImportService {
                 full_name,
                 phone: phone_digits,
                 email,
+                whatsapp_phone,
+                device_type,
                 table_number,
                 guest_category: normalized_category,
                 plus_one_allowed,

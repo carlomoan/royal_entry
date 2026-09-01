@@ -82,6 +82,8 @@ mod guest_validation_tests {
             full_name: "Hassan Mohammed".to_string(),
             phone: "+255700001001".to_string(),
             email: None,
+            whatsapp_phone: Some("+255700001001".to_string()),
+            device_type: Some("smartphone".to_string()),
             table_number: Some("5".to_string()),
             guest_category: Some("VIP".to_string()),
             plus_one_allowed: Some(false),
@@ -122,6 +124,8 @@ mod guest_validation_tests {
             full_name: "Jane Doe".to_string(),
             phone: "+255700001002".to_string(),
             email: None,
+            whatsapp_phone: None,
+            device_type: Some("feature_phone".to_string()),
             table_number: None,
             guest_category: None,
             plus_one_allowed: None,
@@ -153,8 +157,10 @@ mod event_validation_tests {
             venue_address: Some("Ohio Street, Dar es Salaam".to_string()),
             dress_code: Some("Black Tie".to_string()),
             card_theme: Some("elegant".to_string()),
+            main_characters: Some("MC Juma, DJ B".to_string()),
             guest_count_expected: Some(300),
             rsvp_deadline: Some("2025-06-01".to_string()),
+            send_save_the_date: Some(true),
         }
     }
 
@@ -189,8 +195,10 @@ mod event_validation_tests {
             venue_address: None,
             dress_code: None,
             card_theme: None,
+            main_characters: None,
             guest_count_expected: None,
             rsvp_deadline: None,
+            send_save_the_date: Some(false),
         };
         assert!(event.validate().is_ok());
     }

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use chrono::NaiveDate;
 use printpdf::*;
+use sqlx::Row;
 use crate::{error::AppError, AppResult, AppState};
 
 /// Row type for the event report query
@@ -197,6 +198,67 @@ impl PdfService {
         .await?;
 
         Ok(event_row)
+    }
+
+    pub async fn generate_payment_receipt(&self, payment_id: Uuid) -> AppResult<Vec<u8>> {
+        let row = sqlx::query(
+            r#"SELECT p.id, p.package_name, p.amount_tsh, p.payment_method, p.payer_phone, p.status,
+               p.mpesa_receipt_number, p.completed_at, o.display_name AS org_name
+               FROM payments p
+               JOIN organizations o ON o.id = p.organization_id
+               WHERE p.id = $1"#,
+        )
+        .bind(payment_id)
+        .fetch_optional(&*self.state.db.pool())
+        .await?
+        .ok_or(AppError::NotFound("Payment not found".to_string()))?;
+
+        let package_name: String = row.try_get("package_name").unwrap_or_default();
+        let amount_tsh: i64 = row.try_get("amount_tsh").unwrap_or(0);
+        let method: String = row.try_get("payment_method").unwrap_or_default();
+        let phone: Option<String> = row.try_get("payer_phone").ok();
+        let status: String = row.try_get("status").unwrap_or_default();
+        let receipt_no: Option<String> = row.try_get("mpesa_receipt_number").ok();
+        let completed_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("completed_at").ok();
+        let org_name: String = row.try_get("org_name").unwrap_or_default();
+
+        let (doc, page1, layer1) = PdfDocument::new(
+            "Payment Receipt",
+            Mm(210.0),
+            Mm(297.0),
+            "Layer 1",
+        );
+        let font = doc.add_builtin_font(BuiltinFont::Helvetica).map_err(|e| AppError::GenericError(format!("PDF font error: {}", e)))?;
+        let font_bold = doc.add_builtin_font(BuiltinFont::HelveticaBold).map_err(|e| AppError::GenericError(format!("PDF font error: {}", e)))?;
+        let current_layer = doc.get_page(page1).get_layer(layer1);
+
+        let mut y_pos: f32 = 270.0;
+        let left_margin = Mm(20.0);
+
+        current_layer.use_text("ROYALENTRY", 18.0, left_margin, Mm(y_pos), &font_bold);
+        y_pos -= 10.0;
+        current_layer.use_text("Payment Receipt", 14.0, left_margin, Mm(y_pos), &font_bold);
+        y_pos -= 18.0;
+
+        current_layer.use_text(&format!("Organization: {}", org_name), 10.0, left_margin, Mm(y_pos), &font);
+        y_pos -= 6.0;
+        current_layer.use_text(&format!("Package: {}", package_name), 10.0, left_margin, Mm(y_pos), &font);
+        y_pos -= 6.0;
+        current_layer.use_text(&format!("Amount: TZS {}", format_number(amount_tsh)), 10.0, left_margin, Mm(y_pos), &font);
+        y_pos -= 6.0;
+        current_layer.use_text(&format!("Method: {}", method), 10.0, left_margin, Mm(y_pos), &font);
+        y_pos -= 6.0;
+        if let Some(p) = phone { current_layer.use_text(&format!("Phone: {}", p), 10.0, left_margin, Mm(y_pos), &font); y_pos -= 6.0; }
+        current_layer.use_text(&format!("Status: {}", status.to_uppercase()), 10.0, left_margin, Mm(y_pos), &font);
+        y_pos -= 6.0;
+        if let Some(r) = receipt_no { current_layer.use_text(&format!("Receipt No: {}", r), 10.0, left_margin, Mm(y_pos), &font); y_pos -= 6.0; }
+        if let Some(dt) = completed_at { current_layer.use_text(&format!("Paid: {}", dt.format("%Y-%m-%d %H:%M")), 10.0, left_margin, Mm(y_pos), &font); y_pos -= 6.0; }
+
+        y_pos -= 10.0;
+        current_layer.use_text("Thank you for using RoyalEntry.", 9.0, left_margin, Mm(y_pos), &font);
+
+        let bytes = doc.save_to_bytes().map_err(|e| AppError::GenericError(format!("PDF save error: {}", e)))?;
+        Ok(bytes)
     }
 }
 
