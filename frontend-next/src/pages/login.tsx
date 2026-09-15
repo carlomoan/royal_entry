@@ -63,9 +63,7 @@ export default function LoginPage() {
           }}
         />
         <div className="relative z-10 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-gold-400 to-gold-600 shadow-lg shadow-gold-500/30">
-            <Crown className="h-6 w-6 text-navy-950" />
-          </div>
+          <img src="/RoyalEntrylogoVector.svg" alt="RoyalEntry" className="h-11 w-11 flex-shrink-0 rounded-xl" />
           <div>
             <h1 className="text-xl font-bold text-white">RoyalEntry</h1>
             <p className="text-xs text-slate-400">Elite Access Solutions</p>
@@ -106,9 +104,7 @@ export default function LoginPage() {
         <div className="w-full max-w-md animate-fadeIn">
           {/* Mobile logo */}
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-gold-400 to-gold-600">
-              <Crown className="h-6 w-6 text-navy-950" />
-            </div>
+            <img src="/RoyalEntrylogoVector.svg" alt="RoyalEntry" className="h-11 w-11 flex-shrink-0 rounded-xl" />
             <div>
               <h1 className="text-lg font-bold text-navy-950">RoyalEntry</h1>
               <p className="text-xs text-slate-500">Elite Access Solutions</p>

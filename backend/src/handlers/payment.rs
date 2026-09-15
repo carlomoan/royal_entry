@@ -180,6 +180,15 @@ pub async fn mpesa_callback(
         Err(e) => {
             tracing::error!(error = %e, "Failed to parse M-Pesa callback");
         }
+        let n = crate::services::NotificationService::new(state.clone());
+        n.push(
+            Some(payment.organization_id), None,
+            "payment.completed",
+            &format!("Payment received: TZS {} ({})", result.amount, result.mpesa_receipt_number),
+            None,
+            Some("/payments"),
+        ).await;
+
     }
 
     // Daraja expects a 200 OK with this body regardless of our outcome

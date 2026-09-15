@@ -1,32 +1,12 @@
 "use client";
-
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import {
-  LayoutDashboard,
-  CalendarDays,
-  CreditCard,
-  BarChart3,
-  ScrollText,
-  Settings,
-  Building2,
-  Package,
-  Users,
-  Webhook,
-  Palette,
-  SlidersHorizontal,
-  ChevronLeft,
-  ChevronRight,
-  LogOut,
-  Crown,
-  ShieldCheck,
-  UserCircle,
-  ScanLine,
-  Sparkles,
-  MessageCircle,
-  MessageSquare,
-  Send,
+  LayoutDashboard, CalendarDays, CreditCard, BarChart3, ScrollText,
+  Settings, Building2, Package, Users, Webhook, Palette, SlidersHorizontal,
+  ChevronLeft, ChevronRight, LogOut, Crown, ShieldCheck, UserCircle,
+  ScanLine, Sparkles, MessageCircle, MessageSquare, Send, Gauge, FileText, QrCode, // ✅ Added QrCode
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isPlatformAdmin, roleLabel, can } from "@/lib/roles";
@@ -38,17 +18,10 @@ interface NavItem {
   label: string;
   permission?: string;
 }
-
-interface NavSection {
-  title: string;
-  items: NavItem[];
-}
+interface NavSection { title: string; items: NavItem[]; }
 
 const PLATFORM_NAV: NavSection[] = [
-  {
-    title: "Dashboard",
-    items: [{ href: "/platform", icon: LayoutDashboard, label: "Overview" }],
-  },
+  { title: "Dashboard", items: [{ href: "/platform", icon: LayoutDashboard, label: "Overview" }] },
   {
     title: "Management",
     items: [
@@ -63,6 +36,7 @@ const PLATFORM_NAV: NavSection[] = [
       { href: "/platform/settings", icon: Settings, label: "System Settings" },
       { href: "/platform/global-variables", icon: SlidersHorizontal, label: "Global Variables" },
       { href: "/platform/card-templates", icon: Palette, label: "Card Templates" },
+      { href: "/platform/templates", icon: FileText, label: "Email Templates" },
       { href: "/platform/rbac", icon: ShieldCheck, label: "Roles & Permissions" },
       { href: "/platform/webhooks", icon: Webhook, label: "Webhooks" },
       { href: "/platform/audit", icon: ScrollText, label: "Audit Log" },
@@ -74,10 +48,7 @@ const PLATFORM_NAV: NavSection[] = [
   },
   {
     title: "Insights",
-    items: [
-      { href: "/platform/payments", icon: CreditCard, label: "Payments" },
-      { href: "/platform/settings", icon: Settings, label: "Settings" },
-    ],
+    items: [{ href: "/platform/payments", icon: CreditCard, label: "Payments" }],
   },
 ];
 
@@ -88,12 +59,16 @@ const ACCOUNT_NAV: NavSection[] = [
       { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
       { href: "/events", icon: CalendarDays, label: "Events", permission: "events:read" },
       { href: "/scanner", icon: ScanLine, label: "Scanner", permission: "scanner:read" },
+      // ✅ NEW: Guest QR Management link for Account Admins/Event Managers
+      { href: "/guests/qr-management", icon: QrCode, label: "Guest QR Codes", permission: "invitations:read" },
     ],
   },
   {
     title: "Operations",
     items: [
       { href: "/payments", icon: CreditCard, label: "Payments", permission: "payments:read" },
+      { href: "/billing", icon: CreditCard, label: "Billing", permission: "payments:read" },
+      { href: "/usage", icon: Gauge, label: "Usage & Limits", permission: "events:read" },
       { href: "/reports", icon: BarChart3, label: "Reports", permission: "reports:read" },
     ],
   },
@@ -117,9 +92,7 @@ export default function Sidebar() {
   const sections = (platform ? PLATFORM_NAV : ACCOUNT_NAV)
     .map((section) => ({
       ...section,
-      items: section.items.filter(
-        (item) => !item.permission || can(user?.role, item.permission)
-      ),
+      items: section.items.filter((item) => !item.permission || can(user?.role, item.permission)),
     }))
     .filter((section) => section.items.length > 0);
 
@@ -157,9 +130,7 @@ export default function Sidebar() {
             <ul className="space-y-0.5 px-2">
               {section.items.map(({ href, icon: Icon, label }) => {
                 const isActive =
-                  href === "/platform"
-                    ? pathname === "/platform"
-                    : pathname.startsWith(href);
+                  href === "/platform" ? pathname === "/platform" : pathname.startsWith(href);
                 return (
                   <li key={href}>
                     <Link
@@ -167,9 +138,7 @@ export default function Sidebar() {
                       title={collapsed ? label : undefined}
                       className={cn(
                         "group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
-                        isActive
-                          ? "bg-gold-500/15 text-gold-400"
-                          : "text-slate-400 hover:bg-white/5 hover:text-white"
+                        isActive ? "bg-gold-500/15 text-gold-400" : "text-slate-400 hover:bg-white/5 hover:text-white"
                       )}
                     >
                       {isActive && (
@@ -186,39 +155,24 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* User profile + collapse toggle */}
+      {/* Footer */}
       <div className="border-t border-white/10 p-3">
-        <div
-          className={cn(
-            "mb-2 flex items-center gap-3 rounded-lg bg-white/5 p-2.5",
-            collapsed && "justify-center"
-          )}
-        >
+        <div className={cn("mb-2 flex items-center gap-3 rounded-lg bg-white/5 p-2.5", collapsed && "justify-center")}>
           <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gold-500 text-xs font-bold text-navy-950">
             {user?.full_name?.[0]?.toUpperCase() ?? "U"}
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-semibold">{user?.full_name}</p>
-              <p className="truncate text-[10px] text-slate-400">
-                {roleLabel(user?.role)}
-              </p>
+              <p className="truncate text-[10px] text-slate-400">{roleLabel(user?.role)}</p>
             </div>
           )}
           {!collapsed && (
             <div className="flex items-center gap-1">
-              <Link
-                href="/profile"
-                className="rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
-                title="My Profile"
-              >
+              <Link href="/profile" className="rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white" title="My Profile">
                 <UserCircle className="h-4 w-4" />
               </Link>
-              <button
-                onClick={logout}
-                className="rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
-                title="Sign out"
-              >
+              <button onClick={logout} className="rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white" title="Sign out">
                 <LogOut className="h-4 w-4" />
               </button>
             </div>
@@ -231,13 +185,7 @@ export default function Sidebar() {
             collapsed && "px-0"
           )}
         >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <>
-              <ChevronLeft className="h-4 w-4" /> Collapse
-            </>
-          )}
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : (<><ChevronLeft className="h-4 w-4" /> Collapse</>)}
         </button>
       </div>
     </aside>

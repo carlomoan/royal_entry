@@ -1,12 +1,19 @@
 "use client";
-
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
+import CommandPalette from "./CommandPalette";
 import { isPlatformAdmin } from "@/lib/roles";
 import { LogOut } from "lucide-react";
+
+function getHomePath(role?: string | null): string {
+  if (isPlatformAdmin(role)) return "/platform";
+  if (role === "scanner_attendant") return "/scanner";
+  if (role === "event_manager") return "/events";
+  return "/dashboard";
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user, isImpersonating, returnToSuperAdmin } = useAuth();
@@ -14,22 +21,24 @@ function Shell({ children }: { children: React.ReactNode }) {
   const pathname = router.pathname;
 
   const platform = isPlatformAdmin(user?.role);
-  const home = platform ? "/platform" : "/dashboard";
-
-  // Users with no account (non-platform role, no organization) can only view their profile
+  const home = getHomePath(user?.role);
   const unassigned = !isLoading && isAuthenticated && !platform && !user?.organization_id;
 
+  // ✅ Mobile menu state
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) router.replace("/login");
-    if (!isLoading && isAuthenticated && pathname === "/") {
-      if (unassigned) router.replace("/profile");
-      else router.replace(home);
-    }
-    // Force unassigned users to profile (block all other pages)
-    if (unassigned && pathname !== "/profile") {
-      router.replace("/profile");
-    }
-  }, [isAuthenticated, isLoading, pathname, home, unassigned, router]);
+    if (isLoading) return;
+    if (!isAuthenticated) { router.replace("/login"); return; }
+    if (unassigned && pathname !== "/profile") { router.replace("/profile"); return; }
+    if (pathname === "/") { router.replace(home); return; }
+    if (!platform && pathname.startsWith("/platform")) router.replace(home);
+  }, [isAuthenticated, isLoading, pathname, home, unassigned, router, platform]);
+
+  // ✅ Close mobile menu when navigating to a new page
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
 
   if (isLoading) {
     return (
@@ -38,19 +47,13 @@ function Shell({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
   if (!isAuthenticated) return null;
-
-  // Unassigned user — show only their profile
-  if (unassigned && pathname !== "/profile") {
-    return null;
-  }
+  if (unassigned && pathname !== "/profile") return null;
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      <Sidebar />
+      <Sidebar mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} />
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Impersonation banner */}
         {isImpersonating && (
           <div className="flex items-center justify-between gap-4 bg-navy-950 px-6 py-2.5 text-white">
             <div className="flex items-center gap-2 text-sm">
@@ -67,7 +70,8 @@ function Shell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         )}
-        <TopBar />
+        <TopBar onMenuClick={() => setMobileMenuOpen(true)} />
+        <CommandPalette />
         <main className="flex-1 p-6">{children}</main>
         <footer className="border-t border-slate-200 px-6 py-4 text-center text-xs text-slate-400">
           © {new Date().getFullYear()} RoyalEntry · Elite Access Solutions

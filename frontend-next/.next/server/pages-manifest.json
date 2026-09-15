@@ -3,9 +3,8 @@
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
   "/events/[id]": "pages/events/[id].js",
-  "/login": "pages/login.js",
-  "/dashboard": "pages/dashboard.js",
-  "/platform/packages": "pages/platform/packages.js",
-  "/platform/users": "pages/platform/users.js",
-  "/platform/accounts": "pages/platform/accounts.js"
+  "/events": "pages/events.js",
+  "/settings": "pages/settings.js",
+  "/platform": "pages/platform.js",
+  "/platform/templates": "pages/platform/templates.js"
 }

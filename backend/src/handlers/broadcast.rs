@@ -26,6 +26,7 @@ pub struct SendBroadcastRequest {
     pub channel: Option<String>,
     pub target: Option<String>,
     pub guest_category: Option<String>,
+    pub guest_ids: Option<Vec<Uuid>>, // ✅ ADDED: Supports bulk selection from frontend
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -81,8 +82,26 @@ async fn fetch_recipients(
     event_id: Uuid,
     target: &str,
     guest_category: Option<&str>,
+    guest_ids: Option<Vec<Uuid>>, // ✅ ADDED PARAMETER
 ) -> AppResult<Vec<RecipientRow>> {
     let category = guest_category.map(|s| s.to_string());
+
+    // ✅ If specific guest IDs are provided, fetch ONLY those guests
+    if let Some(ids) = guest_ids {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows = sqlx::query_as::<_, RecipientRow>(
+            r#"SELECT g.id AS guest_id, g.phone FROM guests g WHERE g.event_id = $1 AND g.id = ANY($2) ORDER BY g.full_name ASC"#,
+        )
+        .bind(event_id)
+        .bind(&ids)
+        .fetch_all(state.db.pool())
+        .await?;
+        return Ok(rows);
+    }
+
+    // Fallback to target/category filtering
     let rows = match target {
         "vip" => {
             sqlx::query_as::<_, RecipientRow>(
@@ -180,7 +199,8 @@ pub async fn send_broadcast(
     let campaign_name = payload.campaign_name.clone();
     let guest_category = payload.guest_category.clone();
 
-    let recipients = fetch_recipients(&state, event_id, &target, guest_category.as_deref()).await?;
+    // ✅ Pass guest_ids to fetch_recipients
+    let recipients = fetch_recipients(&state, event_id, &target, guest_category.as_deref(), payload.guest_ids).await?;
 
     if recipients.is_empty() {
         return Ok((
@@ -218,6 +238,7 @@ pub async fn send_broadcast(
     for recipient in recipients {
         let attempts = messaging.send(&channel, &recipient.phone, &message).await?;
         let recipient_success = attempts.iter().any(|attempt| attempt.success);
+
         if recipient_success { sent += 1; } else { failed += 1; }
 
         for attempt in attempts {

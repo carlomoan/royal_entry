@@ -239,6 +239,23 @@ pub async fn verify_otp(
             verified: true,
         }
     })))
+    // VIP arrival alert (proposal feature 3.5)
+    if guest_category
+        .as_deref()
+        .map(|c| c.eq_ignore_ascii_case("vip") || c.eq_ignore_ascii_case("vvip"))
+        .unwrap_or(false)
+    {
+        let n = crate::services::NotificationService::new(state.clone());
+        n.push(
+            Some(org_id),
+            None,
+            "guest.vip_arrived",
+            &format!("VIP arrived: {}", guest_name),
+            Some(&format!("{} · Table {}", guest_category.clone().unwrap_or_default(), table_number.clone().unwrap_or_else(|| "—".into()))),
+            Some(&format!("/events/{}", event_id)),
+        )
+        .await;
+    }
 }
 
 async fn assert_event_ownership(
@@ -465,6 +482,23 @@ pub async fn check_in_guest(
             "data": response,
         })),
     ))
+    // VIP arrival alert (proposal feature 3.5)
+    if guest_category
+        .as_deref()
+        .map(|c| c.eq_ignore_ascii_case("vip") || c.eq_ignore_ascii_case("vvip"))
+        .unwrap_or(false)
+    {
+        let n = crate::services::NotificationService::new(state.clone());
+        n.push(
+            Some(org_id),
+            None,
+            "guest.vip_arrived",
+            &format!("VIP arrived: {}", guest_name),
+            Some(&format!("{} · Table {}", guest_category.clone().unwrap_or_default(), table_number.clone().unwrap_or_else(|| "—".into()))),
+            Some(&format!("/events/{}", event_id)),
+        )
+        .await;
+    }
 }
 
 pub async fn scan_stats(

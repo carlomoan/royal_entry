@@ -488,6 +488,14 @@ pub async fn approve_organization(State(state): State<Arc<AppState>>, Extension(
     sqlx::query("UPDATE organizations SET account_status = 'active', updated_at = NOW() WHERE id = $1").bind(organization_id).execute(state.db.pool()).await?;
     sqlx::query("UPDATE users SET is_active = TRUE WHERE organization_id = $1").bind(organization_id).execute(state.db.pool()).await?;
     Ok(Json(json!({ "success": true, "message": "Organization approved" })))
+
+    let n = crate::services::NotificationService::new(state.clone());
+    n.push(
+        Some(organization_id), None,
+        "account.approved", // or "account.suspended"
+        "Your RoyalEntry account is now active", // or "Your account has been suspended"
+        None, Some("/dashboard"),
+    ).await;
 }
 
 pub async fn reject_organization(State(state): State<Arc<AppState>>, Extension(claims): Extension<Claims>, Path(organization_id): Path<Uuid>) -> AppResult<Json<serde_json::Value>> {
@@ -570,6 +578,24 @@ pub async fn mark_invoice_paid(State(state): State<Arc<AppState>>, Extension(cla
     sqlx::query("INSERT INTO payments (id, organization_id, event_id, payment_type, package_name, amount_tsh, payment_method, payer_phone, status, payment_gateway, notes, completed_at, created_at, updated_at, subscription_id, invoice_id) VALUES ($1, $2, NULL, 'subscription', $3, $4, $5, $6, 'completed', 'manual', $7, $8, $8, $8, $9, $10)")
         .bind(Uuid::new_v4()).bind(organization_id).bind(plan_name.unwrap_or_else(|| "RoyalEntry subscription".to_string())).bind(amount_tsh).bind(payment_method).bind(payload.payer_phone).bind(payload.notes.unwrap_or_else(|| "Invoice marked paid by platform admin".to_string())).bind(now).bind(subscription_id).bind(invoice_id)
         .execute(&mut *tx).await?;
+    tx.commit().await?;
+
+    if let Some(sub_id) = subscription_id {
+        sqlx::query("UPDATE organization_subscriptions SET status = 'active', updated_at = NOW() WHERE id = $1")
+            .bind(sub_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    // Ensure the organization is fully active
+    sqlx::query("UPDATE organizations SET account_status = 'active', updated_at = NOW() WHERE id = $1")
+        .bind(organization_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE users SET is_active = TRUE WHERE organization_id = $1")
+        .bind(organization_id)
+        .execute(&mut *tx)
+        .await?;
+
     tx.commit().await?;
     Ok(Json(json!({ "success": true, "message": "Invoice marked as paid and payment recorded" })))
 }

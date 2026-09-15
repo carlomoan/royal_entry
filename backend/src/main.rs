@@ -89,6 +89,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap();
     }
 
+    // Deliver webhooks every minute
+    {
+        let state = app_state.clone();
+        scheduler
+            .add(tokio_cron_scheduler::Job::new_async("0 * * * * *", move |_uuid, _l| {
+                let state = state.clone();
+                Box::pin(async move {
+                    let svc = royalentry_backend::services::WebhookService::new(state);
+                    if let Err(e) = svc.process_deliveries().await {
+                        tracing::error!(error = %e, "Webhook delivery processing failed");
+                    }
+                })
+            })?)
+            .await?;
+    }
+
     // Retry failed payments every 6 hours
     {
         let billing = billing.clone();

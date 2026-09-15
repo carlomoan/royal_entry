@@ -1,109 +1,99 @@
-"use client";
+// ==============================================================================
+// FILE: src/lib/roles.ts
+// ==============================================================================
+// Single source of truth for frontend role logic.
+// MUST mirror backend src/utils/rbac.rs exactly.
+// ==============================================================================
 
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ScrollText, Trash2, AlertTriangle } from "lucide-react";
-import toast from "react-hot-toast";
-import api from "@/lib/api";
-import { Card, Badge, Button, Modal, Select } from "@/components/ui";
-import { formatDate } from "@/lib/utils";
+export const PLATFORM_ROLES = ["superadmin", "platform_admin", "system_admin"] as const;
 
-const RETENTION_OPTIONS = [
-  { value: "30", label: "30 days" },
-  { value: "60", label: "60 days" },
-  { value: "90", label: "90 days" },
-  { value: "180", label: "180 days" },
-  { value: "365", label: "1 year" },
-  { value: "0", label: "Delete all" },
-];
+export const ACCOUNT_ROLES = [
+  "account_admin",
+  "event_manager",
+  "event_accountant",
+  "secretary",
+  "scanner_attendant",
+  "viewer",
+] as const;
 
-export default function PlatformAuditPage() {
-  const qc = useQueryClient();
-  const [resetOpen, setResetOpen] = useState(false);
-  const [resetDays, setResetDays] = useState("90");
+export type Role =
+  | (typeof ACCOUNT_ROLES)[number]
+  | (typeof PLATFORM_ROLES)[number];
 
-  const { data: response, isLoading } = useQuery({
-    queryKey: ["platform-audit"],
-    queryFn: async () => (await api.get("/audit/logs")).data,
-  });
-  const logs = response?.data ?? [];
+const normalize = (role?: string | null): string => (role ?? "").trim().toLowerCase();
 
-  const resetMutation = useMutation({
-    mutationFn: (days: number) => api.delete(`/audit/reset?days=${days}`),
-    onSuccess: (r: any) => {
-      qc.invalidateQueries({ queryKey: ["platform-audit"] });
-      setResetOpen(false);
-      toast.success(r.data?.message ?? "Audit logs purged");
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to purge"),
-  });
+// ✅ Platform admins bypass everything
+export const isPlatformAdmin = (role?: string | null): boolean =>
+  (PLATFORM_ROLES as readonly string[]).includes(normalize(role));
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
-          <p className="text-sm text-slate-500">System-wide activity trail</p>
-        </div>
-        <Button variant="outline" onClick={() => setResetOpen(true)}>
-          <Trash2 className="h-4 w-4" /> Purge old logs
-        </Button>
-      </div>
+export const isAccountAdmin = (role?: string | null): boolean =>
+  normalize(role) === "account_admin" || isPlatformAdmin(role);
 
-      {isLoading ? (
-        <p className="text-sm text-slate-500">Loading…</p>
-      ) : logs.length === 0 ? (
-        <Card><div className="py-12 text-center"><ScrollText className="mx-auto mb-3 h-10 w-10 text-slate-200" /><p className="font-medium text-slate-600">No audit entries</p></div></Card>
-      ) : (
-        <Card title="Recent Activity">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-200">
-                {["Time", "User", "Role", "Method", "Path", "Status"].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{h}</th>
-                ))}
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {logs.map((log: any) => (
-                  <tr key={log.id} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs text-slate-500">{formatDate(log.occurred_at)}</td>
-                    <td className="px-4 py-3 text-slate-700">{log.user_email ?? "—"}</td>
-                    <td className="px-4 py-3"><Badge label={log.role ?? "—"} variant="slate" /></td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{log.method}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{log.path}</td>
-                    <td className="px-4 py-3"><Badge label={log.status_code >= 400 ? "error" : "success"} variant={log.status_code >= 400 ? "rose" : "green"} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+export const canManageUsers = (role?: string | null): boolean => isAccountAdmin(role);
 
-      {/* Reset / purge modal */}
-      <Modal isOpen={resetOpen} onClose={() => setResetOpen(false)} title="Purge Audit Logs" size="sm">
-        <div className="space-y-4">
-          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            <p>This action is irreversible. Audit log entries older than the chosen retention window will be permanently deleted.</p>
-          </div>
-          <Select label="Retention window" value={resetDays} onChange={(e) => setResetDays(e.target.value)}>
-            {RETENTION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </Select>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setResetOpen(false)}>Cancel</Button>
-            <Button
-              variant="danger"
-              onClick={() => resetMutation.mutate(parseInt(resetDays))}
-              isLoading={resetMutation.isPending}
-            >
-              <Trash2 className="h-4 w-4" /> Purge
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
+export const allowedAssignableRoles = (role?: string | null): string[] => {
+  if (isPlatformAdmin(role)) return [...PLATFORM_ROLES, ...ACCOUNT_ROLES];
+  if (isAccountAdmin(role)) return [...ACCOUNT_ROLES];
+  return [];
+};
+
+export const roleLabel = (role?: string | null): string => {
+  const r = normalize(role);
+  const map: Record<string, string> = {
+    superadmin: "Super Admin",
+    platform_admin: "Platform Admin",
+    system_admin: "System Admin",
+    account_admin: "Account Admin",
+    event_manager: "Event Manager",
+    event_accountant: "Event Accountant",
+    secretary: "Secretary",
+    scanner_attendant: "Scanner Attendant",
+    viewer: "Viewer",
+  };
+  return map[r] ?? (role ? role.replace(/_/g, " ") : "Team member");
+}
+
+// ==============================================================================
+// ✅ FIXED PERMISSION MATRIX
+// Wildcards MUST be "resource:*" — the old "resource:" form never matched,
+// which hid nav items and caused 403s for account roles.
+// Mirrors backend src/utils/rbac.rs ROLE_PERMISSIONS.
+// ==============================================================================
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  account_admin: [
+    "events:*", "guests:*", "invitations:*", "scanner:*", "michango:*",
+    "broadcast:*", "payments:*", "reports:*", "audit:*", "team:*",
+    "settings:*", "invoices:read",
+  ],
+  event_manager: [
+    "events:read", "events:write",
+    "guests:*", "invitations:*", "scanner:*", "broadcast:*",
+  ],
+  event_accountant: [
+    "events:read", "michango:*", "payments:*", "reports:read",
+  ],
+  secretary: [
+    "events:read", "guests:*", "broadcast:read", "invitations:*",
+  ],
+  scanner_attendant: [
+    "events:read", "scanner:*",
+  ],
+  viewer: [
+    "events:read", "reports:read",
+  ],
+};
+
+export function can(role: string | undefined | null, permission: string): boolean {
+  const r = normalize(role);
+  if (!r) return false;
+  if (isPlatformAdmin(r)) return true; // platform roles bypass all checks
+
+  const allowed = ROLE_PERMISSIONS[r] ?? [];
+  const [resource] = permission.split(":");
+  return allowed.some(
+    (p) =>
+      p === permission ||          // exact match  "events:read"
+      p === `${resource}:*` ||     // wildcard     "events:*"
+      p === `${resource}:`         // legacy safety net
   );
 }

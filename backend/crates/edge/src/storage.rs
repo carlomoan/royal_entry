@@ -1,6 +1,6 @@
 use std::path::Path;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{SqlitePool, Pool, Sqlite};
+use sqlx::{Pool, Sqlite};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use crate::models::{QueuedOperation, LocalScan};

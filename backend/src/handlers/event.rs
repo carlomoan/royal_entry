@@ -170,6 +170,15 @@ pub async fn approve_event(
     ).bind(event_id).bind(approver_id).fetch_one(state.db.pool()).await?;
 
     Ok(Json(json!({ "success": true, "data": EventResponse::from(approved), "message": "Event approved successfully" })))
+
+    let n = crate::services::NotificationService::new(state.clone());
+    n.push(
+        Some(org_id), None,
+        if approved { "event.approved" } else { "event.rejected" },
+        &format!("Event {}: {}", if approved { "approved" } else { "rejected" }, event.title),
+        None,
+        Some(&format!("/events/{}", event_id)),
+    ).await;
 }
 
 pub async fn reject_event(

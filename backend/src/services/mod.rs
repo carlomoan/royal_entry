@@ -4,9 +4,10 @@
 pub mod auth;
 pub mod bootstrap;
 pub mod billing;
-pub mod csv_import; // ✅ ADD THIS LINE
+pub mod csv_import;
 pub mod messaging;
 pub mod mpesa;
+pub mod notifications; // ✅ ADD THIS
 pub mod pdf;
 pub mod scheduler;
 pub mod sms;
@@ -18,9 +19,10 @@ pub mod whatsapp;
 pub use auth::AuthService;
 pub use bootstrap::BootstrapService;
 pub use billing::BillingService;
-pub use csv_import::CsvImportService; // ✅ ADD THIS LINE
+pub use csv_import::CsvImportService;
 pub use messaging::MessagingService;
 pub use mpesa::MpesaService;
+pub use notifications::NotificationService; // ✅ ADD THIS
 pub use pdf::PdfService;
 pub use scheduler::start_scheduler;
 pub use sms::SmsService;

@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::{AppError, AppResult}, services::mpesa::MpesaService};
+use crate::{error::{AppError, AppResult}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhatsappDeliveryResult {

@@ -200,6 +200,51 @@ impl WebhookService {
         Ok(triggered)
     }
 
+    /// Send a test event to an endpoint immediately and return the final delivery.
+    pub async fn test_endpoint(&self, endpoint_id: Uuid) -> AppResult<WebhookDelivery> {
+        let _endpoint = sqlx::query_as::<_, WebhookEndpoint>(
+            "SELECT * FROM webhook_endpoints WHERE id = $1",
+        )
+        .bind(endpoint_id)
+        .fetch_optional(&*self.state.db.pool())
+        .await?
+        .ok_or_else(|| AppError::NotFound("Webhook endpoint not found".to_string()))?;
+
+        let payload = serde_json::json!({
+            "event": "webhook.test",
+            "timestamp": Utc::now().to_rfc3339(),
+            "data": { "message": "RoyalEntry test delivery" }
+        });
+        let delivery_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO webhook_deliveries (id, endpoint_id, event_type, payload, attempt, status, created_at)
+             VALUES ($1, $2, 'webhook.test', $3, 0, 'pending', NOW())",
+        )
+        .bind(delivery_id)
+        .bind(endpoint_id)
+        .bind(&payload)
+        .execute(&*self.state.db.pool())
+        .await?;
+
+        let delivery = sqlx::query_as::<_, WebhookDelivery>(
+            "SELECT d.*, NULL AS url, NULL AS secret FROM webhook_deliveries d WHERE d.id = $1",
+        )
+        .bind(delivery_id)
+        .fetch_one(&*self.state.db.pool())
+        .await?;
+
+        if let Err(e) = self.deliver(&delivery).await {
+            tracing::warn!(error = %e, "Test delivery failed");
+        }
+        let updated = sqlx::query_as::<_, WebhookDelivery>(
+            "SELECT d.*, NULL AS url, NULL AS secret FROM webhook_deliveries d WHERE d.id = $1",
+        )
+        .bind(delivery_id)
+        .fetch_one(&*self.state.db.pool())
+        .await?;
+        Ok(updated)
+    }
+
     // ============================================================================
     // DELIVERY PROCESSING
     // ============================================================================
@@ -344,4 +389,70 @@ impl WebhookService {
         }
         hex_str
     }
+}
+
+/// List recent deliveries for an endpoint (for the Delivery Logs UI)
+pub async fn list_deliveries(
+    &self,
+    org_id: Uuid,
+    endpoint_id: Uuid,
+    limit: i64,
+) -> AppResult<Vec<WebhookDelivery>> {
+    // Ownership check via JOIN so a tenant can never read another org's logs
+    let rows = sqlx::query_as::<_, WebhookDelivery>(
+        r#"
+        SELECT d.*, e.url, e.secret
+        FROM webhook_deliveries d
+        JOIN webhook_endpoints e ON e.id = d.endpoint_id
+        WHERE d.endpoint_id = $1 AND e.organization_id = $2
+        ORDER BY d.created_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(endpoint_id)
+    .bind(org_id)
+    .bind(limit)
+    .fetch_all(&*self.state.db.pool())
+    .await?;
+    Ok(rows)
+}
+
+/// Send a sample event to an endpoint right now and return the final delivery state
+pub async fn test_delivery(&self, org_id: Uuid, endpoint_id: Uuid) -> AppResult<WebhookDelivery> {
+    // Verify ownership first
+    self.get_endpoint(org_id, endpoint_id).await?;
+
+    let payload = serde_json::json!({
+        "event": "webhook.test",
+        "created_at": Utc::now().to_rfc3339(),
+        "data": { "message": "RoyalEntry test delivery — your endpoint is configured correctly." }
+    });
+
+    let delivery_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO webhook_deliveries (id, endpoint_id, event_type, payload, attempt, status, created_at)
+        VALUES ($1, $2, 'webhook.test', $3, 0, 'pending', NOW())
+        "#,
+    )
+    .bind(delivery_id)
+    .bind(endpoint_id)
+    .bind(&payload)
+    .execute(&*self.state.db.pool())
+    .await?;
+
+    let fetch = "SELECT d.*, e.url, e.secret FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id WHERE d.id = $1";
+    let delivery = sqlx::query_as::<_, WebhookDelivery>(fetch)
+        .bind(delivery_id)
+        .fetch_one(&*self.state.db.pool())
+        .await?;
+
+    // Reuse the existing signed-delivery pipeline (retries included)
+    self.deliver(&delivery).await?;
+
+    let updated = sqlx::query_as::<_, WebhookDelivery>(fetch)
+        .bind(delivery_id)
+        .fetch_one(&*self.state.db.pool())
+        .await?;
+    Ok(updated)
 }

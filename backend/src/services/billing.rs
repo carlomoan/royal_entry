@@ -240,6 +240,14 @@ impl BillingService {
             sent += 1;
         }
         Ok(sent)
+        let n = crate::services::NotificationService::new(self.state.clone());
+        n.push(
+            Some(org_id), None,
+            "invoice.overdue",
+            &format!("Invoice overdue by {} days — TZS {}", days_overdue, amount_tsh),
+            None,
+            Some("/billing"),
+        ).await;
     }
 
     /// Convert trial subscriptions to paid

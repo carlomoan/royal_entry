@@ -1,67 +1,78 @@
-export const PLATFORM_ROLES = ["superadmin", "platform_admin", "system_admin"] as const;
-
-export const ACCOUNT_ROLES = [
+// ==============================================================================
+// FILE: src/lib/roles.ts
+// ==============================================================================
+export const PLATFORM_ROLES: string[] = ["superadmin", "platform_admin", "system_admin"];
+export const ACCOUNT_ROLES: string[] = [
   "account_admin",
   "event_manager",
   "event_accountant",
   "secretary",
   "scanner_attendant",
   "viewer",
-] as const;
+];
 
-export type Role =
-  | (typeof ACCOUNT_ROLES)[number]
-  | (typeof PLATFORM_ROLES)[number];
-
-const normalize = (role?: string): string =>
-  (role ?? "").trim().toLowerCase();
-
-export const isPlatformAdmin = (role?: string): boolean =>
-  PLATFORM_ROLES.includes(normalize(role) as (typeof PLATFORM_ROLES)[number]);
-
-export const isAccountAdmin = (role?: string): boolean =>
-  normalize(role) === "account_admin" || isPlatformAdmin(role);
-
-export const canManageUsers = (role?: string): boolean => isAccountAdmin(role);
-
-export const allowedAssignableRoles = (role?: string): string[] => {
-  if (isPlatformAdmin(role)) return [...PLATFORM_ROLES, ...ACCOUNT_ROLES];
-  if (isAccountAdmin(role)) return [...ACCOUNT_ROLES];
-  return [];
+export const ROLE_LABELS: Record<string, string> = {
+  superadmin: "Super Admin",
+  platform_admin: "Platform Admin",
+  system_admin: "System Admin",
+  account_admin: "Account Admin",
+  event_manager: "Event Manager",
+  event_accountant: "Event Accountant",
+  secretary: "Secretary",
+  scanner_attendant: "Scanner Attendant",
+  viewer: "Viewer",
 };
 
-export const roleLabel = (role?: string): string => {
-  const r = normalize(role);
-  const map: Record<string, string> = {
-    superadmin: "Super Admin",
-    platform_admin: "Platform Admin",
-    system_admin: "System Admin",
-    account_admin: "Account Admin",
-    event_manager: "Event Manager",
-    event_accountant: "Event Accountant",
-    secretary: "Secretary",
-    scanner_attendant: "Scanner Attendant",
-    viewer: "Viewer",
-  };
-  return map[r] ?? (role ? role.replace(/_/g, " ") : "Team member");
-};
+export function normalizeRole(role?: string | null): string {
+  return (role ?? "").trim().toLowerCase();
+}
 
+export function isPlatformAdmin(role?: string | null): boolean {
+  return PLATFORM_ROLES.includes(normalizeRole(role));
+}
+
+export function isAccountAdmin(role?: string | null): boolean {
+  const r = normalizeRole(role);
+  return r === "account_admin" || isPlatformAdmin(r);
+}
+
+export function roleLabel(role?: string | null): string {
+  const r = normalizeRole(role);
+  return ROLE_LABELS[r] ?? (r ? r.replace(/[_-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Guest");
+}
+
+// ✅ FIXED: Wildcards must be "resource:*"
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   account_admin: [
-    "events:*", "guests:*", "invitations:*", "scanner:*", "michango:*",
-    "broadcast:*", "payments:*", "reports:*", "audit:*", "team:*", "settings:*",
+    "events:*", "guests:*", "invitations:*", "scanner:*",
+    "michango:*", "broadcast:*", "payments:*", "reports:*",
+    "audit:*", "team:*", "settings:*",
   ],
-  event_manager: ["events:read", "events:write", "guests:*", "invitations:*", "scanner:*", "broadcast:*"],
-  event_accountant: ["events:read", "michango:*", "payments:*"],
-  secretary: ["events:read", "guests:*", "broadcast:read", "invitations:*"],
-  scanner_attendant: ["scanner:*"],
-  viewer: ["events:read", "reports:read"],
+  event_manager: [
+    "events:read", "events:write",
+    "guests:*", "invitations:*", "scanner:*", "broadcast:*",
+  ],
+  event_accountant: [
+    "events:read", "michango:*", "payments:*",
+  ],
+  secretary: [
+    "events:read", "guests:*", "broadcast:read", "invitations:*",
+  ],
+  scanner_attendant: [
+    "scanner:*", // ✅ Removed "events:read" so they are forced to the Scanner Hub
+  ],
+  viewer: [
+    "events:read", "reports:read",
+  ],
 };
 
-export function can(role: string | undefined, permission: string): boolean {
-  if (!role) return false;
-  if (isPlatformAdmin(role)) return true;
-  const allowed = ROLE_PERMISSIONS[role] ?? [];
+export function can(role: string | undefined | null, permission: string): boolean {
+  const r = normalizeRole(role);
+  if (isPlatformAdmin(r)) return true; // Platform admins bypass all checks
+
+  const allowed = ROLE_PERMISSIONS[r] ?? [];
   const [resource] = permission.split(":");
+
+  // Check for exact match or wildcard (e.g., "events:*" matches "events:read")
   return allowed.some((p) => p === permission || p === `${resource}:*`);
 }

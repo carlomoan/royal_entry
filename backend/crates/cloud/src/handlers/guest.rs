@@ -9,7 +9,7 @@ use axum::{
     Extension, Json,
 };
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
@@ -482,7 +482,7 @@ pub async fn import_guests_csv(
         row_num += 1;
         let record: Result<CreateGuestRequest, _> = result;
         match record {
-            Ok(mut guest) => {
+            Ok(guest) => {
                 // Validate
                 if let Err(e) = guest.validate() {
                     errors.push(format!("Row {}: {}", row_num, e));

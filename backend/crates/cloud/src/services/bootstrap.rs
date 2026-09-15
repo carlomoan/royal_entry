@@ -37,8 +37,8 @@ impl BootstrapService {
 
         let password_hash = AuthService::hash_password(&admin_password)?;
 
-        // Platform organization ID
-        let platform_org_id = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
+        // Platform organization ID — global superadmin has no org
+        let platform_org_id: Option<Uuid> = None;
 
         // FIX: Changed role from "admin" to "superadmin" to match the new DB CHECK constraint
         let user = UserRepository::create(

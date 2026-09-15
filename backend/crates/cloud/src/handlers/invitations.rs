@@ -8,6 +8,7 @@ use axum::{
     Extension, Json,
 };
 use chrono::Utc;
+use serde::Deserialize; // ✅ ADDED: Required for #[derive(Deserialize)]
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -46,6 +47,15 @@ async fn list_event_guests(pool: &PgPool, event_id: Uuid) -> AppResult<Vec<Guest
     .fetch_all(pool)
     .await?;
     Ok(guests)
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct SendInvitationsRequest {
+    pub guest_ids: Option<Vec<Uuid>>,
+    pub channel: Option<String>, // email, sms, whatsapp, telegram
+    pub template_id: Option<Uuid>, // Optional card template to attach
+    pub custom_message: Option<String>,
 }
 
 pub async fn list_invitations(
@@ -146,7 +156,6 @@ pub async fn generate_invitations(
         .bind(now)
         .fetch_one(&mut *tx)
         .await?;
-
         generated += 1;
         results.push(InvitationResponse::from_invitation(
             invitation,
@@ -156,7 +165,6 @@ pub async fn generate_invitations(
     }
 
     tx.commit().await?;
-
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -166,13 +174,6 @@ pub async fn generate_invitations(
     ))
 }
 
-// ==============================================================================
-// POST /api/v1/events/:eid/invitations/send
-// ==============================================================================
-
-/// Send personalized invitation cards to all guests. Each message includes the
-/// guest's pledge amount, event title/date/venue, main characters, and their
-/// check-in link (QR for smartphones, SMS link for feature phones).
 pub async fn send_invitations(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -180,8 +181,8 @@ pub async fn send_invitations(
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     let event = assert_event_ownership(&state, event_id, org_id).await?;
-
     let guests = list_event_guests(state.db.pool(), event_id).await?;
+
     if guests.is_empty() {
         return Err(AppError::BadRequest("No guests to invite".to_string()));
     }
@@ -193,7 +194,6 @@ pub async fn send_invitations(
     let mut errors = Vec::new();
 
     for guest in &guests {
-        // Fetch the guest's invitation (short_link)
         let invitation = sqlx::query_as::<_, Invitation>(
             "SELECT * FROM invitations WHERE guest_id = $1",
         )
@@ -207,7 +207,6 @@ pub async fn send_invitations(
             continue;
         };
 
-        // Fetch pledge amount if any
         let pledge: Option<i64> = sqlx::query_scalar(
             "SELECT pledged_amount FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
         )
@@ -216,8 +215,9 @@ pub async fn send_invitations(
         .fetch_optional(state.db.pool())
         .await?;
 
-        // Build the check-in link: QR scan URL for smartphones, SMS link for feature phones
         let check_in_link = crate::models::invitation::build_scan_url(&frontend_url, event_id, &invitation.short_link);
+
+        // ✅ FIXED: Use .as_str() instead of .as_deref() for String fields
         let device_type = guest.device_type.as_str();
         let channel = if device_type == "feature_phone" { "sms" } else { "whatsapp" };
 
@@ -239,6 +239,7 @@ pub async fn send_invitations(
 
         let attempts = messaging.send(channel, &guest.phone, &message).await?;
         let ok = attempts.iter().any(|a| a.success);
+
         if ok {
             sent += 1;
             sqlx::query(
@@ -253,7 +254,6 @@ pub async fn send_invitations(
         }
     }
 
-    // Mark the event's invitation_sent_at
     sqlx::query("UPDATE events SET invitation_sent_at = NOW(), updated_at = NOW() WHERE id = $1")
         .bind(event_id)
         .execute(state.db.pool())

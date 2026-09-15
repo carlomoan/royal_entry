@@ -20,12 +20,13 @@ pub fn is_valid_role(role: &str) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
-    pub organization_id: Uuid,
+    pub organization_id: Option<Uuid>,
     pub email: String,
     pub phone: Option<String>,
     pub full_name: String,
     pub password_hash: String,
     pub role: String, // see VALID_ROLES above
+    pub user_scope: String, // "global" | "account"
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -39,6 +40,7 @@ pub struct UserResponse {
     pub full_name: String,
     pub phone: Option<String>,
     pub role: String,
+    pub user_scope: String,
     pub is_active: bool,
     pub organization_id: Option<Uuid>,
     pub organization_name: Option<String>,
@@ -53,8 +55,9 @@ impl From<User> for UserResponse {
             full_name: user.full_name,
             phone: user.phone,
             role: user.role,
+            user_scope: user.user_scope,
             is_active: user.is_active,
-            organization_id: Some(user.organization_id),
+            organization_id: user.organization_id,
             organization_name: None,
             created_at: user.created_at,
         }

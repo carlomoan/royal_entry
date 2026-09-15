@@ -344,4 +344,10 @@ impl WebhookService {
         }
         hex_str
     }
+    pub async fn test_endpoint(&self, _endpoint_id: Uuid) -> AppResult<serde_json::Value> {
+        Ok(serde_json::json!({
+            "status": "success",
+            "message": "Test webhook fired successfully (mock)"
+        }))
+    }
 }

@@ -1,27 +1,65 @@
 "use client";
-
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Mail, CalendarDays, Users, CalendarDays as EventsIcon,
   CreditCard, ArrowLeft, ShieldCheck, Activity, ShieldX,
+  AlertTriangle, UserPlus, Crown,
 } from "lucide-react";
 import { useRouter } from "next/router";
+import { useState } from "react";
+import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { Card, Badge, StatCard } from "@/components/ui";
+import { Card, Badge, StatCard, Button, Modal, Select } from "@/components/ui";
 import { formatDate, formatTZS } from "@/lib/utils";
 import { isPlatformAdmin } from "@/lib/roles";
+import { SubscriptionManager } from "@/components/platform/SubscriptionManager";
 
 export default function AccountProfilePage() {
   const router = useRouter();
   const { id } = router.query as { id: string };
   const { user: authUser } = useAuth();
+  const qc = useQueryClient();
   const canView = isPlatformAdmin(authUser?.role);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignUserId, setAssignUserId] = useState("");
 
-  const { data: detail, isLoading } = useQuery({
+  const { data: detail, isLoading, refetch: refetchDetail } = useQuery({
     queryKey: ["account-profile", id],
     queryFn: async () => (await api.get(`/platform/customers/${id}`)).data.data,
     enabled: !!id && canView,
+  });
+
+  const { data: allUsers = [] } = useQuery({
+    queryKey: ["platform-users-for-assign"],
+    queryFn: async () => (await api.get("/platform/users")).data.data,
+    enabled: assignOpen,
+  });
+
+  const promoteMutation = useMutation({
+    mutationFn: (userId: string) => api.put(`/platform/users/${userId}`, { role: "account_admin" }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["account-profile", id] });
+      await refetchDetail();
+      qc.invalidateQueries({ queryKey: ["platform-customers"] });
+      toast.success("User promoted to Account Admin");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to promote user"),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: (userId: string) =>
+      api.put(`/platform/users/${userId}`, { organization_id: id, role: "account_admin" }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["account-profile", id] });
+      await refetchDetail();
+      qc.invalidateQueries({ queryKey: ["platform-customers"] });
+      qc.invalidateQueries({ queryKey: ["platform-users"] });
+      setAssignOpen(false);
+      setAssignUserId("");
+      toast.success("Account admin assigned");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to assign admin"),
   });
 
   if (!canView) {
@@ -37,6 +75,14 @@ export default function AccountProfilePage() {
   if (isLoading || !detail) return <p className="text-sm text-slate-500">Loading…</p>;
 
   const c = detail.customer;
+  // ✅ Safely map all members related to this specific organization
+  const teamMembers = detail.users ?? [];
+  const hasAdmin = teamMembers.some((u: any) => u.role === "account_admin");
+
+  // ✅ STRICT FILTER: Only show users who are completely unassigned (no organization_id)
+  const assignableUsers = allUsers.filter(
+    (u: any) => !["superadmin", "platform_admin", "system_admin"].includes(u.role) && !u.organization_id
+  );
 
   return (
     <div className="space-y-6">
@@ -49,6 +95,21 @@ export default function AccountProfilePage() {
           <p className="text-sm text-slate-500">Account Profile</p>
         </div>
       </div>
+
+      {!hasAdmin && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+          <div className="flex-1 text-sm text-amber-800">
+            <p className="font-semibold">No account admin</p>
+            <p className="mt-0.5 text-xs">
+              This organization was created without an admin. Promote a team member below, or assign an unassigned user.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setAssignOpen(true)}>
+            <UserPlus className="h-3.5 w-3.5" /> Assign admin
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
         <StatCard title="Users" value={c.users_count} icon={Users} color="blue" />
@@ -71,12 +132,23 @@ export default function AccountProfilePage() {
           </div>
         </Card>
 
-        <Card title={`Team Members (${detail.users?.length ?? 0})`}>
-          {!detail.users?.length ? (
-            <p className="py-8 text-center text-sm text-slate-400">No team members</p>
+        {/* ── Assigned Team Members Section ───────────────────────────────────── */}
+        <Card
+          title={`Team Members (${teamMembers.length})`}
+          action={
+            <Button size="sm" variant="outline" onClick={() => setAssignOpen(true)}>
+              <UserPlus className="h-3.5 w-3.5" /> Assign admin
+            </Button>
+          }
+        >
+          {!teamMembers.length ? (
+            <div className="py-8 text-center">
+              <Users className="mx-auto mb-3 h-10 w-10 text-slate-200" />
+              <p className="text-sm text-slate-400">No team members assigned to this organization yet</p>
+            </div>
           ) : (
-            <div className="space-y-2.5">
-              {detail.users.map((u: any) => (
+            <div className="space-y-2.5 max-h-[400px] overflow-y-auto pr-2">
+              {teamMembers.map((u: any) => (
                 <div key={u.id} className="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-navy-950 text-xs font-bold text-gold-400">
                     {u.full_name?.[0]?.toUpperCase() ?? "U"}
@@ -85,6 +157,18 @@ export default function AccountProfilePage() {
                     <p className="truncate text-sm font-semibold text-slate-800">{u.full_name}</p>
                     <p className="truncate text-xs text-slate-500">{u.email} · {u.role}</p>
                   </div>
+                  {u.role !== "account_admin" && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Promote ${u.full_name} to Account Admin?`))
+                          promoteMutation.mutate(u.id);
+                      }}
+                      title="Promote to Account Admin"
+                      className="rounded p-1.5 text-gold-700 hover:bg-gold-50"
+                    >
+                      <Crown className="h-4 w-4" />
+                    </button>
+                  )}
                   <Badge label={u.is_active ? "active" : "inactive"} variant={u.is_active ? "green" : "rose"} />
                 </div>
               ))}
@@ -92,6 +176,9 @@ export default function AccountProfilePage() {
           )}
         </Card>
       </div>
+
+      {/* Subscription & Billing Manager */}
+      <SubscriptionManager orgId={id} />
 
       {detail.recent_payments?.length > 0 && (
         <Card title="Recent Payments">
@@ -118,30 +205,32 @@ export default function AccountProfilePage() {
         </Card>
       )}
 
-      {detail.recent_invoices?.length > 0 && (
-        <Card title="Recent Invoices">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-200">
-                {["Invoice #", "Plan", "Amount", "Status", "Due"].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{h}</th>
-                ))}
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {detail.recent_invoices.map((inv: any) => (
-                  <tr key={inv.id}>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-900">{inv.invoice_number}</td>
-                    <td className="px-4 py-3 text-slate-600">{inv.plan_name ?? "—"}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-900">{formatTZS(inv.amount_tsh)}</td>
-                    <td className="px-4 py-3"><Badge label={inv.status} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{formatDate(inv.due_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* ── Assign admin modal ──────────────────────────────────────────────── */}
+      <Modal isOpen={assignOpen} onClose={() => { setAssignOpen(false); setAssignUserId(""); }} title={`Assign Account Admin — ${c.display_name}`} size="md">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Select an <strong>unassigned</strong> user to move into this organization as <strong>account_admin</strong>.
+          </p>
+          <Select label="User" value={assignUserId} onChange={(e) => setAssignUserId(e.target.value)}>
+            <option value="">— Choose an unassigned user —</option>
+            {assignableUsers.map((u: any) => (
+              <option key={u.id} value={u.id}>
+                {u.full_name} · {u.email}
+              </option>
+            ))}
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => { setAssignOpen(false); setAssignUserId(""); }}>Cancel</Button>
+            <Button
+              onClick={() => assignUserId && assignMutation.mutate(assignUserId)}
+              isLoading={assignMutation.isPending}
+              disabled={!assignUserId}
+            >
+              <UserPlus className="h-4 w-4" /> Assign as admin
+            </Button>
           </div>
-        </Card>
-      )}
+        </div>
+      </Modal>
     </div>
   );
 }

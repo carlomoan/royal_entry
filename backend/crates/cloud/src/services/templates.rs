@@ -131,7 +131,7 @@ impl TemplateService {
 
     fn extract_variables(&self, subject: &str, html: &str, text: Option<&str>) -> AppResult<Vec<String>> {
         let re = Regex::new(r"\{\{(\w+)\}\}")
-            .map_err(|e| AppError::InternalServerError)?;
+            .map_err(|_e| AppError::InternalServerError)?;
 
         let mut vars = BTreeSet::new();
 

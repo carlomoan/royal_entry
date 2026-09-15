@@ -1,7 +1,6 @@
 "use client";
-
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck, Building2, Mail, Phone, Users, Plus, Edit2, Trash2, Settings } from "lucide-react";
+import { ShieldCheck, Building2, Mail, Phone, Users, Plus, Edit2, Trash2, Pencil } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -20,6 +19,7 @@ export default function SettingsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<any | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [editOrgOpen, setEditOrgOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["account-settings"],
@@ -46,6 +46,11 @@ export default function SettingsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["account-settings"] }); setDeleteConfirm(null); toast.success("User deleted"); },
     onError: (e: any) => toast.error(e?.message ?? "Failed"),
   });
+  const updateOrgMutation = useMutation({
+    mutationFn: (payload: any) => api.put("/settings/organization", payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["account-settings"] }); setEditOrgOpen(false); toast.success("Organization updated"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
+  });
 
   const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -63,13 +68,26 @@ export default function SettingsPage() {
     e.preventDefault();
     if (!editUser) return;
     const f = e.currentTarget;
-    const payload: any = {
-      role: (f.elements.namedItem("role") as HTMLSelectElement).value || undefined,
-      is_active: (f.elements.namedItem("is_active") as HTMLInputElement).checked,
-      full_name: (f.elements.namedItem("full_name") as HTMLInputElement).value || undefined,
-      phone: (f.elements.namedItem("phone") as HTMLInputElement).value || undefined,
-    };
-    updateMutation.mutate({ id: editUser.id, payload });
+    updateMutation.mutate({
+      id: editUser.id,
+      payload: {
+        role: (f.elements.namedItem("role") as HTMLSelectElement).value || undefined,
+        is_active: (f.elements.namedItem("is_active") as HTMLInputElement).checked,
+        full_name: (f.elements.namedItem("full_name") as HTMLInputElement).value || undefined,
+        phone: (f.elements.namedItem("phone") as HTMLInputElement).value || undefined,
+      },
+    });
+  };
+
+  const handleOrgEdit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    updateOrgMutation.mutate({
+      display_name: (f.elements.namedItem("display_name") as HTMLInputElement).value || undefined,
+      billing_email: (f.elements.namedItem("billing_email") as HTMLInputElement).value || undefined,
+      contact_phone: (f.elements.namedItem("contact_phone") as HTMLInputElement).value || undefined,
+      account_slug: (f.elements.namedItem("account_slug") as HTMLInputElement).value || undefined,
+    });
   };
 
   return (
@@ -80,7 +98,11 @@ export default function SettingsPage() {
       </div>
 
       {/* Organization info */}
-      <Card title="Organization">
+      <Card title="Organization" action={
+        <Button size="sm" variant="outline" onClick={() => setEditOrgOpen(true)}>
+          <Pencil className="h-3.5 w-3.5" /> Edit profile
+        </Button>
+      }>
         {isLoading ? (
           <p className="text-sm text-slate-500">Loading…</p>
         ) : !org ? (
@@ -140,17 +162,33 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      {/* System settings */}
+      {/* System settings (read-only for accounts) */}
       <Card title="System Settings">
         <div className="grid max-w-lg gap-4">
           {Object.entries(settings).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between gap-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
               <span className="font-medium text-slate-500">{key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}</span>
-              <span className="font-semibold text-slate-900">{value?.toString() ?? "—"}</span>
+              <span className="font-semibold text-slate-900">{(value as any)?.toString() ?? "—"}</span>
             </div>
           ))}
         </div>
       </Card>
+
+      {/* Edit organization modal */}
+      <Modal isOpen={editOrgOpen} onClose={() => setEditOrgOpen(false)} title="Edit Organization Profile" size="lg">
+        <form onSubmit={handleOrgEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Display name" name="display_name" defaultValue={org?.display_name ?? ""} />
+            <Input label="Account slug" name="account_slug" defaultValue={org?.account_slug ?? ""} />
+            <Input label="Billing email" name="billing_email" type="email" defaultValue={org?.billing_email ?? ""} />
+            <Input label="Contact phone" name="contact_phone" defaultValue={org?.contact_phone ?? ""} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" type="button" onClick={() => setEditOrgOpen(false)}>Cancel</Button>
+            <Button type="submit" isLoading={updateOrgMutation.isPending}>Save</Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Create user modal */}
       <Modal isOpen={createOpen} onClose={() => setCreateOpen(false)} title="Add Team Member" size="lg">

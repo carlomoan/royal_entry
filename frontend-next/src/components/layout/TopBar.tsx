@@ -1,9 +1,9 @@
 "use client";
-
-import { Bell, Search } from "lucide-react";
+import { Bell, Menu, Search } from "lucide-react";
 import { useRouter } from "next/router";
 import { useAuth } from "@/lib/auth";
 import { roleLabel } from "@/lib/roles";
+import NotificationsDropdown from "./NotificationsDropdown";
 
 function getBreadcrumb(pathname: string): string {
   const map: Record<string, string> = {
@@ -17,32 +17,46 @@ function getBreadcrumb(pathname: string): string {
     "/platform/payments": "Platform / Payments",
     "/platform/audit": "Platform / Audit Log",
     "/platform/settings": "Platform / Settings",
+    "/platform/templates": "Platform / Email Templates",
     "/dashboard": "Dashboard",
     "/events": "Events",
+    "/scanner": "Scanner",
     "/payments": "Payments",
+    "/billing": "Billing & Invoices",
+    "/usage": "Usage & Plan Limits",
     "/reports": "Reports",
     "/audit": "Audit Log",
     "/settings": "Settings",
+    "/profile": "My Profile",
   };
   return map[pathname] ?? "Dashboard";
 }
 
-export default function TopBar() {
+interface TopBarProps {
+  onMenuClick: () => void;
+}
+
+export default function TopBar({ onMenuClick }: TopBarProps) {
   const router = useRouter();
   const pathname = router.pathname;
   const { user } = useAuth();
   const breadcrumb = getBreadcrumb(pathname);
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
-      {/* Breadcrumb */}
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-4 lg:px-6">
       <div className="flex items-center gap-3">
+        {/* ✅ Hamburger menu (only visible on mobile) */}
+        <button
+          onClick={onMenuClick}
+          className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 lg:hidden"
+          aria-label="Open menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <p className="text-sm font-medium text-slate-500">{breadcrumb}</p>
       </div>
 
-      {/* Right side */}
       <div className="flex items-center gap-4">
-        {/* Search */}
         <div className="relative hidden md:block">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -52,21 +66,10 @@ export default function TopBar() {
           />
         </div>
 
-        {/* Notifications */}
-        <button
-          className="relative rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-          aria-label="Notifications"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute right-1.5 top-1.5 flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-gold-500" />
-          </span>
-        </button>
+        <NotificationsDropdown />
 
-        {/* User avatar */}
         <div className="flex items-center gap-3 border-l border-slate-200 pl-4">
-          <div className="text-right">
+          <div className="text-right hidden sm:block">
             <p className="text-xs font-semibold text-slate-800">{user?.full_name}</p>
             <p className="text-[10px] text-slate-400">{roleLabel(user?.role)}</p>
           </div>

@@ -50,7 +50,7 @@ pub async fn login(
 
     let (access_token, refresh_token) = AuthService::generate_tokens(
         user.id,
-        user.organization_id,
+        user.organization_id.unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap()),
         user.email.clone(),
         user.role.clone(),
     )?;
@@ -137,9 +137,9 @@ pub async fn register(
         r#"
         INSERT INTO users (
             id, organization_id, email, phone, full_name,
-            password_hash, role, is_active, created_at, updated_at
+            password_hash, role, user_scope, is_active, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'account_admin', true, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, 'account_admin', 'account', true, NOW(), NOW())
         RETURNING *
         "#,
     )
@@ -156,7 +156,7 @@ pub async fn register(
 
     let (access_token, refresh_token) = AuthService::generate_tokens(
         user.id,
-        user.organization_id,
+        user.organization_id.unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap()),
         user.email.clone(),
         user.role.clone(),
     )?;
@@ -231,7 +231,7 @@ pub async fn get_current_user(
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let org_name: Option<String> = sqlx::query_scalar("SELECT display_name FROM organizations WHERE id = $1")
-        .bind(user.organization_id)
+        .bind(user.organization_id.unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap()))
         .fetch_optional(state.db.pool())
         .await
         .ok()
@@ -243,8 +243,9 @@ pub async fn get_current_user(
         full_name: user.full_name,
         phone: user.phone,
         role: user.role,
+        user_scope: user.user_scope,
         is_active: user.is_active,
-        organization_id: Some(user.organization_id),
+        organization_id: user.organization_id,
         organization_name: org_name,
         created_at: user.created_at,
     }))

@@ -341,6 +341,14 @@ pub async fn list_reminder_deliveries(
     Ok(Json(json!({ "success": true, "data": deliveries })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SendRemindersRequest {
+    pub guest_ids: Option<Vec<Uuid>>,
+    pub statuses: Option<Vec<String>>,
+    pub channel: Option<String>,
+    pub custom_message: Option<String>,
+}
+
 pub async fn send_reminders(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -352,14 +360,38 @@ pub async fn send_reminders(
 
     let custom_message = payload.custom_message.clone();
     let statuses = payload.statuses.unwrap_or_else(|| vec!["pending".to_string(), "partial".to_string(), "overdue".to_string()]);
+    let override_channel = payload.channel.clone();
 
-    let recipients = sqlx::query_as::<_, ReminderRecipient>(
-        r#"SELECT pt.id AS pledge_id, g.id AS guest_id, g.phone, g.contact_method, g.full_name, pt.pledged_amount, pt.amount_paid, pt.payment_deadline FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status = ANY($2) ORDER BY g.full_name ASC"#,
-    )
-    .bind(event_id)
-    .bind(&statuses)
-    .fetch_all(state.db.pool())
-    .await?;
+    // Fetch recipients (filtered by guest_ids if provided)
+    let recipients = if let Some(ref ids) = payload.guest_ids {
+        if ids.is_empty() {
+            return Ok(Json(json!({ "success": true, "data": { "sent": 0, "failed": 0 } })));
+        }
+        sqlx::query_as::<_, ReminderRecipient>(
+            r#"SELECT pt.id AS pledge_id, g.id AS guest_id, g.phone, g.email, g.whatsapp_phone, g.contact_method, g.full_name, pt.pledged_amount, pt.amount_paid, pt.payment_deadline
+               FROM pledge_tracker pt
+               JOIN guests g ON g.id = pt.guest_id
+               WHERE pt.event_id = $1 AND pt.payment_status = ANY($2) AND g.id = ANY($3)
+               ORDER BY g.full_name ASC"#,
+        )
+        .bind(event_id)
+        .bind(&statuses)
+        .bind(ids)
+        .fetch_all(state.db.pool())
+        .await?
+    } else {
+        sqlx::query_as::<_, ReminderRecipient>(
+            r#"SELECT pt.id AS pledge_id, g.id AS guest_id, g.phone, g.email, g.whatsapp_phone, g.contact_method, g.full_name, pt.pledged_amount, pt.amount_paid, pt.payment_deadline
+               FROM pledge_tracker pt
+               JOIN guests g ON g.id = pt.guest_id
+               WHERE pt.event_id = $1 AND pt.payment_status = ANY($2)
+               ORDER BY g.full_name ASC"#,
+        )
+        .bind(event_id)
+        .bind(&statuses)
+        .fetch_all(state.db.pool())
+        .await?
+    };
 
     let messaging = MessagingService::new();
     let mut sent = 0_i64;
@@ -372,13 +404,32 @@ pub async fn send_reminders(
             None => format!("Hello {}, this is a RoyalEntry michango reminder. Outstanding amount: TZS {}.", recipient.full_name, outstanding),
         };
         let message = custom_message.clone().unwrap_or(default_message);
-        let channel = match recipient.contact_method.as_str() {
-            "sms" => "sms",
-            "whatsapp" => "whatsapp",
-            _ => "whatsapp",
+
+        // Determine channel
+        let channel = if let Some(ref ch) = override_channel {
+            ch.as_str()
+        } else {
+            match recipient.contact_method.as_str() {
+                "sms" => "sms",
+                "email" => "email",
+                "telegram" => "telegram",
+                _ => "whatsapp",
+            }
         };
 
-        let attempts = messaging.send(channel, &recipient.phone, &message).await?;
+        // Determine recipient address
+        let recipient_address = match channel {
+            "email" => recipient.email.clone().unwrap_or_default(),
+            "whatsapp" => recipient.whatsapp_phone.clone().unwrap_or_else(|| recipient.phone.clone()),
+            _ => recipient.phone.clone(),
+        };
+
+        if recipient_address.is_empty() {
+            failed += 1;
+            continue;
+        }
+
+        let attempts = messaging.send(channel, &recipient_address, &message).await?;
         let success = attempts.iter().any(|attempt| attempt.success);
 
         for attempt in attempts {
@@ -411,6 +462,19 @@ pub async fn send_reminders(
         }
     }
 
-    let message = custom_message.unwrap_or_else(|| "Michango reminders processed".to_string());
-    Ok(Json(json!({ "success": true, "data": { "sent": sent, "failed": failed, "message": message } })))
+    Ok(Json(json!({ "success": true, "data": { "sent": sent, "failed": failed } })))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ReminderRecipient {
+    pledge_id: Uuid,
+    guest_id: Uuid,
+    phone: String,
+    email: Option<String>,
+    whatsapp_phone: Option<String>,
+    contact_method: String,
+    full_name: String,
+    pledged_amount: i64,
+    amount_paid: i64,
+    payment_deadline: Option<NaiveDate>,
 }

@@ -8,9 +8,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use chrono::Utc;
 use crate::models::user::User;
+use crate::utils::rbac::PLATFORM_ROLES;
 use crate::error::AppResult;
 
 pub struct UserRepository;
+
+const PLATFORM_ROLES_LOCAL: &[&str] = PLATFORM_ROLES;
 
 impl UserRepository {
     /// Get user by email
@@ -64,7 +67,7 @@ impl UserRepository {
     /// Create new user
     pub async fn create(
         pool: &PgPool,
-        org_id: Uuid,
+        organization_id: Option<Uuid>,
         email: &str,
         password_hash: &str,
         full_name: &str,
@@ -73,22 +76,24 @@ impl UserRepository {
     ) -> AppResult<User> {
         let user_id = Uuid::new_v4();
         let now = Utc::now();
+        let user_scope: &str = if PLATFORM_ROLES.contains(&role) { "global" } else { "account" };
 
         let user = sqlx::query_as::<_, User>(
             r#"
             INSERT INTO users
-            (id, organization_id, email, password_hash, full_name, phone, role, is_active, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9)
+            (id, organization_id, email, password_hash, full_name, phone, role, user_scope, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)
             RETURNING *
-            "#
+            "#,
         )
         .bind(&user_id)
-        .bind(&org_id)
+        .bind(organization_id)
         .bind(email.to_lowercase())
         .bind(password_hash)
         .bind(full_name)
         .bind(phone)
         .bind(role)
+        .bind(user_scope)
         .bind(now)
         .bind(now)
         .fetch_one(pool)
