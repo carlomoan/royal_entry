@@ -1,6 +1,6 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useRouter } from "next/router";
 import {
   ArrowLeft, ArrowUpRight, Banknote, Radio, ScanLine, Users, Zap, QrCode, FileText, Mail,
@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Badge, Button, StatCard, Modal, Input, Select, Dropdown } from "@/components/ui";
+import { Card, Badge, Button, StatCard, Modal, Input, Select } from "@/components/ui";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -137,6 +137,7 @@ export default function EventDetailPage() {
           <MiniStat label="Michango" value={`TZS ${(stats.michango_collected_tsh / 1000).toFixed(0)}k`} />
         </div>
       </div>
+
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
         {[
@@ -155,6 +156,7 @@ export default function EventDetailPage() {
           <ScanLine className="h-4 w-4" /> Scanner
         </button>
       </div>
+
       {/* Content */}
       {activeTab === "overview" && (
         <div className="grid gap-6 lg:grid-cols-2">
@@ -195,8 +197,21 @@ export default function EventDetailPage() {
           </Card>
         </div>
       )}
+
       {activeTab === "guests" && <GuestsTab eventId={id} />}
       {activeTab === "staff" && <EventStaffTab eventId={id} />}
+
+      {activeTab === "broadcast" && (
+        <Card title="Broadcast">
+          <p className="py-8 text-center text-sm text-slate-400">Broadcast module — wire up separately.</p>
+        </Card>
+      )}
+
+      {activeTab === "michango" && (
+        <Card title="Michango">
+          <p className="py-8 text-center text-sm text-slate-400">Michango module — wire up separately.</p>
+        </Card>
+      )}
     </div>
   );
 }
@@ -216,7 +231,7 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
 function GuestsTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false); // Fixed typo: setImport Open -> setImportOpen
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [selectedGuests, setSelectedGuests] = useState<Set<string>>(new Set());
   const [bulkActionOpen, setBulkActionOpen] = useState(false);
@@ -530,7 +545,6 @@ function GuestsTab({ eventId }: { eventId: string }) {
               This action will be applied to <strong>{selectedGuests.size}</strong> selected guest(s).
             </p>
           </div>
-
           {bulkActionType === "send_reminder" && (
             <Select label="Reminder Channel" value={reminderChannel} onChange={(e) => setReminderChannel(e.target.value)}>
               <option value="sms">SMS</option>
@@ -539,7 +553,6 @@ function GuestsTab({ eventId }: { eventId: string }) {
               <option value="telegram">Telegram</option>
             </Select>
           )}
-
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setBulkActionOpen(false)}>Cancel</Button>
             <Button

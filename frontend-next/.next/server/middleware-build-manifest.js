@@ -19,20 +19,25 @@ self.__BUILD_MANIFEST = {
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/events/[id]": [
+    "/dashboard": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/events/[id].js"
+      "static/chunks/pages/dashboard.js"
     ],
-    "/platform": [
+    "/platform/accounts": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/platform.js"
+      "static/chunks/pages/platform/accounts.js"
     ],
-    "/platform/templates": [
+    "/platform/accounts/[id]": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/platform/templates.js"
+      "static/chunks/pages/platform/accounts/[id].js"
+    ],
+    "/profile": [
+      "static/chunks/webpack.js",
+      "static/chunks/main.js",
+      "static/chunks/pages/profile.js"
     ],
     "/settings": [
       "static/chunks/webpack.js",

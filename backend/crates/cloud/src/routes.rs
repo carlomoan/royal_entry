@@ -8,10 +8,16 @@ use axum::{
 };
 use std::sync::Arc;
 use crate::{
+    cards,
+    channels,
+    files,
+    logs,
+    qr,
+    templates as msg_templates,
     handlers::{
         audit, auth, billing, broadcast, card_templates, event, event_assignment, guest,
-        invitations, michango, notifications, payment, platform, public_invitation, rbac,
-        reports, scanner, settings, templates, webhooks,
+        invitations, michango, notifications, payment, platform, public_invitation, qr_code, rbac,
+        reports, scanner, settings, templates, verify_token, webhooks,
     },
     middleware::{
         auth::auth_middleware,
@@ -34,7 +40,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/public/invitations/{code}/rsvp", post(public_invitation::submit_public_rsvp))
         .route("/api/v1/public/g/{code}", get(public_invitation::get_public_invitation))
         .route("/api/v1/public/g/{code}/rsvp", post(public_invitation::submit_public_rsvp))
-        .route("/api/v1/payments/mpesa/callback", post(payment::mpesa_callback));
+        .route("/api/v1/payments/mpesa/callback", post(payment::mpesa_callback))
+        .route("/api/v1/public/verify", get(verify_token::verify_token));
 
     // ── Auth routes (any authenticated user) ──────────────────────────────────
     let auth_routes = Router::new()
@@ -68,6 +75,29 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/events/{eid}/staff/{user_id}", delete(event_assignment::remove_staff_from_event))
         .layer(middleware::from_fn(require_permission_middleware("events:write")));
 
+    // ── File upload routes ──────────────────────────────────────────────────────
+    let file_routes = Router::new()
+        .route("/api/v1/files/upload", post(files::upload_file))
+        .layer(middleware::from_fn(require_permission_middleware("files:read")));
+
+    // ── Card template routes ────────────────────────────────────────────────────
+    let card_routes = Router::new()
+        .route("/api/v1/cards/templates", get(cards::list_card_templates))
+        .route("/api/v1/cards/templates/{id}", get(cards::get_card_template))
+        .layer(middleware::from_fn(require_permission_middleware("cards:read")));
+
+    // ── Message template routes ────────────────────────────────────────────────
+    let message_template_routes = Router::new()
+        .route("/api/v1/message-templates", get(msg_templates::list_message_templates).post(msg_templates::create_message_template))
+        .route("/api/v1/message-templates/{id}/preview", post(msg_templates::preview_message_template))
+        .layer(middleware::from_fn(require_permission_middleware("templates:read")));
+
+    // ── Message log routes ─────────────────────────────────────────────────────
+    let log_routes = Router::new()
+        .route("/api/v1/message-logs", get(logs::list_message_logs))
+        .route("/api/v1/broadcasts/{id}/deliveries", get(logs::list_broadcast_deliveries))
+        .layer(middleware::from_fn(require_permission_middleware("audit:read")));
+
     // ── Guest routes ──────────────────────────────────────────────────────────
     let guest_routes = Router::new()
         .route("/api/v1/events/{eid}/guests", post(guest::create_guest))
@@ -86,6 +116,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/events/{eid}/invitations", get(invitations::list_invitations))
         .route("/api/v1/events/{eid}/invitations/generate", post(invitations::generate_invitations))
         .route("/api/v1/events/{eid}/invitations/send", post(invitations::send_invitations))
+        .route("/api/v1/events/{eid}/invitations/{inv_id}/qr", get(qr_code::generate_qr_code))
         .layer(middleware::from_fn(require_permission_middleware("invitations:read")));
 
     // ── Scanner routes ────────────────────────────────────────────────────────
@@ -225,6 +256,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // ── ✅ Merge ALL protected routes ─────────────────────────────────────────
     let protected = auth_routes
         .merge(event_routes)
+        .merge(card_routes)
+        .merge(file_routes)
+        .merge(message_template_routes)
+        .merge(log_routes)
         .merge(staff_read_routes)
         .merge(staff_write_routes)
         .merge(guest_routes)
@@ -232,10 +267,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(scanner_routes)
         .merge(michango_routes)
         .merge(broadcast_routes)
-        .merge(billing_routes)         // ✅ Merged
+        .merge(billing_routes)
         .merge(payment_routes)
-        .merge(notification_routes)    // ✅ Merged
-        .merge(webhook_routes)         // ✅ Merged
+        .merge(notification_routes)
+        .merge(webhook_routes)
         .merge(platform_routes)
         .merge(settings_routes)
         .merge(rbac_routes)

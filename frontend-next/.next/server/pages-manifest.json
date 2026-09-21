@@ -2,9 +2,9 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/events/[id]": "pages/events/[id].js",
-  "/events": "pages/events.js",
+  "/platform/accounts": "pages/platform/accounts.js",
+  "/platform/accounts/[id]": "pages/platform/accounts/[id].js",
+  "/dashboard": "pages/dashboard.js",
   "/settings": "pages/settings.js",
-  "/platform": "pages/platform.js",
-  "/platform/templates": "pages/platform/templates.js"
+  "/profile": "pages/profile.js"
 }

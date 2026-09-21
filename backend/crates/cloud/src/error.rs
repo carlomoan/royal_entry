@@ -44,6 +44,9 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
     // ========================================================================
     // Validation Errors
     // ========================================================================
@@ -335,6 +338,14 @@ impl IntoResponse for AppError {
                     "Database error occurred".to_string(),
                 )
             }
+            AppError::IoError(err) => {
+                tracing::error!("IO error: {}", err);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "IO_ERROR",
+                    err.to_string(),
+                )
+            }
             AppError::InternalServerError => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_SERVER_ERROR",
@@ -424,6 +435,12 @@ impl IntoResponse for AppError {
         }));
 
         (status, body).into_response()
+    }
+}
+
+impl From<ed25519_dalek::ed25519::Error> for AppError {
+    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
+        AppError::QrValidationError(err.to_string())
     }
 }
 

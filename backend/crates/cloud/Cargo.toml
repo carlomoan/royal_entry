@@ -29,6 +29,7 @@ chrono = { version = "0.4", features = ["serde"] }
 jsonwebtoken = "9.3"
 sha2 = "0.10"
 rand = "0.9"
+rand_core = "0.6"
 base64 = "0.22"
 
 # QR Code & Image Processing
@@ -70,6 +71,9 @@ handlebars = "6.3"
 printpdf = "0.7"
 regex = "1.11"
 subtle = "2.5"
+rusttype = "0.9"
+aes-gcm = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 tokio-cron-scheduler = { version = "0.11", features = ["signal"] }
 
 [[bin]]
