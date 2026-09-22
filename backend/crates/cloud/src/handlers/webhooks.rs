@@ -84,6 +84,6 @@ pub async fn test_webhook(
 ) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
     let svc = WebhookService::new(state.clone());
-    let delivery: serde_json::Value = svc.test_endpoint(id).await?; // ✅ Explicit type fixes fallback error
+    let delivery = svc.test_endpoint(id).await?;
     Ok(Json(json!({ "success": true, "data": delivery })))
 }

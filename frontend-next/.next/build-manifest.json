@@ -27,25 +27,20 @@
       "static/chunks/main.js",
       "static/chunks/pages/dashboard.js"
     ],
-    "/platform/accounts": [
+    "/events": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/platform/accounts.js"
+      "static/chunks/pages/events.js"
     ],
-    "/platform/accounts/[id]": [
+    "/events/[id]": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/platform/accounts/[id].js"
+      "static/chunks/pages/events/[id].js"
     ],
-    "/profile": [
+    "/events/[id]/scanner": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/profile.js"
-    ],
-    "/settings": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/settings.js"
+      "static/chunks/pages/events/[id]/scanner.js"
     ]
   },
   "ampFirstPages": []

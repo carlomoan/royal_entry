@@ -127,7 +127,7 @@ export function StatCard({
 }) {
   return (
     <div className="group relative overflow-hidden rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg animate-fadeIn">
-      <div className={cn("absolute inset-x-0 top-0 h-[3px] opacity-60 transition-opacity duration-300 group-hover:opacity-100", statColors[color].split(" ")[0])} />
+      <div className={cn("absolute inset-x-0 top-0 h-[3px] opacity-60 transition-opacity duration-300 group-hover:opacity-100", (statColors[color as keyof typeof statColors] ?? statColors.blue).split(" ")[0])} />
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{title}</p>
