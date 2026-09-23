@@ -73,7 +73,7 @@ impl BroadcastDispatcher {
 
                 // 9h. Update broadcast_deliveries
                 sqlx::query(
-                    "UPDATE broadcast_deliveries SET status = $2, gateway_msg_id = $3, response = $4, retry_count = $5, updated_at = NOW() WHERE broadcast_id = $1 AND recipient_id = $6"
+                    "UPDATE broadcast_deliveries SET status = $2, provider_message_id = $3, error_message = $4 WHERE campaign_id = $1 AND guest_id = $6"
                 )
                 .bind(broadcast_id)
                 .bind(if receipt.success { "sent" } else { "failed" })
@@ -86,7 +86,7 @@ impl BroadcastDispatcher {
 
                 // 9i. Append message_logs row (immutable audit trail)
                 sqlx::query(
-                    r#"INSERT INTO message_logs (broadcast_id, delivery_id, recipient_id, event_id, channel, status, gateway_msg_id, response, retry_count, created_at)
+                    r#"INSERT INTO message_logs (campaign_id, delivery_id, recipient_id, event_id, channel, status, gateway_msg_id, response, retry_count, created_at)
                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())"#
                 )
                 .bind(broadcast_id)
@@ -108,7 +108,7 @@ impl BroadcastDispatcher {
 
                     // Get current retry count from DB
                     let current_retry: i32 = sqlx::query_scalar(
-                        "SELECT retry_count FROM broadcast_deliveries WHERE broadcast_id = $1 AND recipient_id = $2"
+                        "SELECT retry_count FROM broadcast_deliveries WHERE campaign_id = $1 AND guest_id = $2"
                     )
                     .bind(broadcast_id)
                     .bind(recipient_id)
@@ -123,7 +123,7 @@ impl BroadcastDispatcher {
 
                         // Update retry schedule
                         sqlx::query(
-                            "UPDATE broadcast_deliveries SET retry_count = $2, status = 'pending_retry', updated_at = NOW() WHERE broadcast_id = $1 AND recipient_id = $3"
+                            "UPDATE broadcast_deliveries SET retry_count = $2, status = 'failed' WHERE campaign_id = $1 AND guest_id = $3"
                         )
                         .bind(broadcast_id)
                         .bind((current_retry + 1) as i32)

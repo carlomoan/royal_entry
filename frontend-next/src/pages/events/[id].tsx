@@ -5,7 +5,7 @@ import { useRouter } from "next/router";
 import {
   ArrowLeft, ArrowUpRight, Banknote, Radio, ScanLine, Users, Zap, QrCode, FileText, Mail,
   UserPlus, Upload, Download, FileUp, Plus, Trash2, CheckSquare, Square, MoreVertical,
-  MessageSquare, Smartphone, Copy, ExternalLink, AlertCircle, Send, Bell, CheckCircle,
+  MessageSquare, Smartphone, Copy, ExternalLink, AlertCircle, Send, Bell, CheckCircle, Pencil,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -242,21 +242,29 @@ function BroadcastTab({ eventId }: { eventId: string }) {
   const [recipientType, setRecipientType] = useState("all");
   const [channels, setChannels] = useState<string[]>(["whatsapp"]);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [expandedBroadcast, setExpandedBroadcast] = useState<string | null>(null);
 
   const { data: broadcasts, isLoading } = useQuery({
     queryKey: ["broadcasts", eventId],
     queryFn: async () => (await api.get(`/events/${eventId}/broadcasts?per_page=20`)).data.data,
   });
 
+  const { data: deliveries = [], isLoading: deliveriesLoading } = useQuery({
+    queryKey: ["broadcast-deliveries", eventId, expandedBroadcast],
+    queryFn: async () => (await api.get(`/events/${eventId}/broadcasts/${expandedBroadcast}/deliveries`)).data.data,
+    enabled: !!expandedBroadcast,
+  });
+
   const sendMutation = useMutation({
-    mutationFn: (payload: any) => api.post(`/events/${eventId}/broadcast`, payload),
-    onSuccess: (r: any) => {
+    mutationFn: (payload: any) => Promise.all(payload.channels.map((channel: string) => api.post(`/events/${eventId}/broadcast`, { ...payload, channel }))),
+    onSuccess: (responses: any[]) => {
       qc.invalidateQueries({ queryKey: ["broadcasts", eventId] });
       setComposeOpen(false);
       setMessage("");
       setChannels(["whatsapp"]);
       setScheduledAt("");
-      toast.success(`Broadcast sent to ${r.data.data?.sent ?? 0} guests`);
+      const sent = responses.reduce((total, response) => total + (response.data.data?.sent ?? 0), 0);
+      toast.success(`Broadcast sent through ${responses.length} channel(s) to ${sent} deliveries`);
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to send broadcast"),
   });
@@ -265,7 +273,8 @@ function BroadcastTab({ eventId }: { eventId: string }) {
     sendMutation.mutate({
       recipient_type: recipientType,
       channels,
-      channel: channels[0], // backward compat
+      channel: channels[0],
+      target: recipientType,
       message,
       scheduled_at: scheduledAt || undefined,
     });
@@ -307,7 +316,7 @@ function BroadcastTab({ eventId }: { eventId: string }) {
                     {(b.channels ?? [b.channel]).map((ch: string) => (
                       <Badge key={ch} label={ch} variant="blue" />
                     ))}
-                    <Badge label={b.recipient_type ?? "all"} variant="slate" />
+                    <Badge label={b.target_audience ?? "all"} variant="slate" />
                   </div>
                 </div>
                 <div className="text-right">
@@ -319,10 +328,25 @@ function BroadcastTab({ eventId }: { eventId: string }) {
                 </div>
               </div>
               <div className="flex gap-4 text-xs text-slate-600">
-                <span>Sent: <strong className="text-emerald-600">{b.sent_count ?? 0}</strong></span>
+                <span>Sent: <strong className="text-emerald-600">{b.successfully_sent ?? 0}</strong></span>
                 <span>Failed: <strong className="text-rose-600">{b.failed_count ?? 0}</strong></span>
-                <span>Pending: <strong className="text-amber-600">{b.pending_count ?? 0}</strong></span>
+                <span>Total: <strong className="text-slate-700">{b.total_recipients ?? 0}</strong></span>
               </div>
+              <button onClick={() => setExpandedBroadcast(expandedBroadcast === b.id ? null : b.id)} className="mt-3 text-xs font-semibold text-gold-700 hover:underline">
+                {expandedBroadcast === b.id ? "Hide delivery details" : "Show delivery details"}
+              </button>
+              {expandedBroadcast === b.id && (
+                <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                  {deliveriesLoading ? <p className="text-xs text-slate-400">Loading delivery statuses…</p> : deliveries.length === 0 ? <p className="text-xs text-slate-400">No delivery records.</p> : deliveries.map((delivery: any) => (
+                    <div key={delivery.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                      <span className="font-medium text-slate-700">{delivery.guest_name}</span>
+                      <Badge label={delivery.channel} variant="blue" />
+                      <Badge label={delivery.status} variant={delivery.status === "sent" ? "green" : "rose"} />
+                      {delivery.error_message && <span className="text-rose-600">{delivery.error_message}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -346,6 +370,10 @@ function BroadcastTab({ eventId }: { eventId: string }) {
             <Select value={recipientType} onChange={(e) => setRecipientType(e.target.value)}>
               <option value="all">All guests</option>
               <option value="vip">VIP guests only</option>
+              <option value="paid">Fully paid pledges</option>
+              <option value="partial">Partially paid pledges</option>
+              <option value="unpaid">Unpaid pledges</option>
+              <option value="special">Special guests / staff</option>
               <option value="unconfirmed">Guests who haven't RSVP'd</option>
               <option value="confirmed">Confirmed attendees</option>
             </Select>
@@ -354,7 +382,7 @@ function BroadcastTab({ eventId }: { eventId: string }) {
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Channels</label>
             <div className="flex flex-wrap gap-2">
-              {["whatsapp", "sms", "email"].map((ch) => (
+              {["whatsapp", "sms", "email", "telegram"].map((ch) => (
                 <button
                   key={ch}
                   type="button"
@@ -604,6 +632,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const progress = totalPledged > 0 ? (totalPaid / totalPledged) * 100 : 0;
   const availableGuests = guests.filter((g: any) => !g.pledge_exempt);
   const selectedGuest = guests.find((g: any) => g.id === selectedGuestId);
+  const paymentPledge = pledges.find((pledge: any) => pledge.id === paymentOpen);
   const detectedCategory = selectedGuest?.guest_category || "Regular";
   const detectedDefault = CATEGORY_PLEDGE_DEFAULTS[detectedCategory] ?? 50000;
 
@@ -782,9 +811,10 @@ function MichangoTab({ eventId }: { eventId: string }) {
         }} className="space-y-4">
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Amount Paid (TZS thousands)</label>
+            <p className="mb-2 text-xs text-slate-500">Remaining: {formatTsh(paymentPledge?.remaining_amount ?? 0)}</p>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-sm text-slate-500">TZS</span>
-              <input name="amount" type="number" placeholder="e.g. 50 for TZS 50,000" required className="w-full rounded-lg border border-slate-300 pl-12 pr-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
+              <input name="amount" type="number" min="1" max={Math.floor((paymentPledge?.remaining_amount ?? 0) / 1000)} placeholder="e.g. 50 for TZS 50,000" required className="w-full rounded-lg border border-slate-300 pl-12 pr-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
             </div>
           </div>
           <div className="flex justify-end gap-2">
@@ -836,6 +866,11 @@ function GuestsTab({ eventId }: { eventId: string }) {
   const [bulkActionOpen, setBulkActionOpen] = useState(false);
   const [bulkActionType, setBulkActionType] = useState<string>("");
   const [reminderChannel, setReminderChannel] = useState<string>("sms");
+  const [pledgeChannel, setPledgeChannel] = useState<string>("whatsapp");
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [pledgeFilter, setPledgeFilter] = useState("");
+  const [editGuest, setEditGuest] = useState<any | null>(null);
 
   const { data: response, isLoading } = useQuery({
     queryKey: ["guests", eventId],
@@ -847,11 +882,22 @@ function GuestsTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/invitations`)).data.data,
   });
 
+  const { data: pledgeResponse = [] } = useQuery({
+    queryKey: ["guest-pledge-status", eventId],
+    queryFn: async () => (await api.get(`/events/${eventId}/michango?per_page=500`)).data.data,
+  });
+
   const guests = (response?.data ?? []) as any[];
   const guestRows = guests.map((guest: any) => ({
     ...guest,
     invitation: invitations.find((invitation: any) => invitation.guest_id === guest.id),
+    pledge: pledgeResponse.find((pledge: any) => pledge.guest_id === guest.id),
   }));
+  const visibleGuests = guestRows.filter((guest: any) => {
+    const needle = search.trim().toLowerCase();
+    const matchesSearch = !needle || [guest.full_name, guest.phone, guest.email].some((value) => String(value ?? "").toLowerCase().includes(needle));
+    return matchesSearch && (!categoryFilter || guest.guest_category === categoryFilter) && (!pledgeFilter || guest.pledge?.payment_status === pledgeFilter);
+  });
 
   const sendInvitationsMutation = useMutation({
     mutationFn: async (payload: { guest_ids: string[]; channel?: string }) => {
@@ -903,6 +949,18 @@ function GuestsTab({ eventId }: { eventId: string }) {
     mutationFn: (payload: any) => api.post(`/events/${eventId}/guests`, payload),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["guests", eventId] }); setAddOpen(false); toast.success("Guest added"); },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ guestId, payload }: { guestId: string; payload: any }) => api.put(`/events/${eventId}/guests/${guestId}`, payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["guests", eventId] }); setEditGuest(null); toast.success("Guest updated"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to update guest"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (guestId: string) => api.delete(`/events/${eventId}/guests/${guestId}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["guests", eventId] }); toast.success("Guest removed"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to remove guest"),
   });
 
   const downloadTemplate = async () => {
@@ -964,12 +1022,35 @@ function GuestsTab({ eventId }: { eventId: string }) {
   const executeBulkAction = () => {
     const guestIds = Array.from(selectedGuests);
     if (bulkActionType === "send_invitation") {
-      sendInvitationsMutation.mutate({ guest_ids: guestIds });
+      sendInvitationsMutation.mutate({ guest_ids: guestIds, channel: pledgeChannel });
     } else if (bulkActionType === "generate_links") {
       generateLinksMutation.mutate({ guest_ids: guestIds });
     } else if (bulkActionType === "send_reminder") {
       sendReminderMutation.mutate({ guest_ids: guestIds, channel: reminderChannel });
     }
+  };
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selectedGuests);
+    for (const guestId of ids) await deleteMutation.mutateAsync(guestId);
+    setSelectedGuests(new Set());
+  };
+
+  const handleUpdateGuest = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editGuest) return;
+    const form = event.currentTarget;
+    updateMutation.mutate({
+      guestId: editGuest.id,
+      payload: {
+        full_name: (form.elements.namedItem("full_name") as HTMLInputElement).value,
+        phone: (form.elements.namedItem("phone") as HTMLInputElement).value,
+        email: (form.elements.namedItem("email") as HTMLInputElement).value || undefined,
+        guest_category: (form.elements.namedItem("guest_category") as HTMLSelectElement).value,
+        table_number: (form.elements.namedItem("table_number") as HTMLInputElement).value || undefined,
+        contact_method: (form.elements.namedItem("contact_method") as HTMLSelectElement).value,
+      },
+    });
   };
 
   const columns: ColumnDef<any>[] = [
@@ -1011,6 +1092,11 @@ function GuestsTab({ eventId }: { eventId: string }) {
       },
     },
     {
+      key: "pledge_status",
+      label: "Pledge",
+      render: (g) => <Badge label={g.pledge ? (g.pledge.payment_status === "paid" ? "Paid in full" : g.pledge.payment_status) : "No pledge"} variant={g.pledge?.payment_status === "paid" ? "green" : g.pledge?.payment_status === "partial" ? "amber" : "slate"} />,
+    },
+    {
       key: "actions",
       label: " ",
       render: (g) => (
@@ -1039,6 +1125,12 @@ function GuestsTab({ eventId }: { eventId: string }) {
           >
             <Send className="h-4 w-4" />
           </button>
+          <button onClick={() => setEditGuest(g)} className="rounded p-1 text-slate-500 hover:bg-slate-100" title="Edit guest">
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button onClick={() => { if (window.confirm(`Remove ${g.full_name}?`)) deleteMutation.mutate(g.id); }} className="rounded p-1 text-rose-600 hover:bg-rose-50" title="Remove guest">
+            <Trash2 className="h-4 w-4" />
+          </button>
         </div>
       ),
     },
@@ -1061,7 +1153,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
     });
   };
 
-  const hasSentInvitations = guests.some((g: any) => g.invitation_status === "sent" || g.invitation_status === "opened");
+  const hasSentInvitations = guestRows.some((g: any) => g.invitation?.status === "sent" || g.invitation?.status === "opened");
 
   return (
     <Card title={`Guests (${guests.length})`}>
@@ -1074,7 +1166,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_invitation")}>
-              <Mail className="h-3.5 w-3.5" /> Send Invitation
+              <Mail className="h-3.5 w-3.5" /> Send Pledge Card
             </Button>
             <Button size="sm" variant="outline" onClick={() => handleBulkAction("generate_links")}>
               <QrCode className="h-3.5 w-3.5" /> Generate Links
@@ -1086,6 +1178,9 @@ function GuestsTab({ eventId }: { eventId: string }) {
             )}
             <Button size="sm" variant="ghost" onClick={() => setSelectedGuests(new Set())}>
               Clear selection
+            </Button>
+            <Button size="sm" variant="danger" onClick={() => { if (window.confirm(`Remove ${selectedGuests.size} guest(s)?`)) deleteSelected(); }} isLoading={deleteMutation.isPending}>
+              <Trash2 className="h-3.5 w-3.5" /> Remove
             </Button>
           </div>
         </div>
@@ -1102,7 +1197,14 @@ function GuestsTab({ eventId }: { eventId: string }) {
           </button>
           <span className="text-sm text-slate-600">Select all guests</span>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <Input label="Search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, phone, email" />
+          <Select label="Category" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+            <option value="">All categories</option><option value="VIP">VIP</option><option value="Regular">Regular</option><option value="Special Guest">Special guest</option><option value="Staff">Staff</option>
+          </Select>
+          <Select label="Pledge status" value={pledgeFilter} onChange={(event) => setPledgeFilter(event.target.value)}>
+            <option value="">All pledge statuses</option><option value="paid">Paid in full</option><option value="partial">Partial</option><option value="pending">Unpaid</option><option value="overdue">Overdue</option>
+          </Select>
           <Button variant="outline" size="sm" onClick={downloadTemplate}>
             <Download className="h-3.5 w-3.5" /> CSV template
           </Button>
@@ -1130,7 +1232,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {guestRows.map((g: any) => (
+              {visibleGuests.map((g: any) => (
                 <tr key={g.id} className={cn("transition hover:bg-slate-50", selectedGuests.has(g.id) && "bg-gold-50/50")}>
                   {columns.map((col) => (
                     <td key={col.key} className="px-4 py-3">
@@ -1141,6 +1243,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
               ))}
             </tbody>
           </table>
+          {visibleGuests.length === 0 && <p className="py-8 text-center text-sm text-slate-400">No guests match the current filters.</p>}
         </div>
       )}
 
@@ -1149,7 +1252,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
         <div className="space-y-4">
           <div className="rounded-lg bg-slate-50 p-4">
             <p className="text-sm font-semibold text-slate-900">
-              {bulkActionType === "send_invitation" && "Send Invitation Cards"}
+              {bulkActionType === "send_invitation" && "Send Pledge Cards"}
               {bulkActionType === "generate_links" && "Generate Invitation Links"}
               {bulkActionType === "send_reminder" && "Send Reminder Messages"}
             </p>
@@ -1165,6 +1268,11 @@ function GuestsTab({ eventId }: { eventId: string }) {
               <option value="telegram">Telegram</option>
             </Select>
           )}
+          {bulkActionType === "send_invitation" && (
+            <Select label="Pledge card channel" value={pledgeChannel} onChange={(e) => setPledgeChannel(e.target.value)}>
+              <option value="whatsapp">WhatsApp</option><option value="sms">SMS token</option><option value="email">Email</option><option value="telegram">Telegram</option>
+            </Select>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setBulkActionOpen(false)}>Cancel</Button>
             <Button
@@ -1175,6 +1283,17 @@ function GuestsTab({ eventId }: { eventId: string }) {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={!!editGuest} onClose={() => setEditGuest(null)} title={`Edit Guest — ${editGuest?.full_name ?? ""}`} size="md">
+        {editGuest && <form onSubmit={handleUpdateGuest} className="space-y-4">
+          <Input label="Full name" name="full_name" defaultValue={editGuest.full_name} required />
+          <Input label="Phone" name="phone" defaultValue={editGuest.phone} required />
+          <Input label="Email" name="email" type="email" defaultValue={editGuest.email ?? ""} />
+          <div className="grid grid-cols-2 gap-4"><Input label="Table" name="table_number" defaultValue={editGuest.table_number ?? ""} /><Select label="Category" name="guest_category" defaultValue={editGuest.guest_category ?? "Regular"}><option value="VIP">VIP</option><option value="Regular">Regular</option><option value="Special Guest">Special Guest</option><option value="Staff">Staff</option></Select></div>
+          <Select label="Contact method" name="contact_method" defaultValue={editGuest.contact_method ?? "whatsapp"}><option value="whatsapp">WhatsApp</option><option value="sms">SMS</option><option value="email">Email</option><option value="telegram">Telegram</option></Select>
+          <div className="flex justify-end gap-2"><Button variant="ghost" type="button" onClick={() => setEditGuest(null)}>Cancel</Button><Button type="submit" isLoading={updateMutation.isPending}>Save</Button></div>
+        </form>}
       </Modal>
 
       {/* Add guest modal */}

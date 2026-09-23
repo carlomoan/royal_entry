@@ -18,7 +18,10 @@ CREATE TABLE IF NOT EXISTS message_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_broadcast_deliveries_broadcast ON broadcast_deliveries (broadcast_id);
+ALTER TABLE broadcast_deliveries
+    ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_broadcast_deliveries_campaign ON broadcast_deliveries (campaign_id);
 CREATE INDEX IF NOT EXISTS idx_message_logs_recipient ON message_logs (recipient_id);
 CREATE INDEX IF NOT EXISTS idx_message_logs_event ON message_logs (event_id);
 CREATE INDEX IF NOT EXISTS idx_message_logs_channel ON message_logs (channel);

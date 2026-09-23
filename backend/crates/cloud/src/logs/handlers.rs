@@ -78,7 +78,7 @@ pub async fn list_broadcast_deliveries(
 
     // Verify broadcast belongs to org
     let broadcast_owner: Option<Uuid> = sqlx::query_scalar(
-        "SELECT event_id FROM broadcasts WHERE id = $1"
+        "SELECT event_id FROM broadcast_campaigns WHERE id = $1"
     )
     .bind(broadcast_id)
     .fetch_optional(state.db.pool())
@@ -89,7 +89,8 @@ pub async fn list_broadcast_deliveries(
     }
 
     let deliveries = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, Uuid, String, String, Option<String>, Option<String>, i32, chrono::DateTime<chrono::Utc>)>(
-        "SELECT * FROM broadcast_deliveries WHERE broadcast_id = $1 ORDER BY created_at DESC"
+        "SELECT id, campaign_id, guest_id, channel, status, provider_message_id, error_message, retry_count, delivered_at
+         FROM broadcast_deliveries WHERE campaign_id = $1 ORDER BY delivered_at DESC"
     )
     .bind(broadcast_id)
     .fetch_all(state.db.pool())

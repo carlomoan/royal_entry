@@ -149,7 +149,7 @@ async fn guest_belongs_to_event(state: &Arc<AppState>, event_id: Uuid, guest_id:
 async fn fetch_pledges(state: &Arc<AppState>, event_id: Uuid, status: Option<&str>) -> AppResult<Vec<PledgeResponse>> {
     let pledges = if let Some(status) = status {
         sqlx::query_as::<_, PledgeResponse>(
-            r#"SELECT pt.id, pt.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, pt.pledged_amount, pt.amount_paid, GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount, pt.payment_status, pt.payment_deadline, pt.reminder_count, pt.last_reminder_sent_at, pt.notes, pt.created_at FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status = $2 ORDER BY pt.created_at DESC"#,
+            r#"SELECT pt.id, pt.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, pt.pledged_amount, pt.amount_paid, GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount, CASE WHEN pt.amount_paid >= pt.pledged_amount THEN 'paid' WHEN pt.payment_deadline IS NOT NULL AND pt.payment_deadline < CURRENT_DATE THEN 'overdue' WHEN pt.amount_paid > 0 THEN 'partial' ELSE 'pending' END AS payment_status, pt.payment_deadline, pt.reminder_count, pt.last_reminder_sent_at, pt.notes, pt.created_at FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND (CASE WHEN pt.amount_paid >= pt.pledged_amount THEN 'paid' WHEN pt.payment_deadline IS NOT NULL AND pt.payment_deadline < CURRENT_DATE THEN 'overdue' WHEN pt.amount_paid > 0 THEN 'partial' ELSE 'pending' END) = $2 ORDER BY pt.created_at DESC"#,
         )
         .bind(event_id)
         .bind(status)
@@ -157,7 +157,7 @@ async fn fetch_pledges(state: &Arc<AppState>, event_id: Uuid, status: Option<&st
         .await?
     } else {
         sqlx::query_as::<_, PledgeResponse>(
-            r#"SELECT pt.id, pt.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, pt.pledged_amount, pt.amount_paid, GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount, pt.payment_status, pt.payment_deadline, pt.reminder_count, pt.last_reminder_sent_at, pt.notes, pt.created_at FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 ORDER BY pt.created_at DESC"#,
+            r#"SELECT pt.id, pt.guest_id, g.full_name AS guest_name, g.phone AS guest_phone, pt.pledged_amount, pt.amount_paid, GREATEST(pt.pledged_amount - pt.amount_paid, 0) AS remaining_amount, CASE WHEN pt.amount_paid >= pt.pledged_amount THEN 'paid' WHEN pt.payment_deadline IS NOT NULL AND pt.payment_deadline < CURRENT_DATE THEN 'overdue' WHEN pt.amount_paid > 0 THEN 'partial' ELSE 'pending' END AS payment_status, pt.payment_deadline, pt.reminder_count, pt.last_reminder_sent_at, pt.notes, pt.created_at FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 ORDER BY pt.created_at DESC"#,
         )
         .bind(event_id)
         .fetch_all(state.db.pool())
@@ -298,6 +298,10 @@ pub async fn record_payment(
     let current_paid: i64 = row.try_get("amount_paid").unwrap_or(0);
     let payment_deadline: Option<NaiveDate> = row.try_get("payment_deadline").ok();
 
+    let remaining_amount = (pledged_amount - current_paid).max(0);
+    if payload.amount_paid > remaining_amount {
+        return Err(AppError::ValidationError(format!("Payment exceeds the remaining pledge amount of TZS {}", remaining_amount)));
+    }
     let new_amount_paid = current_paid + payload.amount_paid;
     let status = resolve_status(pledged_amount, new_amount_paid, payment_deadline);
 

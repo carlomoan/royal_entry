@@ -1,6 +1,6 @@
 use crate::{
     error::AppResult,
-    channels::{email::EmailChannel, traits::{MessageChannel, OutboundMessage}},
+    channels::{email::EmailChannel, telegram::TelegramChannel, traits::{MessageChannel, OutboundMessage}},
     services::{sms::SmsService, whatsapp::WhatsappService},
 };
 
@@ -17,6 +17,7 @@ pub struct MessagingService {
     sms: SmsService,
     whatsapp: WhatsappService,
     email: EmailChannel,
+    telegram: TelegramChannel,
 }
 
 impl MessagingService {
@@ -25,6 +26,7 @@ impl MessagingService {
             sms: SmsService::new(),
             whatsapp: WhatsappService::new(),
             email: EmailChannel::new(),
+            telegram: TelegramChannel::new(),
         }
     }
 
@@ -54,6 +56,27 @@ impl MessagingService {
                     },
                     Err(error) => DeliveryAttempt {
                         channel: "email".to_string(),
+                        success: false,
+                        provider_message_id: None,
+                        error_message: Some(error.to_string()),
+                    },
+                });
+            }
+            "telegram" => {
+                let result = self.telegram.send(&OutboundMessage {
+                    to: to.to_string(),
+                    body: message.to_string(),
+                    attachments: Vec::new(),
+                }).await;
+                attempts.push(match result {
+                    Ok(receipt) => DeliveryAttempt {
+                        channel: "telegram".to_string(),
+                        success: receipt.success,
+                        provider_message_id: receipt.provider_message_id,
+                        error_message: receipt.error_message,
+                    },
+                    Err(error) => DeliveryAttempt {
+                        channel: "telegram".to_string(),
                         success: false,
                         provider_message_id: None,
                         error_message: Some(error.to_string()),

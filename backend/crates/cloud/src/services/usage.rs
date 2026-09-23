@@ -356,7 +356,7 @@ impl UsageService {
 
     async fn count_broadcasts_sent(&self, org_id: Uuid, start: DateTime<Utc>, end: DateTime<Utc>) -> AppResult<i64> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM broadcasts WHERE organization_id = $1 AND sent_at BETWEEN $2 AND $3"
+            "SELECT COUNT(*) FROM broadcast_campaigns WHERE org_id = $1 AND sent_at BETWEEN $2 AND $3"
         )
         .bind(org_id)
         .bind(start)

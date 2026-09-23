@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 pub async fn list_by_broadcast(pool: &PgPool, broadcast_id: Uuid) -> AppResult<Vec<serde_json::Value>> {
     sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, Uuid, String, String, Option<String>, Option<String>, i32, chrono::DateTime<chrono::Utc>)>(
-        "SELECT * FROM message_logs WHERE broadcast_id = $1 ORDER BY created_at DESC"
+        "SELECT * FROM message_logs WHERE campaign_id = $1 ORDER BY created_at DESC"
     )
     .bind(broadcast_id)
     .fetch_all(pool)

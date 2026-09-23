@@ -4,6 +4,7 @@ use crate::{
     error::AppResult,
 };
 
+#[derive(Clone)]
 pub struct TelegramChannel {
     bot_token: String,
 }

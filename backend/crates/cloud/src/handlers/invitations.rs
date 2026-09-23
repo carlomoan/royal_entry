@@ -10,7 +10,7 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize; // ✅ ADDED: Required for #[derive(Deserialize)]
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
@@ -222,8 +222,8 @@ pub async fn send_invitations(
             continue;
         };
 
-        let pledge: Option<i64> = sqlx::query_scalar(
-            "SELECT pledged_amount FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
+        let pledge = sqlx::query(
+            "SELECT pledged_amount, amount_paid FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
         )
         .bind(event_id)
         .bind(guest.id)
@@ -239,7 +239,13 @@ pub async fn send_invitations(
         });
 
         let pledge_line = match pledge {
-            Some(amount) => format!("Your pledge: TZS {}", amount),
+            Some(row) => {
+                let pledged: i64 = row.try_get("pledged_amount")?;
+                let paid: i64 = row.try_get("amount_paid")?;
+                let remaining = (pledged - paid).max(0);
+                let status = if paid >= pledged { "paid in full" } else if paid > 0 { "partially paid" } else { "unpaid" };
+                format!("Pledge: TZS {} · Status: {} · Remaining: TZS {}", pledged, status, remaining)
+            }
             None => "No pledge required".to_string(),
         };
 

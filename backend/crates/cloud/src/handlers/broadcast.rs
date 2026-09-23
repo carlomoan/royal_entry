@@ -26,6 +26,7 @@ pub struct SendBroadcastRequest {
     pub channel: Option<String>,
     pub target: Option<String>,
     pub guest_category: Option<String>,
+    pub guest_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -60,6 +61,7 @@ pub struct BroadcastDeliveryResponse {
 struct RecipientRow {
     guest_id: Uuid,
     phone: String,
+    email: Option<String>,
 }
 
 async fn assert_event_ownership(
@@ -81,35 +83,49 @@ async fn fetch_recipients(
     event_id: Uuid,
     target: &str,
     guest_category: Option<&str>,
+    guest_ids: Option<&[Uuid]>,
 ) -> AppResult<Vec<RecipientRow>> {
     let category = guest_category.map(|s| s.to_string());
     let rows = match target {
         "vip" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"SELECT g.id AS guest_id, g.phone FROM guests g WHERE g.event_id = $1 AND UPPER(COALESCE(g.guest_category, '')) = 'VIP' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g WHERE g.event_id = $1 AND UPPER(COALESCE(g.guest_category, '')) = 'VIP' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
             ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         "confirmed" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"SELECT g.id AS guest_id, g.phone FROM guests g JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND r.response = 'confirmed' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND r.response = 'confirmed' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
             ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         "declined" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"SELECT g.id AS guest_id, g.phone FROM guests g JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND r.response = 'declined' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND r.response = 'declined' AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
             ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         "not_rsvp" => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"SELECT g.id AS guest_id, g.phone FROM guests g LEFT JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND (r.guest_id IS NULL OR r.response = 'pending') AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g LEFT JOIN rsvp_responses r ON r.guest_id = g.id AND r.event_id = g.event_id WHERE g.event_id = $1 AND (r.guest_id IS NULL OR r.response = 'pending') AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
+        }
+        "paid" | "partial" | "unpaid" => {
+            sqlx::query_as::<_, RecipientRow>(
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g JOIN pledge_tracker p ON p.guest_id = g.id AND p.event_id = g.event_id WHERE g.event_id = $1 AND CASE WHEN $2 = 'paid' THEN p.amount_paid >= p.pledged_amount WHEN $2 = 'partial' THEN p.amount_paid > 0 AND p.amount_paid < p.pledged_amount ELSE p.amount_paid = 0 END AND ($3::text IS NULL OR g.guest_category = $3) ORDER BY g.full_name ASC"#,
+            ).bind(event_id).bind(target).bind(category).fetch_all(state.db.pool()).await?
+        }
+        "special" => {
+            sqlx::query_as::<_, RecipientRow>(
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g WHERE g.event_id = $1 AND UPPER(COALESCE(g.guest_category, '')) IN ('SPECIAL GUEST', 'STAFF', 'SERVICE PROVIDER') AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
             ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
         _ => {
             sqlx::query_as::<_, RecipientRow>(
-                r#"SELECT g.id AS guest_id, g.phone FROM guests g WHERE g.event_id = $1 AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
+                r#"SELECT g.id AS guest_id, g.phone, g.email FROM guests g WHERE g.event_id = $1 AND ($2::text IS NULL OR g.guest_category = $2) ORDER BY g.full_name ASC"#,
             ).bind(event_id).bind(category).fetch_all(state.db.pool()).await?
         }
     };
+    if let Some(ids) = guest_ids.filter(|ids| !ids.is_empty()) {
+        return Ok(rows.into_iter().filter(|row| ids.contains(&row.guest_id)).collect());
+    }
     Ok(rows)
 }
 
@@ -180,7 +196,7 @@ pub async fn send_broadcast(
     let campaign_name = payload.campaign_name.clone();
     let guest_category = payload.guest_category.clone();
 
-    let recipients = fetch_recipients(&state, event_id, &target, guest_category.as_deref()).await?;
+    let recipients = fetch_recipients(&state, event_id, &target, guest_category.as_deref(), payload.guest_ids.as_deref()).await?;
 
     if recipients.is_empty() {
         return Ok((
@@ -216,7 +232,12 @@ pub async fn send_broadcast(
     let mut failed = 0_i32;
 
     for recipient in recipients {
-        let attempts = messaging.send(&channel, &recipient.phone, &message).await?;
+        let destination = if channel == "email" {
+            recipient.email.as_deref().ok_or_else(|| AppError::BadRequest("A selected guest has no email address".to_string()))?
+        } else {
+            &recipient.phone
+        };
+        let attempts = messaging.send(&channel, destination, &message).await?;
         let recipient_success = attempts.iter().any(|attempt| attempt.success);
         if recipient_success { sent += 1; } else { failed += 1; }
 
