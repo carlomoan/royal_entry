@@ -1,10 +1,24 @@
 "use client";
-import { useState } from "react";
-import { Palette, Plus, Trash2 } from "lucide-react";
-import { Card, Badge, Button, Input, Modal } from "@/components/ui";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Palette } from "lucide-react";
+import { Card, Badge } from "@/components/ui";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
 
 export default function CardTemplatesPage() {
-  const [createOpen, setCreateOpen] = useState(false);
+  const { data: templates = [], isLoading } = useQuery({
+    queryKey: ["card-templates"],
+    queryFn: async () => (await api.get("/cards/templates")).data.data,
+  });
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.post("/files/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
+    },
+    onSuccess: (response) => toast.success(`Uploaded ${response.data.data.file_name}`),
+    onError: (error: any) => toast.error(error?.response?.data?.error?.message ?? "Upload failed"),
+  });
 
   return (
     <div className="space-y-6">
@@ -13,42 +27,37 @@ export default function CardTemplatesPage() {
           <h1 className="text-2xl font-bold text-slate-900">Card Templates</h1>
           <p className="text-sm text-slate-500">Design invitation cards with QR placeholders and text fields</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} size="sm"><Plus className="h-3.5 w-3.5" /> New Template</Button>
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-gold-300 hover:text-gold-700">
+          <Palette className="h-4 w-4" /> Upload background
+          <input type="file" accept="image/*" className="sr-only" onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) uploadMutation.mutate(file);
+            event.currentTarget.value = "";
+          }} />
+        </label>
       </div>
 
-      <Card title="Published Templates">
-        <div className="space-y-3">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-semibold text-slate-900">VIP Invitation</h4>
-                <p className="text-xs text-slate-500">Published • Background: gold-gradient</p>
+      <Card title="Available Templates">
+        {isLoading ? <p className="text-sm text-slate-500">Loading…</p> : templates.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">No card templates available</p>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {templates.map((template: any) => (
+              <div key={template.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-semibold text-slate-900">{template.name}</h4>
+                    <p className="text-xs text-slate-500">{template.status ?? "Available"}</p>
+                  </div>
+                  <Badge label={template.status ?? "Published"} variant="green" />
+                </div>
+                <p className="mt-3 text-xs text-slate-500">{template.background_file_id ? "Custom background" : "No background uploaded"}</p>
               </div>
-              <Badge label="Published" variant="green" />
-            </div>
-            <div className="mt-3 flex gap-2">
-              <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-600 shadow-sm">QR placeholder</span>
-              <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-600 shadow-sm">Guest name</span>
-              <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-600 shadow-sm">Event title</span>
-            </div>
+            ))}
           </div>
-        </div>
+        )}
       </Card>
 
-      <Modal isOpen={createOpen} onClose={() => setCreateOpen(false)} title="Create Card Template" size="lg">
-        <form className="space-y-4">
-          <Input label="Template name" name="name" required />
-          <div className="grid grid-cols-2 gap-4">
-            <Input label="QR placeholder X" name="qr_x" type="number" defaultValue={50} />
-            <Input label="QR placeholder Y" name="qr_y" type="number" defaultValue={50} />
-          </div>
-          <Input label="Background file ID (from uploads)" name="background_file_id" />
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" type="button" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button type="submit">Create</Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

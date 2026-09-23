@@ -60,6 +60,7 @@ time = "0.3"
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
 email_address = "0.2"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-native-tls"] }
 hmac = "0.12"
 governor = "0.10"
 env_logger = "0.11"

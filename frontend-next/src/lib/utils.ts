@@ -20,6 +20,13 @@ export function formatDate(date?: string | Date | null): string {
   });
 }
 
+export function formatTime(value?: string | Date | null): string {
+  if (!value) return "—";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
 export function formatTZS(amount?: number | null): string {
   if (amount == null) return "TZS 0";
   return `TZS ${amount.toLocaleString("en-US")}`;

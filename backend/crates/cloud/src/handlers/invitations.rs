@@ -91,7 +91,14 @@ pub async fn generate_invitations(
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     assert_event_ownership(&state, event_id, org_id).await?;
 
-    let guests = list_event_guests(state.db.pool(), event_id).await?;
+    let all_guests = list_event_guests(state.db.pool(), event_id).await?;
+    let guests: Vec<Guest> = match payload.guest_ids {
+        Some(ids) if !ids.is_empty() => all_guests
+            .into_iter()
+            .filter(|guest| ids.contains(&guest.id))
+            .collect(),
+        _ => all_guests,
+    };
     let overwrite = payload.overwrite.unwrap_or(false);
 
     if guests.is_empty() {
@@ -178,10 +185,18 @@ pub async fn send_invitations(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     Path(event_id): Path<Uuid>,
+    Json(payload): Json<SendInvitationsRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     let event = assert_event_ownership(&state, event_id, org_id).await?;
-    let guests = list_event_guests(state.db.pool(), event_id).await?;
+    let all_guests = list_event_guests(state.db.pool(), event_id).await?;
+    let guests: Vec<Guest> = match payload.guest_ids {
+        Some(ids) if !ids.is_empty() => all_guests
+            .into_iter()
+            .filter(|guest| ids.contains(&guest.id))
+            .collect(),
+        _ => all_guests,
+    };
 
     if guests.is_empty() {
         return Err(AppError::BadRequest("No guests to invite".to_string()));
@@ -219,7 +234,9 @@ pub async fn send_invitations(
 
         // ✅ FIXED: Use .as_str() instead of .as_deref() for String fields
         let device_type = guest.device_type.as_str();
-        let channel = if device_type == "feature_phone" { "sms" } else { "whatsapp" };
+        let channel = payload.channel.as_deref().unwrap_or_else(|| {
+            if device_type == "feature_phone" { "sms" } else { guest.contact_method.as_str() }
+        });
 
         let pledge_line = match pledge {
             Some(amount) => format!("Your pledge: TZS {}", amount),
@@ -237,7 +254,14 @@ pub async fn send_invitations(
             link = check_in_link,
         );
 
-        let attempts = messaging.send(channel, &guest.phone, &message).await?;
+        let destination = if channel == "email" {
+            guest.email.as_deref().ok_or_else(|| {
+                AppError::BadRequest(format!("{} has no email address", guest.full_name))
+            })?
+        } else {
+            &guest.phone
+        };
+        let attempts = messaging.send(channel, destination, &message).await?;
         let ok = attempts.iter().any(|a| a.success);
 
         if ok {

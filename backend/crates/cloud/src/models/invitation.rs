@@ -68,6 +68,7 @@ impl InvitationResponse {
 #[derive(Debug, Deserialize, Default)]
 pub struct GenerateInvitationsRequest {
     pub overwrite: Option<bool>,
+    pub guest_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Serialize)]

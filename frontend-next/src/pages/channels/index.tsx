@@ -1,8 +1,6 @@
 "use client";
-import { useState } from "react";
-import { MessageSquare, Send, CheckCircle, AlertCircle } from "lucide-react";
-import { Card, Badge, Button } from "@/components/ui";
-import toast from "react-hot-toast";
+import { MessageSquare } from "lucide-react";
+import { Card, Badge } from "@/components/ui";
 
 const CHANNELS = [
   { kind: "sms", label: "SMS", icon: MessageSquare, provider: "Africa's Talking" },
@@ -12,24 +10,6 @@ const CHANNELS = [
 ];
 
 export default function ChannelsPage() {
-  const [testing, setTesting] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, { success: boolean; message: string }>>({});
-
-  const handleTest = async (kind: string) => {
-    setTesting(kind);
-    try {
-      // Placeholder: call POST /admin/channels/{kind}/test
-      await new Promise((r) => setTimeout(r, 800));
-      setResults((prev) => ({ ...prev, [kind]: { success: true, message: "Test message delivered" } }));
-      toast.success(`${kind.toUpperCase()} test sent`);
-    } catch {
-      setResults((prev) => ({ ...prev, [kind]: { success: false, message: "Test failed" } }));
-      toast.error(`${kind.toUpperCase()} test failed`);
-    } finally {
-      setTesting(null);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div>
@@ -39,11 +19,7 @@ export default function ChannelsPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         {CHANNELS.map((ch) => (
-          <Card key={ch.kind} title={ch.label} action={
-            <Button size="sm" onClick={() => handleTest(ch.kind)} isLoading={testing === ch.kind}>
-              <Send className="h-3.5 w-3.5" /> Send Test
-            </Button>
-          }>
+          <Card key={ch.kind} title={ch.label}>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-slate-500">Provider</span>
@@ -51,16 +27,9 @@ export default function ChannelsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-slate-500">Status</span>
-                <Badge label={results[ch.kind]?.success ? "Active" : "Configured"} variant={results[ch.kind]?.success ? "green" : "slate"} />
+                <Badge label="Configured" variant="slate" />
               </div>
-              {results[ch.kind] && (
-                <div className={`rounded-lg px-3 py-2 text-xs ${results[ch.kind].success ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-                  <div className="flex items-center gap-1.5">
-                    {results[ch.kind].success ? <CheckCircle className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                    {results[ch.kind].message}
-                  </div>
-                </div>
-              )}
+              <p className="text-xs text-slate-400">Channel credentials are managed by the backend environment.</p>
             </div>
           </Card>
         ))}

@@ -1,10 +1,1 @@
-{
-  "/_app": "pages/_app.js",
-  "/_error": "pages/_error.js",
-  "/_document": "pages/_document.js",
-  "/platform/accounts": "pages/platform/accounts.js",
-  "/dashboard": "pages/dashboard.js",
-  "/events": "pages/events.js",
-  "/events/[id]": "pages/events/[id].js",
-  "/events/[id]/scanner": "pages/events/[id]/scanner.js"
-}
+{"/_app":"pages/_app.js","/400":"pages/400.html","/401":"pages/401.html","/403":"pages/403.html","/404":"pages/404.html","/500":"pages/500.html","/audit":"pages/audit.html","/billing":"pages/billing.html","/cards":"pages/cards.html","/channels":"pages/channels.html","/dashboard":"pages/dashboard.html","/events":"pages/events.html","/events/[id]":"pages/events/[id].html","/events/[id]/profile":"pages/events/[id]/profile.html","/events/[id]/scanner":"pages/events/[id]/scanner.html","/global-variables":"pages/global-variables.html","/guests/qr-management":"pages/guests/qr-management.html","/":"pages/index.html","/login":"pages/login.html","/logs":"pages/logs.html","/payments":"pages/payments.html","/platform/accounts":"pages/platform/accounts.html","/platform/audit":"pages/platform/audit.html","/platform/card-templates":"pages/platform/card-templates.html","/platform/accounts/[id]":"pages/platform/accounts/[id].html","/platform/global-variables":"pages/platform/global-variables.html","/platform/packages":"pages/platform/packages.html","/platform":"pages/platform.html","/platform/payments":"pages/platform/payments.html","/platform/rbac":"pages/platform/rbac.html","/platform/settings":"pages/platform/settings.html","/platform/settings/ai":"pages/platform/settings/ai.html","/platform/settings/sms":"pages/platform/settings/sms.html","/platform/settings/telegram":"pages/platform/settings/telegram.html","/platform/settings/whatsapp":"pages/platform/settings/whatsapp.html","/platform/templates":"pages/platform/templates.html","/platform/users":"pages/platform/users.html","/platform/webhooks":"pages/platform/webhooks.html","/profile":"pages/profile.html","/public/invitations/[id]":"pages/public/invitations/[id].html","/reports":"pages/reports.html","/scanner":"pages/scanner.html","/settings":"pages/settings.html","/templates":"pages/templates.html","/usage":"pages/usage.html","/_error":"pages/_error.js","/_document":"pages/_document.js"}

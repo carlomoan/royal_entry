@@ -1,13 +1,26 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ScrollText } from "lucide-react";
+import { Download, ScrollText } from "lucide-react";
+import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Badge } from "@/components/ui";
+import { Card, Badge, Button } from "@/components/ui";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatDate } from "@/lib/utils";
 
 export default function AuditPage() {
+  const exportAudit = async () => {
+    try {
+      const response = await api.get("/audit/export");
+      const { filename, content } = response.data.data;
+      const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error("Audit export failed"); }
+  };
   const { data: response, isLoading } = useQuery({
     queryKey: ["audit"],
     queryFn: async () => (await api.get("/audit/logs")).data,
@@ -29,9 +42,12 @@ export default function AuditPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
-        <p className="text-sm text-slate-500">Security trail of every authenticated action</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
+          <p className="text-sm text-slate-500">Security trail of every authenticated action</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={exportAudit}><Download className="h-3.5 w-3.5" /> Export CSV</Button>
       </div>
 
       {isLoading ? (

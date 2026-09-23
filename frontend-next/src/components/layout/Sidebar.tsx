@@ -12,6 +12,11 @@ import { useAuth } from "@/lib/auth";
 import { isPlatformAdmin, roleLabel, can } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
 interface NavItem {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -70,6 +75,10 @@ const ACCOUNT_NAV: NavSection[] = [
       { href: "/billing", icon: CreditCard, label: "Billing", permission: "payments:read" },
       { href: "/usage", icon: Gauge, label: "Usage & Limits", permission: "events:read" },
       { href: "/reports", icon: BarChart3, label: "Reports", permission: "reports:read" },
+      { href: "/templates", icon: FileText, label: "Message Templates", permission: "templates:read" },
+      { href: "/logs", icon: ScrollText, label: "Delivery Logs", permission: "audit:read" },
+      { href: "/cards", icon: Palette, label: "Card Templates", permission: "cards:read" },
+      { href: "/channels", icon: MessageSquare, label: "Channels", permission: "broadcast:read" },
     ],
   },
   {
@@ -82,7 +91,7 @@ const ACCOUNT_NAV: NavSection[] = [
   },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const router = useRouter();
   const pathname = router.pathname;
@@ -97,10 +106,13 @@ export default function Sidebar() {
     .filter((section) => section.items.length > 0);
 
   return (
-    <aside
+    <>
+      {mobileOpen && <button aria-label="Close navigation" onClick={onMobileClose} className="fixed inset-0 z-40 bg-navy-950/50 md:hidden" />}
+      <aside
       className={cn(
-        "sticky top-0 z-40 flex h-screen flex-col bg-navy-950 text-white transition-all duration-300 ease-in-out",
-        collapsed ? "w-[72px]" : "w-64"
+        "fixed inset-y-0 left-0 z-50 flex h-screen flex-col bg-navy-950 text-white transition-all duration-300 ease-in-out md:sticky md:z-40",
+        collapsed ? "w-[72px]" : "w-64",
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       )}
     >
       {/* Brand */}
@@ -188,6 +200,7 @@ export default function Sidebar() {
           {collapsed ? <ChevronRight className="h-4 w-4" /> : (<><ChevronLeft className="h-4 w-4" /> Collapse</>)}
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

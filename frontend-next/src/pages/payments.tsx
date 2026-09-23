@@ -2,21 +2,27 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  CreditCard, FileDown, Wallet, Clock, CheckCircle2, ArrowUpRight,
+  CreditCard, FileDown, Wallet, Clock, CheckCircle2, ArrowUpRight, Search,
 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Badge, StatCard, Select } from "@/components/ui";
+import { Card, Badge, StatCard, Select, Modal, Button } from "@/components/ui";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatTZS, formatDate } from "@/lib/utils";
 
 export default function PaymentsPage() {
   const [filterStatus, setFilterStatus] = useState("");
+  const [statusPaymentId, setStatusPaymentId] = useState<string | null>(null);
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ["payments"],
     queryFn: async () => (await api.get("/payments")).data.data,
+  });
+  const { data: paymentStatus, isFetching: statusLoading, refetch: refetchStatus } = useQuery({
+    queryKey: ["payment-status", statusPaymentId],
+    queryFn: async () => (await api.get(`/payments/${statusPaymentId}/status`)).data.data,
+    enabled: !!statusPaymentId,
   });
 
   const stats = useMemo(() => {
@@ -58,12 +64,16 @@ export default function PaymentsPage() {
     { key: "created_at", label: "Date", sortable: true, render: (p) => <span className="text-xs text-slate-500">{formatDate(p.created_at)}</span> },
     {
       key: "receipt", label: "Receipt",
-      render: (p) => p.status === "completed" ? (
-        <button onClick={() => downloadReceipt(p.id)} title="Download receipt"
+      render: (p) => <div className="flex items-center gap-2">
+        <button onClick={() => setStatusPaymentId(p.id)} title="Check payment status"
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700">
+          <Search className="h-3.5 w-3.5" /> Status
+        </button>
+        {p.status === "completed" && <button onClick={() => downloadReceipt(p.id)} title="Download receipt"
           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700">
           <FileDown className="h-3.5 w-3.5" /> Receipt
-        </button>
-      ) : null,
+        </button>}
+      </div>,
     },
   ];
 
@@ -111,6 +121,16 @@ export default function PaymentsPage() {
           />
         )}
       </Card>
+
+      <Modal isOpen={!!statusPaymentId} onClose={() => setStatusPaymentId(null)} title="Payment Status" size="sm">
+        {statusLoading ? <p className="py-6 text-sm text-slate-500">Checking payment status…</p> : paymentStatus ? (
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center justify-between"><span className="text-slate-500">Status</span><Badge label={paymentStatus.status ?? "unknown"} /></div>
+            {paymentStatus.result_desc && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{paymentStatus.result_desc}</p>}
+            <div className="flex justify-end gap-2"><Button variant="outline" size="sm" onClick={() => refetchStatus()}>Refresh</Button><Button size="sm" onClick={() => setStatusPaymentId(null)}>Close</Button></div>
+          </div>
+        ) : <p className="py-6 text-sm text-slate-500">No status returned.</p>}
+      </Modal>
     </div>
   );
 }

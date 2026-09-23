@@ -228,6 +228,10 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function formatTsh(amount: number): string {
+  return `TZS ${Math.max(0, amount).toLocaleString("en-TZ")}`;
+}
+
 // ============================================================================
 // BROADCAST TAB
 // ============================================================================
@@ -427,6 +431,11 @@ function MichangoTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/michango?per_page=50`)).data,
   });
 
+  const { data: invitations = [] } = useQuery({
+    queryKey: ["invitations", eventId],
+    queryFn: async () => (await api.get(`/events/${eventId}/invitations`)).data.data,
+  });
+
   const { data: summary } = useQuery({
     queryKey: ["michango-summary", eventId],
     queryFn: async () => (await api.get(`/events/${eventId}/michango/summary`)).data.data,
@@ -436,6 +445,9 @@ function MichangoTab({ eventId }: { eventId: string }) {
     queryKey: ["guests-for-pledge", eventId],
     queryFn: async () => (await api.get(`/events/${eventId}/guests?per_page=500`)).data.data,
   });
+
+  const [cardGuest, setCardGuest] = useState<any | null>(null);
+  const [cardQrUrl, setCardQrUrl] = useState<string | null>(null);
 
   const pledges = Array.isArray(response?.data) ? response.data : [];
   const guests = (guestsData ?? []) as any[];
@@ -483,6 +495,49 @@ function MichangoTab({ eventId }: { eventId: string }) {
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
   });
+
+  const sendGuestInvitationMutation = useMutation({
+    mutationFn: ({ guestId, channel }: { guestId: string; channel: string }) =>
+      api.post(`/events/${eventId}/invitations/send`, { guest_ids: [guestId], channel }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invitations", eventId] });
+      qc.invalidateQueries({ queryKey: ["guests", eventId] });
+      toast.success("Invitation card sent");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to send invitation"),
+  });
+
+  const generateGuestCard = async (guest: any) => {
+    try {
+      await api.post(`/events/${eventId}/invitations/generate`, { guest_ids: [guest.guest_id], overwrite: false });
+      await qc.invalidateQueries({ queryKey: ["invitations", eventId] });
+      const refreshed = (await api.get(`/events/${eventId}/invitations`)).data.data ?? [];
+      const invitation = refreshed.find((item: any) => item.guest_id === guest.guest_id);
+      if (!invitation) throw new Error("Invitation card was not generated");
+      const guestRecord = guests.find((item: any) => item.id === guest.guest_id);
+      setCardGuest({ ...guest, ...guestRecord, invitation });
+      const qr = await api.get(`/events/${eventId}/invitations/${invitation.id}/qr`, { responseType: "blob" });
+      setCardQrUrl(URL.createObjectURL(qr.data));
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to generate card");
+    }
+  };
+
+  const openGuestCard = async (pledge: any) => {
+    const invitation = invitations.find((item: any) => item.guest_id === pledge.guest_id);
+    if (!invitation) {
+      await generateGuestCard(pledge);
+      return;
+    }
+    const guest = guests.find((item: any) => item.id === pledge.guest_id);
+    setCardGuest({ ...pledge, ...guest, invitation });
+    try {
+      const qr = await api.get(`/events/${eventId}/invitations/${invitation.id}/qr`, { responseType: "blob" });
+      setCardQrUrl(URL.createObjectURL(qr.data));
+    } catch {
+      setCardQrUrl(null);
+    }
+  };
 
   // FIXED: Call the correct bulk reminders endpoint with guest_ids
   const reminderMutation = useMutation({
@@ -571,10 +626,10 @@ function MichangoTab({ eventId }: { eventId: string }) {
 
       {summary && (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <StatCard label="Total Pledged" value={`TZS ${(totalPledged / 1000).toFixed(0)}k`} icon={Banknote} color="bg-sky-500" />
-          <StatCard label="Collected" value={`TZS ${(totalPaid / 1000).toFixed(0)}k`} icon={CheckCircle} color="bg-emerald-500" />
-          <StatCard label="Outstanding" value={`TZS ${(totalOutstanding / 1000).toFixed(0)}k`} icon={AlertCircle} color="bg-amber-500" />
-          <StatCard label="Total Pledgers" value={totalPledgesCount} icon={Users} color="bg-violet-500" />
+          <StatCard title="Total Pledged" value={formatTsh(totalPledged)} icon={Banknote} color="blue" />
+          <StatCard title="Collected" value={formatTsh(totalPaid)} icon={CheckCircle} color="green" />
+          <StatCard title="Outstanding" value={formatTsh(totalOutstanding)} icon={AlertCircle} color="gold" />
+          <StatCard title="Total Pledgers" value={totalPledgesCount} icon={Users} color="purple" />
         </div>
       )}
 
@@ -582,13 +637,13 @@ function MichangoTab({ eventId }: { eventId: string }) {
         <Card title="Collection Progress">
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
-              <span className="font-medium text-slate-700">TZS {(totalPaid / 1000).toFixed(0)}k collected</span>
+              <span className="font-medium text-slate-700">{formatTsh(totalPaid)} collected</span>
               <span className="font-bold text-slate-900">{progress.toFixed(1)}%</span>
             </div>
             <div className="h-3 overflow-hidden rounded-full bg-slate-200">
               <div className="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 transition-all" style={{ width: `${Math.min(progress, 100)}%` }} />
             </div>
-            <p className="text-xs text-slate-500">Target: TZS {(totalPledged / 1000).toFixed(0)}k</p>
+            <p className="text-xs text-slate-500">Target: {formatTsh(totalPledged)}</p>
           </div>
         </Card>
       )}
@@ -617,7 +672,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
                     <div>
                       <p className="font-semibold text-slate-900">{p.guest_name}</p>
                       <p className="text-sm text-slate-600">
-                        Pledged: TZS {(pledgedAmount / 1000).toFixed(0)}k
+                        Pledged: {formatTsh(pledgedAmount)}
                         {p.payment_deadline && ` · Due ${formatDate(p.payment_deadline)}`}
                       </p>
                     </div>
@@ -633,8 +688,13 @@ function MichangoTab({ eventId }: { eventId: string }) {
                           </Button>
                         </>
                       )}
+                      {paymentStatus === "paid" && (
+                        <Button size="sm" variant="outline" onClick={() => openGuestCard(p)}>
+                          <QrCode className="h-4 w-4" /> Guest card
+                        </Button>
+                      )}
                       <Badge
-                        label={paymentStatus}
+                        label={paymentStatus === "paid" ? "Paid in full" : paymentStatus}
                         variant={
                           paymentStatus === "paid" ? "green" :
                           paymentStatus === "overdue" ? "rose" :
@@ -648,13 +708,13 @@ function MichangoTab({ eventId }: { eventId: string }) {
                     <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.min(paidPercent, 100)}%` }} />
                   </div>
                   <div className="mt-2 flex justify-between text-xs text-slate-500">
-                    <span>TZS {(paidAmount / 1000).toFixed(0)}k paid</span>
-                    <span className="font-semibold">TZS {(remainingAmount / 1000).toFixed(0)}k remaining</span>
+                    <span>{formatTsh(paidAmount)} paid</span>
+                    <span className="font-semibold">{formatTsh(remainingAmount)} remaining</span>
                   </div>
                   {/* FIXED: Show partial payment warning */}
                   {paymentStatus === "partial" && (
                     <p className="mt-1 text-xs font-medium text-amber-600">
-                      ⚠️ Partial payment received ({paidPercent.toFixed(1)}% complete)
+                      Partial payment received: {formatTsh(remainingAmount)} remaining ({paidPercent.toFixed(1)}% complete)
                     </p>
                   )}
                 </div>
@@ -733,6 +793,34 @@ function MichangoTab({ eventId }: { eventId: string }) {
           </div>
         </form>
       </Modal>
+
+      <Modal isOpen={!!cardGuest} onClose={() => { setCardGuest(null); if (cardQrUrl) URL.revokeObjectURL(cardQrUrl); setCardQrUrl(null); }} title={`Guest Card — ${cardGuest?.guest_name ?? ""}`} size="md">
+        {cardGuest && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+              <p className="font-semibold">Payment complete</p>
+              <p className="text-xs">This guest has paid the pledge in full. Send the check-in card below.</p>
+            </div>
+            {cardGuest.invitation?.scan_url && cardGuest.invitation?.scan_payload && (
+              <div className="flex flex-col items-center gap-3 rounded-lg border border-slate-200 bg-white p-4">
+                {cardGuest.device_type === "feature_phone" ? (
+                  <p className="rounded-lg bg-slate-50 px-5 py-4 font-mono text-xl font-bold tracking-[0.3em] text-slate-800">{cardGuest.invitation.scan_payload}</p>
+                ) : cardQrUrl ? <img src={cardQrUrl} alt="Guest check-in QR code" className="h-48 w-48" /> : <p className="text-xs text-slate-500">QR preview unavailable</p>}
+                <a href={cardGuest.invitation.scan_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-gold-700 hover:underline">Open check-in card</a>
+                {cardGuest.device_type === "feature_phone" && <p className="text-xs text-slate-500">SMS check-in token</p>}
+              </div>
+            )}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: cardGuest.contact_method === "email" ? "email" : "whatsapp" })} isLoading={sendGuestInvitationMutation.isPending}>
+                <Send className="h-4 w-4" /> Send {cardGuest.contact_method === "email" ? "Email" : "WhatsApp"}
+              </Button>
+              {cardGuest.device_type === "feature_phone" && <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: "sms" })} isLoading={sendGuestInvitationMutation.isPending}>
+                <Smartphone className="h-4 w-4" /> Send SMS token
+              </Button>}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -754,13 +842,25 @@ function GuestsTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/guests?per_page=100`)).data,
   });
 
+  const { data: invitations = [] } = useQuery({
+    queryKey: ["invitations", eventId],
+    queryFn: async () => (await api.get(`/events/${eventId}/invitations`)).data.data,
+  });
+
   const guests = (response?.data ?? []) as any[];
+  const guestRows = guests.map((guest: any) => ({
+    ...guest,
+    invitation: invitations.find((invitation: any) => invitation.guest_id === guest.id),
+  }));
 
   const sendInvitationsMutation = useMutation({
-    mutationFn: (payload: { guest_ids: string[]; channel?: string }) =>
-      api.post(`/events/${eventId}/invitations/send`, payload),
+    mutationFn: async (payload: { guest_ids: string[]; channel?: string }) => {
+      await api.post(`/events/${eventId}/invitations/generate`, { guest_ids: payload.guest_ids, overwrite: false });
+      return api.post(`/events/${eventId}/invitations/send`, payload);
+    },
     onSuccess: (r: any) => {
       qc.invalidateQueries({ queryKey: ["guests", eventId] });
+      qc.invalidateQueries({ queryKey: ["invitations", eventId] });
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
       setSelectedGuests(new Set());
       setBulkActionOpen(false);
@@ -776,7 +876,8 @@ function GuestsTab({ eventId }: { eventId: string }) {
       qc.invalidateQueries({ queryKey: ["guests", eventId] });
       setSelectedGuests(new Set());
       setBulkActionOpen(false);
-      toast.success(`Links generated for ${r.data.data?.count ?? selectedGuests.size} guests`);
+      qc.invalidateQueries({ queryKey: ["invitations", eventId] });
+      toast.success(`Invitation links generated`);
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to generate links"),
   });
@@ -854,7 +955,8 @@ function GuestsTab({ eventId }: { eventId: string }) {
     else setSelectedGuests(new Set(guests.map((g: any) => g.id)));
   };
 
-  const handleBulkAction = (action: string) => {
+  const handleBulkAction = (action: string, guestId?: string) => {
+    if (guestId) setSelectedGuests(new Set([guestId]));
     setBulkActionType(action);
     setBulkActionOpen(true);
   };
@@ -914,18 +1016,28 @@ function GuestsTab({ eventId }: { eventId: string }) {
       render: (g) => (
         <div className="flex items-center gap-1">
           <button
-            onClick={() => navigator.clipboard.writeText(g.invitation_link ?? "")}
+            onClick={() => {
+              if (!g.invitation?.public_url) return toast.error("Generate an invitation link first");
+              navigator.clipboard.writeText(g.invitation.public_url).then(() => toast.success("Invitation link copied"));
+            }}
             className="rounded p-1 text-slate-500 hover:bg-slate-100"
             title="Copy invitation link"
           >
             <Copy className="h-4 w-4" />
           </button>
           <button
-            onClick={() => handleBulkAction("send_reminder")}
+            onClick={() => handleBulkAction("send_reminder", g.id)}
             className="rounded p-1 text-gold-600 hover:bg-gold-50"
             title="Send reminder"
           >
             <Bell className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => handleBulkAction("send_invitation", g.id)}
+            className="rounded p-1 text-sky-600 hover:bg-sky-50"
+            title="Send invitation"
+          >
+            <Send className="h-4 w-4" />
           </button>
         </div>
       ),
@@ -1018,7 +1130,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {guests.map((g: any) => (
+              {guestRows.map((g: any) => (
                 <tr key={g.id} className={cn("transition hover:bg-slate-50", selectedGuests.has(g.id) && "bg-gold-50/50")}>
                   {columns.map((col) => (
                     <td key={col.key} className="px-4 py-3">

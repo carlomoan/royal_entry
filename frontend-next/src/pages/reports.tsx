@@ -1,12 +1,25 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Download } from "lucide-react";
+import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, StatCard } from "@/components/ui";
+import { Card, StatCard, Button } from "@/components/ui";
 import { formatTZS } from "@/lib/utils";
 
 export default function ReportsPage() {
+  const downloadReport = async (report: string) => {
+    try {
+      const response = await api.get(`/reports/export?report=${report}`);
+      const { filename, content } = response.data.data;
+      const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error("Report export failed"); }
+  };
   const { data: summary, isLoading } = useQuery({
     queryKey: ["reports-summary"],
     queryFn: async () => (await api.get("/reports/summary")).data.data,
@@ -31,8 +44,14 @@ export default function ReportsPage() {
             <StatCard title="Michango" value={formatTZS(summary?.total_michango_tsh ?? 0)} icon={BarChart3} color="red" />
             <StatCard title="Broadcasts" value={summary?.total_broadcasts ?? 0} icon={BarChart3} color="blue" />
           </div>
-          <Card title="Summary">
-            <p className="text-sm text-slate-500">Detailed report export coming soon.</p>
+          <Card title="Export Reports">
+            <div className="flex flex-wrap gap-2">
+              {['events', 'guests', 'payments'].map((report) => (
+                <Button key={report} variant="outline" size="sm" onClick={() => downloadReport(report)}>
+                  <Download className="h-3.5 w-3.5" /> {report[0].toUpperCase() + report.slice(1)} CSV
+                </Button>
+              ))}
+            </div>
           </Card>
         </>
       )}

@@ -15,6 +15,7 @@ const STATUS_VARIANT: Record<string, string> = {
 export default function WebhooksPage() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editWebhook, setEditWebhook] = useState<any | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deliveriesFor, setDeliveriesFor] = useState<{ id: string; url: string } | null>(null);
 
@@ -39,6 +40,11 @@ export default function WebhooksPage() {
     mutationFn: (id: string) => api.delete(`/platform/webhooks/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["platform-webhooks"] }); setDeleteConfirm(null); toast.success("Deleted"); },
     onError: (e: any) => toast.error(e?.message ?? "Failed"),
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: any }) => api.put(`/platform/webhooks/${id}`, payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["platform-webhooks"] }); setEditWebhook(null); toast.success("Webhook updated"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Update failed"),
   });
   const testMutation = useMutation({
     mutationFn: (id: string) => api.post(`/platform/webhooks/${id}/test`),
@@ -81,6 +87,7 @@ export default function WebhooksPage() {
                       <div className="flex items-center gap-1.5">
                         <button title="Send test" onClick={() => testMutation.mutate(w.id)} className="rounded p-1 text-emerald-600 hover:bg-emerald-50"><FlaskConical className="h-4 w-4" /></button>
                         <button title="Delivery logs" onClick={() => setDeliveriesFor({ id: w.id, url: w.url })} className="rounded p-1 text-sky-600 hover:bg-sky-50"><History className="h-4 w-4" /></button>
+                        <button title="Edit" onClick={() => setEditWebhook(w)} className="rounded p-1 text-gold-700 hover:bg-gold-50"><Edit2 className="h-4 w-4" /></button>
                         <button title="Delete" onClick={() => setDeleteConfirm(w.id)} className="rounded p-1 text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </td>
@@ -95,6 +102,10 @@ export default function WebhooksPage() {
       {/* Create modal */}
       <Modal isOpen={createOpen} onClose={() => setCreateOpen(false)} title="Add Webhook" size="lg">
         <CreateForm onSubmit={(p) => createMutation.mutate(p)} />
+      </Modal>
+
+      <Modal isOpen={!!editWebhook} onClose={() => setEditWebhook(null)} title="Edit Webhook" size="lg">
+        {editWebhook && <CreateForm initial={editWebhook} submitLabel="Save changes" onSubmit={(p) => updateMutation.mutate({ id: editWebhook.id, payload: p })} />}
       </Modal>
 
       {/* Delivery logs modal */}
@@ -139,9 +150,9 @@ export default function WebhooksPage() {
   );
 }
 
-function CreateForm({ onSubmit }: { onSubmit: (p: any) => void }) {
-  const [url, setUrl] = useState("");
-  const [events, setEvents] = useState<string[]>(["event.created", "guest.checked_in"]);
+function CreateForm({ onSubmit, initial, submitLabel = "Create" }: { onSubmit: (p: any) => void; initial?: any; submitLabel?: string }) {
+  const [url, setUrl] = useState(initial?.url ?? "");
+  const [events, setEvents] = useState<string[]>(initial?.events ?? ["event.created", "guest.checked_in"]);
   const ALL = ["event.created", "event.activated", "event.completed", "guest.created", "guest.checked_in", "payment.completed", "payment.failed", "invoice.paid", "invoice.overdue"];
   const toggle = (e: string) => setEvents((p) => (p.includes(e) ? p.filter((x) => x !== e) : [...p, e]));
   return (
@@ -159,7 +170,7 @@ function CreateForm({ onSubmit }: { onSubmit: (p: any) => void }) {
         </div>
       </div>
       <div className="flex justify-end gap-2">
-        <Button type="submit">Create</Button>
+        <Button type="submit">{submitLabel}</Button>
       </div>
     </form>
   );

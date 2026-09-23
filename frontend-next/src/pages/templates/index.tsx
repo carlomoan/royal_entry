@@ -11,6 +11,7 @@ export default function MessageTemplatesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<any | null>(null);
+  const [preview, setPreview] = useState<any | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["message-templates"],
@@ -23,6 +24,16 @@ export default function MessageTemplatesPage() {
     mutationFn: (payload: any) => api.post("/message-templates", payload),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["message-templates"] }); setCreateOpen(false); toast.success("Template created"); },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: (template: any) => api.post(`/message-templates/${template.id}/preview`, {
+      guest_name: "Amina Hassan",
+      event_title: "RoyalEntry Celebration",
+      card_url: "https://royalentry.app/invitation/demo",
+    }),
+    onSuccess: (response) => setPreview(response.data.data),
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Preview failed"),
   });
 
   const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
@@ -67,7 +78,7 @@ export default function MessageTemplatesPage() {
                     <td className="px-4 py-3 text-slate-500 truncate max-w-xs">{t.subject || "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <button onClick={() => { setSelectedTemplate(t); setPreviewOpen(true); }} className="rounded p-1 text-gold-700 hover:bg-gold-50"><Eye className="h-4 w-4" /></button>
+                        <button onClick={() => { setSelectedTemplate(t); setPreview(null); setPreviewOpen(true); previewMutation.mutate(t); }} className="rounded p-1 text-gold-700 hover:bg-gold-50" title="Render preview"><Eye className="h-4 w-4" /></button>
                         <button className="rounded p-1 text-slate-400 hover:bg-slate-50"><Edit2 className="h-4 w-4" /></button>
                       </div>
                     </td>
@@ -109,7 +120,7 @@ export default function MessageTemplatesPage() {
               <p className="text-slate-500">Subject: {selectedTemplate.subject || "—"}</p>
             </div>
             <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm whitespace-pre-wrap text-slate-700">
-              {selectedTemplate.body}
+              {previewMutation.isPending ? "Rendering…" : preview?.rendered_body ?? selectedTemplate.body}
             </div>
             <div className="flex justify-end">
               <Button variant="ghost" onClick={() => setPreviewOpen(false)}>Close</Button>

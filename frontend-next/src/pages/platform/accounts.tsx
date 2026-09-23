@@ -89,6 +89,11 @@ export default function AccountsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["platform-customers"] }); qc.invalidateQueries({ queryKey: ["platform-summary"] }); toast.success("Approved"); },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
   });
+  const rejectMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/platform/customers/${id}/reject`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["platform-customers"] }); qc.invalidateQueries({ queryKey: ["platform-summary"] }); toast.success("Rejected"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to reject account"),
+  });
   const suspendMutation = useMutation({
     mutationFn: (id: string) => api.post(`/platform/customers/${id}/suspend`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success("Suspended"); },
@@ -148,8 +153,12 @@ export default function AccountsPage() {
       key: "actions", label: "", render: (c) => (
         <div className="flex items-center justify-end gap-1">
           {c.account_status === "pending_review" && (
-            <button onClick={() => approveMutation.mutate(c.organization_id)} title="Approve"
-              className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50"><CheckCircle2 className="h-4 w-4" /></button>
+            <>
+              <button onClick={() => approveMutation.mutate(c.organization_id)} title="Approve"
+                className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50"><CheckCircle2 className="h-4 w-4" /></button>
+              <button onClick={() => rejectMutation.mutate(c.organization_id)} title="Reject"
+                className="rounded p-1.5 text-rose-600 hover:bg-rose-50"><XCircle className="h-4 w-4" /></button>
+            </>
           )}
           <Link href={`/platform/accounts/${c.organization_id}`} title="View / Edit"
             className="rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-gold-700"><Pencil className="h-4 w-4" /></Link>
@@ -180,9 +189,9 @@ export default function AccountsPage() {
   ];
 
   const accountBulkActions = [
-    { label: "Approve", variant: "default" as const, action: async (ids: string[]) => { for (const id of ids) await api.post(`/platform/customers/${id}/approve`); qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success(`${ids.length} approved`); }},
-    { label: "Suspend", variant: "outline" as const, action: async (ids: string[]) => { for (const id of ids) await api.post(`/platform/customers/${id}/suspend`); qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success(`${ids.length} suspended`); }},
-    { label: "Delete", variant: "danger" as const, action: async (ids: string[]) => { for (const id of ids) await api.delete(`/platform/customers/${id}`); qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success(`${ids.length} deleted`); }},
+    { key: "approve", label: "Approve", variant: "primary" as const, onClick: async (ids: string[]) => { for (const id of ids) await api.post(`/platform/customers/${id}/approve`); qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success(`${ids.length} approved`); }},
+    { key: "suspend", label: "Suspend", variant: "outline" as const, onClick: async (ids: string[]) => { for (const id of ids) await api.post(`/platform/customers/${id}/suspend`); qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success(`${ids.length} suspended`); }},
+    { key: "delete", label: "Delete", variant: "danger" as const, onClick: async (ids: string[]) => { for (const id of ids) await api.delete(`/platform/customers/${id}`); qc.invalidateQueries({ queryKey: ["platform-customers"] }); toast.success(`${ids.length} deleted`); }},
   ];
 
   return (
@@ -233,7 +242,7 @@ export default function AccountsPage() {
           <DataTable
             data={customers as any[]}
             columns={columns}
-            idField="organization_id"
+            rowKey={(account) => account.organization_id}
             searchPlaceholder="Search accounts by name or admin email..."
             searchFields={["display_name", "admin_email"]}
             filters={accountFilters}
