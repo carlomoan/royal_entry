@@ -61,11 +61,11 @@ pub const ROLE_PERMISSIONS: &[(&str, &[&str])] = &[
     ("account_admin", &[
         "events:*", "guests:*", "invitations:*", "scanner:*",
         "michango:*", "broadcast:*", "payments:*", "reports:*",
-        "audit:*", "team:*", "settings:*",
+        "audit:*", "team:*", "settings:*", "cards:*",
     ]),
     ("event_manager", &[
         "events:read", "events:write",
-        "guests:*", "invitations:*", "scanner:*", "broadcast:*",
+        "guests:*", "invitations:*", "scanner:*", "broadcast:*", "cards:read",
     ]),
     ("event_accountant", &[
         "events:read", "michango:*", "payments:*",

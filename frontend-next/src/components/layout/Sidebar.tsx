@@ -41,6 +41,7 @@ const PLATFORM_NAV: NavSection[] = [
       { href: "/platform/settings", icon: Settings, label: "System Settings" },
       { href: "/platform/global-variables", icon: SlidersHorizontal, label: "Global Variables" },
       { href: "/platform/card-templates", icon: Palette, label: "Card Templates" },
+      { href: "/cards", icon: Sparkles, label: "Visual Card Studio" },
       { href: "/platform/templates", icon: FileText, label: "Email Templates" },
       { href: "/platform/rbac", icon: ShieldCheck, label: "Roles & Permissions" },
       { href: "/platform/webhooks", icon: Webhook, label: "Webhooks" },

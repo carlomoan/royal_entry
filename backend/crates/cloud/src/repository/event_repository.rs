@@ -37,10 +37,10 @@ impl EventRepository {
             INSERT INTO events (
                 id, organization_id, created_by_user_id, title, description,
                 event_date, event_time, venue_name, venue_address,
-                dress_code, card_theme, main_characters, guest_count_expected, rsvp_deadline,
+                dress_code, card_theme, card_template_id, main_characters, guest_count_expected, rsvp_deadline,
                 status, approval_status, send_save_the_date, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING *
             "#
         )
@@ -55,6 +55,7 @@ impl EventRepository {
         .bind(&req.venue_address)
         .bind(&req.dress_code)
         .bind(&req.card_theme)
+        .bind(&req.card_template_id)
         .bind(&req.main_characters)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)
@@ -159,11 +160,12 @@ impl EventRepository {
                 venue_address = COALESCE($7, venue_address),
                 dress_code = COALESCE($8, dress_code),
                 card_theme = COALESCE($9, card_theme),
-                main_characters = COALESCE($10, main_characters),
-                guest_count_expected = COALESCE($11, guest_count_expected),
-                rsvp_deadline = $12,
-                send_save_the_date = COALESCE($13, send_save_the_date),
-                updated_at = $14
+                card_template_id = COALESCE($10, card_template_id),
+                main_characters = COALESCE($11, main_characters),
+                guest_count_expected = COALESCE($12, guest_count_expected),
+                rsvp_deadline = $13,
+                send_save_the_date = COALESCE($14, send_save_the_date),
+                updated_at = $15
             WHERE id = $1
             RETURNING *
             "#
@@ -177,6 +179,7 @@ impl EventRepository {
         .bind(&req.venue_address)
         .bind(&req.dress_code)
         .bind(&req.card_theme)
+        .bind(&req.card_template_id)
         .bind(&req.main_characters)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)

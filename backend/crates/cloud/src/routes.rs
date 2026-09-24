@@ -78,7 +78,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // ── File upload routes ──────────────────────────────────────────────────────
     let file_routes = Router::new()
         .route("/api/v1/files/upload", post(files::upload_file))
-        .layer(middleware::from_fn(require_permission_middleware("files:read")));
+        .layer(middleware::from_fn(require_permission_middleware("cards:write")));
 
     // ── Card template routes ────────────────────────────────────────────────────
     let card_routes = Router::new()
@@ -204,6 +204,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/platform/organizations/{id}/usage/track", post(platform::track_organization_usage))
         .route("/api/v1/platform/card-templates", get(card_templates::list_card_templates).post(card_templates::create_card_template))
         .route("/api/v1/platform/card-templates/{id}", put(card_templates::update_card_template).delete(card_templates::delete_card_template))
+        .route("/api/v1/platform/card-templates/{id}/upload", post(card_templates::upload_template_image))
         .route("/api/v1/platform/templates", get(templates::list_templates).post(templates::create_template))
         .route("/api/v1/platform/templates/preview", post(templates::preview_template))
         .route("/api/v1/platform/templates/{id}", get(templates::get_template).put(templates::update_template).delete(templates::delete_template))

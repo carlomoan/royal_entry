@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, CalendarDays, MapPin, Users, ExternalLink } from "lucide-react";
+import { Plus, CalendarDays, MapPin, Users, ExternalLink, Palette } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Badge, Button, Modal, Input } from "@/components/ui";
+import { Card, Badge, Button, Modal, Input, Select } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 import { EventProfileModal } from "@/components/modals/EventProfileModal";
 
@@ -20,6 +20,10 @@ export default function EventsPage() {
     queryFn: async () => (await api.get("/events?page=1&per_page=50")).data,
   });
   const events = data?.data ?? [];
+  const { data: cardTemplates = [] } = useQuery({
+    queryKey: ["card-templates"],
+    queryFn: async () => (await api.get("/cards/templates")).data.data ?? [],
+  });
 
   const createMutation = useMutation({
     mutationFn: (payload: any) => api.post("/events", payload),
@@ -36,6 +40,7 @@ export default function EventsPage() {
       venue_name: (f.elements.namedItem("venue_name") as HTMLInputElement).value || undefined,
       main_characters: (f.elements.namedItem("main_characters") as HTMLInputElement).value || undefined,
       guest_count_expected: (f.elements.namedItem("guest_count_expected") as HTMLInputElement).value ? parseInt((f.elements.namedItem("guest_count_expected") as HTMLInputElement).value, 10) : undefined,
+      card_template_id: (f.elements.namedItem("card_template_id") as HTMLSelectElement).value || undefined,
       send_save_the_date: (f.elements.namedItem("send_save_the_date") as HTMLInputElement).checked,
     });
   };
@@ -112,6 +117,10 @@ export default function EventsPage() {
           </div>
           <Input label="Main Characters / Speakers" name="main_characters" placeholder="e.g. MC Juma, DJ B, Pastor John" />
           <Input label="Expected Guests" name="guest_count_expected" type="number" />
+          <Select label="Invitation Card Design" name="card_template_id" defaultValue="">
+            <option value="">Use event default</option>
+            {cardTemplates.map((template: any) => <option key={template.id} value={template.id}>{template.name}</option>)}
+          </Select>
           <label className="flex items-center gap-3">
             <input type="checkbox" name="send_save_the_date" defaultChecked className="h-4 w-4 rounded accent-gold-500" />
             <span className="text-sm font-medium text-slate-700">Send Save the Date</span>

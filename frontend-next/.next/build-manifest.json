@@ -22,30 +22,25 @@
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/audit": [
+    "/cards": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/audit.js"
+      "static/chunks/pages/cards.js"
     ],
-    "/payments": [
+    "/platform": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/payments.js"
+      "static/chunks/pages/platform.js"
     ],
-    "/profile": [
+    "/platform/accounts": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/profile.js"
+      "static/chunks/pages/platform/accounts.js"
     ],
-    "/reports": [
+    "/platform/card-templates": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/reports.js"
-    ],
-    "/settings": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/settings.js"
+      "static/chunks/pages/platform/card-templates.js"
     ]
   },
   "ampFirstPages": []

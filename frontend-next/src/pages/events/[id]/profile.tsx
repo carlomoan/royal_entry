@@ -23,6 +23,10 @@ export default function EventProfilePage() {
     queryKey: ["guests", id],
     queryFn: async () => (await api.get(`/events/${id}/guests`)).data.data,
   });
+  const { data: cardTemplates = [] } = useQuery({
+    queryKey: ["card-templates"],
+    queryFn: async () => (await api.get("/cards/templates")).data.data ?? [],
+  });
 
   if (isLoading || !summary) return <p className="text-sm text-slate-500">Loading…</p>;
 
@@ -61,7 +65,7 @@ export default function EventProfilePage() {
             <Row icon={MapPin} label="Address" value={event.venue_address ?? "—"} />
             <Row icon={ShieldCheck} label="Status" value={<Badge label={event.status} />} />
             <Row icon={CreditCard} label="Dress Code" value={event.dress_code ?? "—"} />
-            <Row icon={Palette} label="Card Theme" value={event.card_theme ?? "—"} />
+            <Row icon={Palette} label="Card Design" value={cardTemplates.find((template: any) => template.id === event.card_template_id)?.name ?? event.card_theme ?? "Default"} />
           </div>
         </Card>
 

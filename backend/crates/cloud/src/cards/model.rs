@@ -4,12 +4,13 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct CardTemplate {
     pub id: Uuid,
-    pub org_id: Uuid,
     pub name: String,
-    pub background_file_id: Option<String>,
-    pub placeholders_json: Option<String>,
-    pub published: bool,
+    pub description: Option<String>,
+    pub theme_config: serde_json::Value,
+    pub preview_image_url: Option<String>,
+    pub is_active: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
