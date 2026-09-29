@@ -185,7 +185,7 @@ function AccountDashboard() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard title="Events" value={reportSummary?.total_events ?? 0} icon={CalendarDays} color="blue" />
         <StatCard title="Guests" value={reportSummary?.total_guests ?? 0} icon={Users} color="purple" />
         <StatCard title="Arrivals" value={reportSummary?.total_arrivals ?? 0} icon={UserCheck} color="green" />

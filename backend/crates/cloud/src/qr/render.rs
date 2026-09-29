@@ -11,7 +11,7 @@ pub fn render_qr_png(link: &str) -> Result<Vec<u8>, crate::error::AppError> {
 
     let mut png_bytes: Vec<u8> = Vec::new();
     {
-        let mut encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
         encoder.write_image(
             &image,
             image.width(),

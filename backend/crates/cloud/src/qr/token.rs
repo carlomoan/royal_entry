@@ -4,7 +4,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey, Verifier};
 use ed25519_dalek::Signature;
-use rand_core::{RngCore, OsRng};
+use rand_core::RngCore;
 
 use base64::{Engine as _, engine::general_purpose};
 

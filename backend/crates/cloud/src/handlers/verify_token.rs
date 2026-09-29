@@ -1,6 +1,5 @@
 use axum::{
-    extract::{Query, State},
-    Extension, Json,
+    extract::{Query, State}, Json,
 };
 use std::sync::Arc;
 use crate::{

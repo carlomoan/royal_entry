@@ -1,15 +1,14 @@
 use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
-    Extension, Json,
-    response::{IntoResponse, Response},
+    Extension,
+    response::Response,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     models::{
-        event::Event,
         invitation::Invitation,
         user::Claims,
     },
@@ -63,7 +62,7 @@ pub async fn generate_qr_code(
     // Convert to PNG bytes
     let mut png_bytes: Vec<u8> = Vec::new();
     {
-        let mut encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
         encoder.write_image(
             &image,
             image.width(),

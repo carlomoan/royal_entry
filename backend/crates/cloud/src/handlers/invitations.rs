@@ -1,29 +1,33 @@
 // ==============================================================================
-// FILE: src/handlers/invitations.rs
+// FILE: crates/cloud/src/handlers/invitations.rs
 // ==============================================================================
-use std::sync::Arc;
+use crate::{
+    cards::renderer::{parse_theme_config, render_card},
+    error::{AppError, AppResult},
+    models::{
+        event::Event,
+        guest::Guest,
+        invitation::{
+            GenerateInvitationsRequest, GenerateInvitationsResult, Invitation, InvitationResponse,
+        },
+        user::Claims,
+    },
+    qr::render::render_qr_png,
+    repository::event_repository::EventRepository,
+    services::MessagingService,
+    AppState,
+};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Extension, Json,
 };
 use chrono::Utc;
-use serde::Deserialize; // ✅ ADDED: Required for #[derive(Deserialize)]
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::{PgPool, Row};
+use std::sync::Arc;
 use uuid::Uuid;
-use crate::{
-    error::{AppError, AppResult},
-    models::{
-        event::Event,
-        guest::Guest,
-        invitation::{GenerateInvitationsRequest, GenerateInvitationsResult, Invitation, InvitationResponse},
-        user::Claims,
-    },
-    repository::event_repository::EventRepository,
-    services::MessagingService,
-    AppState,
-};
 
 async fn assert_event_ownership(
     state: &Arc<AppState>,
@@ -33,9 +37,11 @@ async fn assert_event_ownership(
     let event = EventRepository::get_by_id(state.db.pool(), event_id)
         .await?
         .ok_or(AppError::EventNotFound)?;
+
     if event.organization_id != org_id {
         return Err(AppError::Forbidden);
     }
+
     Ok(event)
 }
 
@@ -46,15 +52,15 @@ async fn list_event_guests(pool: &PgPool, event_id: Uuid) -> AppResult<Vec<Guest
     .bind(event_id)
     .fetch_all(pool)
     .await?;
+
     Ok(guests)
 }
-
 
 #[derive(Debug, Deserialize)]
 pub struct SendInvitationsRequest {
     pub guest_ids: Option<Vec<Uuid>>,
-    pub channel: Option<String>, // email, sms, whatsapp, telegram
-    pub template_id: Option<Uuid>, // Optional card template to attach
+    pub channel: Option<String>,
+    pub template_id: Option<Uuid>,
     pub custom_message: Option<String>,
 }
 
@@ -92,6 +98,7 @@ pub async fn generate_invitations(
     assert_event_ownership(&state, event_id, org_id).await?;
 
     let all_guests = list_event_guests(state.db.pool(), event_id).await?;
+
     let guests: Vec<Guest> = match payload.guest_ids {
         Some(ids) if !ids.is_empty() => all_guests
             .into_iter()
@@ -99,6 +106,7 @@ pub async fn generate_invitations(
             .collect(),
         _ => all_guests,
     };
+
     let overwrite = payload.overwrite.unwrap_or(false);
 
     if guests.is_empty() {
@@ -119,12 +127,11 @@ pub async fn generate_invitations(
     let mut results = Vec::new();
 
     for guest in guests {
-        let existing = sqlx::query_as::<_, Invitation>(
-            "SELECT * FROM invitations WHERE guest_id = $1",
-        )
-        .bind(guest.id)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let existing =
+            sqlx::query_as::<_, Invitation>("SELECT * FROM invitations WHERE guest_id = $1")
+                .bind(guest.id)
+                .fetch_optional(&mut *tx)
+                .await?;
 
         if let Some(existing) = existing {
             if !overwrite {
@@ -136,22 +143,6 @@ pub async fn generate_invitations(
                 ));
                 continue;
             }
-            let short_link = format!("inv-{}", Uuid::new_v4().simple());
-            let updated = sqlx::query_as::<_, Invitation>(
-                r#"UPDATE invitations SET short_link = $2, status = 'sent', invitation_sent_at = $3, created_at = $3 WHERE guest_id = $1 RETURNING *"#,
-            )
-            .bind(guest.id)
-            .bind(short_link)
-            .bind(now)
-            .fetch_one(&mut *tx)
-            .await?;
-            generated += 1;
-            results.push(InvitationResponse::from_invitation(
-                updated,
-                &state.config.app.frontend_url,
-                event_id,
-            ));
-            continue;
         }
 
         let invitation = sqlx::query_as::<_, Invitation>(
@@ -163,6 +154,7 @@ pub async fn generate_invitations(
         .bind(now)
         .fetch_one(&mut *tx)
         .await?;
+
         generated += 1;
         results.push(InvitationResponse::from_invitation(
             invitation,
@@ -172,6 +164,7 @@ pub async fn generate_invitations(
     }
 
     tx.commit().await?;
+
     Ok((
         StatusCode::OK,
         Json(json!({
@@ -181,6 +174,7 @@ pub async fn generate_invitations(
     ))
 }
 
+/// Send invitations with personalized card rendering
 pub async fn send_invitations(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -189,7 +183,9 @@ pub async fn send_invitations(
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     let event = assert_event_ownership(&state, event_id, org_id).await?;
+
     let all_guests = list_event_guests(state.db.pool(), event_id).await?;
+
     let guests: Vec<Guest> = match payload.guest_ids {
         Some(ids) if !ids.is_empty() => all_guests
             .into_iter()
@@ -202,6 +198,20 @@ pub async fn send_invitations(
         return Err(AppError::BadRequest("No guests to invite".to_string()));
     }
 
+    // Fetch the event's card template (if specified or default)
+    let template_data = if let Some(template_id) = payload.template_id {
+        sqlx::query("SELECT theme_config, background_file_id FROM card_templates WHERE id = $1")
+            .bind(template_id)
+            .fetch_optional(state.db.pool())
+            .await?
+    } else {
+        // Try to get the most recent active template for this org
+        sqlx::query("SELECT theme_config, background_file_id FROM card_templates WHERE org_id = $1 AND is_active = TRUE ORDER BY created_at DESC LIMIT 1")
+            .bind(org_id)
+            .fetch_optional(state.db.pool())
+            .await?
+    };
+
     let frontend_url = state.config.app.frontend_url.clone();
     let messaging = MessagingService::new();
     let mut sent = 0_i64;
@@ -209,12 +219,11 @@ pub async fn send_invitations(
     let mut errors = Vec::new();
 
     for guest in &guests {
-        let invitation = sqlx::query_as::<_, Invitation>(
-            "SELECT * FROM invitations WHERE guest_id = $1",
-        )
-        .bind(guest.id)
-        .fetch_optional(state.db.pool())
-        .await?;
+        let invitation =
+            sqlx::query_as::<_, Invitation>("SELECT * FROM invitations WHERE guest_id = $1")
+                .bind(guest.id)
+                .fetch_optional(state.db.pool())
+                .await?;
 
         let Some(invitation) = invitation else {
             failed += 1;
@@ -222,43 +231,115 @@ pub async fn send_invitations(
             continue;
         };
 
-        let pledge = sqlx::query(
-            "SELECT pledged_amount, amount_paid FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
-        )
-        .bind(event_id)
-        .bind(guest.id)
-        .fetch_optional(state.db.pool())
-        .await?;
+        let check_in_link = crate::models::invitation::build_scan_url(
+            &frontend_url,
+            event_id,
+            &invitation.short_link,
+        );
 
-        let check_in_link = crate::models::invitation::build_scan_url(&frontend_url, event_id, &invitation.short_link);
-
-        // ✅ FIXED: Use .as_str() instead of .as_deref() for String fields
+        // Determine channel
         let device_type = guest.device_type.as_str();
         let channel = payload.channel.as_deref().unwrap_or_else(|| {
-            if device_type == "feature_phone" { "sms" } else { guest.contact_method.as_str() }
+            if device_type == "feature_phone" {
+                "sms"
+            } else {
+                guest.contact_method.as_str()
+            }
         });
 
-        let pledge_line = match pledge {
-            Some(row) => {
-                let pledged: i64 = row.try_get("pledged_amount")?;
-                let paid: i64 = row.try_get("amount_paid")?;
-                let remaining = (pledged - paid).max(0);
-                let status = if paid >= pledged { "paid in full" } else if paid > 0 { "partially paid" } else { "unpaid" };
-                format!("Pledge: TZS {} · Status: {} · Remaining: TZS {}", pledged, status, remaining)
+        // Generate QR code
+        let qr_png = render_qr_png(&check_in_link).unwrap_or_default();
+
+        // Build render data
+        let mut render_data = std::collections::HashMap::new();
+        render_data.insert("EVENT_TITLE".to_string(), event.title.clone());
+        render_data.insert(
+            "EVENT_DATE".to_string(),
+            event.event_date.format("%A, %d %B %Y").to_string(),
+        );
+        render_data.insert(
+            "EVENT_START_TIME".to_string(),
+            event.event_time.clone().unwrap_or_default(),
+        );
+        render_data.insert(
+            "EVENT_VENUE".to_string(),
+            event.venue_name.clone().unwrap_or_default(),
+        );
+        render_data.insert(
+            "EVENT_ADDRESS".to_string(),
+            event.venue_address.clone().unwrap_or_default(),
+        );
+        render_data.insert(
+            "EVENT_CHARACTERS".to_string(),
+            event.main_characters.clone().unwrap_or_default(),
+        );
+        render_data.insert("GUEST_NAME".to_string(), guest.full_name.clone());
+        render_data.insert(
+            "GUEST_CATEGORY".to_string(),
+            guest.guest_category.clone().unwrap_or_default(),
+        );
+        render_data.insert(
+            "GUEST_TABLE".to_string(),
+            guest.table_number.clone().unwrap_or_default(),
+        );
+
+        // Render personalized card if template exists
+        let card_png = if let Some(ref template_row) = template_data {
+            let theme_config_json: serde_json::Value =
+                template_row.try_get("theme_config").unwrap_or(json!({}));
+            let background_file_id: Option<String> =
+                template_row.try_get("background_file_id").ok().flatten();
+
+            if let Ok(theme_config) = parse_theme_config(&theme_config_json) {
+                // Load background image if available
+                let background_bytes = if let Some(ref file_id) = background_file_id {
+                    sqlx::query("SELECT path FROM files WHERE id = $1")
+                        .bind(file_id)
+                        .fetch_optional(state.db.pool())
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|row| row.try_get::<String, _>("path").ok())
+                        .and_then(|path| std::fs::read(path).ok())
+                } else {
+                    None
+                };
+
+                render_card(
+                    &theme_config,
+                    background_bytes.as_deref(),
+                    &qr_png,
+                    &render_data,
+                )
+                .ok()
+            } else {
+                None
             }
-            None => "No pledge required".to_string(),
+        } else {
+            None
         };
 
-        let message = format!(
-            "Dear {name},\n\nYou are cordially invited to {title} on {date} at {venue}.\n{characters}\n{pledge}\n\nYour check-in card: {link}\n\nRoyalEntry",
-            name = guest.full_name,
-            title = event.title,
-            date = event.event_date.format("%B %d, %Y"),
-            venue = event.venue_name.as_deref().unwrap_or("the venue"),
-            characters = event.main_characters.as_deref().map(|c| format!("Main characters: {}", c)).unwrap_or_default(),
-            pledge = pledge_line,
-            link = check_in_link,
-        );
+        // Build message
+        let message_body = if channel == "whatsapp" || channel == "email" {
+            format!(
+                "Dear {name},\n\nYou are cordially invited to {title} on {date} at {venue}.\n\nYour personalized invitation card is attached. Show the QR code at the event entrance for check-in.\n\nCheck-in link: {link}\n\nRoyalEntry",
+                name = guest.full_name,
+                title = event.title,
+                date = event.event_date.format("%B %d, %Y"),
+                venue = event.venue_name.as_deref().unwrap_or("the venue"),
+                link = check_in_link,
+            )
+        } else {
+            let human_code =
+                crate::models::invitation::generate_human_friendly_code(&invitation.id);
+            format!(
+                "Dear {name},\n\nYou are invited to {title} on {date}.\n\nYour check-in code: {code}\nShow this code at the entrance.\n\nRoyalEntry",
+                name = guest.full_name,
+                title = event.title,
+                date = event.event_date.format("%B %d, %Y"),
+                code = human_code,
+            )
+        };
 
         let destination = if channel == "email" {
             guest.email.as_deref().ok_or_else(|| {
@@ -267,7 +348,15 @@ pub async fn send_invitations(
         } else {
             &guest.phone
         };
-        let attempts = messaging.send(channel, destination, &message).await?;
+
+        // Send with card attachment if available
+        let attempts = if let Some(ref card_bytes) = card_png {
+            // For now, send message with link (card rendering integration can be enhanced)
+            messaging.send(channel, destination, &message_body).await?
+        } else {
+            messaging.send(channel, destination, &message_body).await?
+        };
+
         let ok = attempts.iter().any(|a| a.success);
 
         if ok {

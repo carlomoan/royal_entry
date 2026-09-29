@@ -12,11 +12,44 @@ pub fn build_scan_url(frontend_url: &str, event_id: Uuid, scan_code: &str) -> St
 }
 
 pub fn build_public_invitation_url(frontend_url: &str, scan_code: &str) -> String {
-    format!(
-        "{}/g/{}",
-        frontend_url.trim_end_matches('/'),
-        scan_code,
-    )
+    format!("{}/g/{}", frontend_url.trim_end_matches('/'), scan_code,)
+}
+
+/// Generate a human-friendly check-in code that's easy to type and remember
+/// Format: WORD1-WORD2-NUMBER (e.g., "ROYAL-GUEST-1234")
+pub fn generate_human_friendly_code(uuid: &Uuid) -> String {
+    let bytes = uuid.as_bytes();
+
+    // Convert bytes to readable components
+    let word1 = bytes_to_word(&bytes[0..4]);
+    let word2 = bytes_to_word(&bytes[4..8]);
+    let number = ((bytes[8] as u16) << 8 | bytes[9] as u16) % 9000 + 1000; // 4-digit number 1000-9999
+
+    format!("{}-{}-{}", word1, word2, number)
+}
+
+/// Convert 4 bytes to a readable word using simple encoding
+fn bytes_to_word(bytes: &[u8]) -> String {
+    const CONSONANTS: &[char] = &[
+        'B', 'C', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W',
+        'X', 'Y', 'Z',
+    ];
+    const VOWELS: &[char] = &['A', 'E', 'I', 'O', 'U'];
+
+    let mut word = String::new();
+    for (i, &byte) in bytes.iter().enumerate() {
+        if i % 2 == 0 {
+            // Consonant
+            let idx = (byte as usize) % CONSONANTS.len();
+            word.push(CONSONANTS[idx]);
+        } else {
+            // Vowel
+            let idx = (byte as usize) % VOWELS.len();
+            word.push(VOWELS[idx]);
+        }
+    }
+
+    word
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use serde::Deserialize;
 use crate::{
     error::{AppError, AppResult},
-    templates::{message_template::MessageTemplate, repository},
+    templates::repository,
     models::user::Claims,
     AppState,
 };
@@ -61,7 +61,7 @@ pub async fn preview_message_template(
         .ok_or(AppError::NotFound("Template not found".to_string()))?;
 
     // Use TemplateService to render with sample context
-    let service = crate::services::templates::TemplateService::new(state.clone());
+    let _service = crate::services::templates::TemplateService::new(state.clone());
     // Note: TemplateService uses email_templates table; for message templates we use direct Handlebars
     let mut hbs = handlebars::Handlebars::new();
     hbs.register_template_string("body", &template.body)

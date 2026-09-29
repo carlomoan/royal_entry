@@ -1,1 +1,0 @@
-self.__NEXT_FONT_MANIFEST="{\"pages\":{\"/cards\":[]},\"app\":{},\"appUsingSizeAdjust\":false,\"pagesUsingSizeAdjust\":true}"

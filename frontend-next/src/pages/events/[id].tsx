@@ -26,9 +26,19 @@ export default function EventDetailPage() {
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState("overview");
 
+  // Early return guard to prevent "undefined" API calls on initial render
+  if (!id || id === "undefined") {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-sm text-slate-500">Loading event details...</p>
+      </div>
+    );
+  }
+
   const { data: summary, isLoading } = useQuery({
     queryKey: ["event-summary", id],
     queryFn: async () => (await api.get(`/events/${id}/summary`)).data.data,
+    enabled: !!id, // ✅ Add this to prevent API calls when id is undefined
   });
 
   const genMutation = useMutation({
@@ -77,6 +87,14 @@ export default function EventDetailPage() {
       toast.success("Report downloaded");
     }).catch(() => toast.error("Failed to download report"));
   };
+  if (!id || id === "undefined") {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-sm text-slate-500">Loading event details...</p>
+      </div>
+    );
+  }
+
 
   if (isLoading || !summary) return <p className="text-sm text-slate-500">Loading…</p>;
 
@@ -152,9 +170,8 @@ export default function EventDetailPage() {
           <button
             key={key}
             onClick={() => setActiveTab(key)}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${
-              activeTab === key ? "bg-navy-950 text-white" : "text-slate-500 hover:bg-slate-50"
-            }`}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${activeTab === key ? "bg-navy-950 text-white" : "text-slate-500 hover:bg-slate-50"
+              }`}
           >
             <Icon className="h-4 w-4" /> {label}
           </button>
@@ -289,12 +306,9 @@ function BroadcastTab({ eventId }: { eventId: string }) {
   return (
     <Card title="Broadcast Messages">
       <div className="mb-4 flex items-center justify-between">
-        <p className="text-sm text-slate-500">
-          Send messages to guests via SMS, WhatsApp, or Email
-        </p>
+        <p className="text-sm text-slate-500">Send messages to guests via SMS, WhatsApp, or Email</p>
         <Button size="sm" onClick={() => setComposeOpen(true)}>
-          <Radio className="mr-2 h-4 w-4" />
-          New Broadcast
+          <Radio className="mr-2 h-4 w-4" /> New Broadcast
         </Button>
       </div>
 
@@ -320,10 +334,7 @@ function BroadcastTab({ eventId }: { eventId: string }) {
                   </div>
                 </div>
                 <div className="text-right">
-                  <Badge
-                    label={b.status}
-                    variant={b.status === "sent" ? "green" : b.status === "failed" ? "rose" : "amber"}
-                  />
+                  <Badge label={b.status} variant={b.status === "sent" ? "green" : b.status === "failed" ? "rose" : "amber"} />
                   <p className="mt-1 text-xs text-slate-500">{formatDate(b.created_at)}</p>
                 </div>
               </div>
@@ -356,15 +367,8 @@ function BroadcastTab({ eventId }: { eventId: string }) {
         <div className="space-y-4">
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Message</label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows={4}
-              placeholder="Type your message here..."
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20"
-            />
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} placeholder="Type your message here..." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
           </div>
-
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Recipients</label>
             <Select value={recipientType} onChange={(e) => setRecipientType(e.target.value)}>
@@ -378,53 +382,25 @@ function BroadcastTab({ eventId }: { eventId: string }) {
               <option value="confirmed">Confirmed attendees</option>
             </Select>
           </div>
-
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Channels</label>
             <div className="flex flex-wrap gap-2">
               {["whatsapp", "sms", "email", "telegram"].map((ch) => (
-                <button
-                  key={ch}
-                  type="button"
-                  onClick={() => toggleChannel(ch)}
-                  className={cn(
-                    "rounded-lg border px-4 py-2 text-sm font-medium transition",
-                    channels.includes(ch)
-                      ? "border-gold-500 bg-gold-50 text-gold-700"
-                      : "border-slate-300 bg-white text-slate-600 hover:border-slate-400"
-                  )}
-                >
+                <button key={ch} type="button" onClick={() => toggleChannel(ch)} className={cn("rounded-lg border px-4 py-2 text-sm font-medium transition", channels.includes(ch) ? "border-gold-500 bg-gold-50 text-gold-700" : "border-slate-300 bg-white text-slate-600 hover:border-slate-400")}>
                   {ch.charAt(0).toUpperCase() + ch.slice(1)}
                 </button>
               ))}
             </div>
           </div>
-
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              Schedule (optional)
-            </label>
-            <Input
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Leave empty to send immediately
-            </p>
+            <label className="mb-2 block text-sm font-medium text-slate-700">Schedule (optional)</label>
+            <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+            <p className="mt-1 text-xs text-slate-500">Leave empty to send immediately</p>
           </div>
-
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setComposeOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSend}
-              isLoading={sendMutation.isPending}
-              disabled={!message.trim() || channels.length === 0}
-            >
-              <Send className="mr-2 h-4 w-4" />
-              Send Broadcast
+            <Button variant="ghost" onClick={() => setComposeOpen(false)}>Cancel</Button>
+            <Button onClick={handleSend} isLoading={sendMutation.isPending} disabled={!message.trim() || channels.length === 0}>
+              <Send className="mr-2 h-4 w-4" /> Send Broadcast
             </Button>
           </div>
         </div>
@@ -437,16 +413,18 @@ function BroadcastTab({ eventId }: { eventId: string }) {
 // MICHANGO TAB
 // ============================================================================
 function MichangoTab({ eventId }: { eventId: string }) {
+  const router = useRouter();
   const qc = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState<string | null>(null);
-
   const [selectedGuestId, setSelectedGuestId] = useState("");
   const [pledgeAmount, setPledgeAmount] = useState("");
   const [pledgeDueDate, setPledgeDueDate] = useState("");
   const [pledgeNotes, setPledgeNotes] = useState("");
   const [isPledgeExempt, setIsPledgeExempt] = useState(false);
   const [defaultPledgeAmount, setDefaultPledgeAmount] = useState(50000);
+  const [cardGuest, setCardGuest] = useState<any | null>(null);
+  const [cardQrUrl, setCardQrUrl] = useState<string | null>(null);
 
   const CATEGORY_PLEDGE_DEFAULTS: Record<string, number> = {
     "VVIP": 200000, "VIP": 100000, "Platinum": 250000, "Gold": 150000,
@@ -474,13 +452,9 @@ function MichangoTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/guests?per_page=500`)).data.data,
   });
 
-  const [cardGuest, setCardGuest] = useState<any | null>(null);
-  const [cardQrUrl, setCardQrUrl] = useState<string | null>(null);
-
   const pledges = Array.isArray(response?.data) ? response.data : [];
   const guests = (guestsData ?? []) as any[];
 
-  // Correctly map backend summary fields
   const totalPledged = summary?.total_pledged_tsh ?? 0;
   const totalPaid = summary?.total_collected_tsh ?? 0;
   const totalOutstanding = summary?.total_outstanding_tsh ?? 0;
@@ -498,8 +472,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
   });
 
   const exemptGuestMutation = useMutation({
-    mutationFn: (guestId: string) =>
-      api.patch(`/events/${eventId}/guests/${guestId}`, { pledge_exempt: true }),
+    mutationFn: (guestId: string) => api.patch(`/events/${eventId}/guests/${guestId}`, { pledge_exempt: true }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["guests-for-pledge", eventId] });
       resetPledgeForm();
@@ -508,13 +481,9 @@ function MichangoTab({ eventId }: { eventId: string }) {
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to update guest"),
   });
 
-  // FIXED: Send amount_paid and payment_method to match RecordPaymentRequest
   const paymentMutation = useMutation({
     mutationFn: (payload: { pledgeId: string; amount_paid: number }) =>
-      api.post(`/events/${eventId}/michango/${payload.pledgeId}/payment`, {
-        amount_paid: payload.amount_paid,
-        payment_method: "manual",
-      }),
+      api.post(`/events/${eventId}/michango/${payload.pledgeId}/payment`, { amount_paid: payload.amount_paid, payment_method: "manual" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["michango", eventId] });
       qc.invalidateQueries({ queryKey: ["michango-summary", eventId] });
@@ -567,14 +536,8 @@ function MichangoTab({ eventId }: { eventId: string }) {
     }
   };
 
-  // FIXED: Call the correct bulk reminders endpoint with guest_ids
   const reminderMutation = useMutation({
-    mutationFn: (guestId: string) =>
-      api.post(`/events/${eventId}/michango/reminders`, {
-        guest_ids: [guestId],
-        statuses: ["pending", "partial", "overdue"],
-        channel: "whatsapp",
-      }),
+    mutationFn: (guestId: string) => api.post(`/events/${eventId}/michango/reminders`, { guest_ids: [guestId], statuses: ["pending", "partial", "overdue"], channel: "whatsapp" }),
     onSuccess: () => toast.success("Reminder sent"),
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
   });
@@ -688,7 +651,6 @@ function MichangoTab({ eventId }: { eventId: string }) {
         ) : (
           <div className="space-y-3">
             {pledges.map((p: any) => {
-              // FIXED: Use correct backend field names
               const pledgedAmount = p.pledged_amount ?? 0;
               const paidAmount = p.amount_paid ?? 0;
               const remainingAmount = p.remaining_amount ?? (pledgedAmount - paidAmount);
@@ -706,31 +668,23 @@ function MichangoTab({ eventId }: { eventId: string }) {
                       </p>
                     </div>
                     <div className="flex gap-2">
-                      {/* FIXED: Only hide button when status is exactly "paid" */}
                       {paymentStatus !== "paid" && (
                         <>
-                          <Button size="sm" variant="outline" onClick={() => setPaymentOpen(p.id)}>
-                            Record Payment
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => reminderMutation.mutate(p.guest_id)}>
-                            <Bell className="h-4 w-4" />
-                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setPaymentOpen(p.id)}>Record Payment</Button>
+                          <Button size="sm" variant="ghost" onClick={() => reminderMutation.mutate(p.guest_id)}><Bell className="h-4 w-4" /></Button>
                         </>
                       )}
+                      {/* ✅ NEW: Show "Guest card" button ONLY if fully paid */}
                       {paymentStatus === "paid" && (
-                        <Button size="sm" variant="outline" onClick={() => openGuestCard(p)}>
-                          <QrCode className="h-4 w-4" /> Guest card
+                        <Button size="sm" variant="outline" className="border-gold-300 text-gold-700 hover:bg-gold-50" onClick={() => openGuestCard(p)}>
+                          <QrCode className="h-4 w-4 mr-1.5" /> Guest card
                         </Button>
                       )}
-                      <Badge
-                        label={paymentStatus === "paid" ? "Paid in full" : paymentStatus}
-                        variant={
-                          paymentStatus === "paid" ? "green" :
-                          paymentStatus === "overdue" ? "rose" :
-                          paymentStatus === "partial" ? "amber" :
-                          "slate"
-                        }
-                      />
+
+                      <Button size="sm" variant="outline" className="border-gold-300 text-gold-700 hover:bg-gold-50" onClick={() => router.push(`/events/${eventId}/guest/${p.guest_id}`)}>
+                        <QrCode className="h-4 w-4 mr-1.5" /> View Card
+                      </Button>
+                      <Badge label={paymentStatus === "paid" ? "Paid in full" : paymentStatus} variant={paymentStatus === "paid" ? "green" : paymentStatus === "overdue" ? "rose" : paymentStatus === "partial" ? "amber" : "slate"} />
                     </div>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-slate-200">
@@ -740,7 +694,6 @@ function MichangoTab({ eventId }: { eventId: string }) {
                     <span>{formatTsh(paidAmount)} paid</span>
                     <span className="font-semibold">{formatTsh(remainingAmount)} remaining</span>
                   </div>
-                  {/* FIXED: Show partial payment warning */}
                   {paymentStatus === "partial" && (
                     <p className="mt-1 text-xs font-medium text-amber-600">
                       Partial payment received: {formatTsh(remainingAmount)} remaining ({paidPercent.toFixed(1)}% complete)
@@ -764,7 +717,6 @@ function MichangoTab({ eventId }: { eventId: string }) {
               ))}
             </select>
           </div>
-
           {selectedGuestId && (
             <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600 border border-slate-200">
               <span className="font-semibold">Detected Category:</span> {detectedCategory}
@@ -773,7 +725,6 @@ function MichangoTab({ eventId }: { eventId: string }) {
               {isPledgeExempt && <span className="ml-2 font-bold text-emerald-600">(Exempt)</span>}
             </div>
           )}
-
           <div className={isPledgeExempt ? "opacity-50 pointer-events-none" : ""}>
             <label className="mb-2 block text-sm font-medium text-slate-700">Pledge Amount (TZS) *</label>
             <div className="relative">
@@ -781,7 +732,6 @@ function MichangoTab({ eventId }: { eventId: string }) {
               <input type="number" value={pledgeAmount} onChange={(e) => setPledgeAmount(e.target.value)} placeholder="0" required={!isPledgeExempt} className="w-full rounded-lg border border-slate-300 pl-12 pr-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
             </div>
           </div>
-
           <div className={isPledgeExempt ? "hidden" : "grid grid-cols-2 gap-4"}>
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">Due Date</label>
@@ -792,7 +742,6 @@ function MichangoTab({ eventId }: { eventId: string }) {
               <input type="text" value={pledgeNotes} onChange={(e) => setPledgeNotes(e.target.value)} placeholder="Optional" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
             </div>
           </div>
-
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" type="button" onClick={resetPledgeForm}>Cancel</Button>
             <Button type="submit" isLoading={addPledgeMutation.isPending || exemptGuestMutation.isPending} variant={isPledgeExempt ? "outline" : "primary"}>
@@ -831,22 +780,35 @@ function MichangoTab({ eventId }: { eventId: string }) {
               <p className="font-semibold">Payment complete</p>
               <p className="text-xs">This guest has paid the pledge in full. Send the check-in card below.</p>
             </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div><p className="text-xs font-medium text-slate-500">Device Type</p><p className="font-semibold text-slate-900">{cardGuest.device_type === "feature_phone" ? "Feature Phone" : "Smartphone"}</p></div>
+                <div><p className="text-xs font-medium text-slate-500">Contact Method</p><p className="font-semibold text-slate-900">{cardGuest.contact_method || "—"}</p></div>
+                <div><p className="text-xs font-medium text-slate-500">Phone</p><p className="font-semibold text-slate-900">{cardGuest.phone || "—"}</p></div>
+                <div><p className="text-xs font-medium text-slate-500">Email</p><p className="font-semibold text-slate-900">{cardGuest.email || "—"}</p></div>
+              </div>
+            </div>
             {cardGuest.invitation?.scan_url && cardGuest.invitation?.scan_payload && (
               <div className="flex flex-col items-center gap-3 rounded-lg border border-slate-200 bg-white p-4">
                 {cardGuest.device_type === "feature_phone" ? (
                   <p className="rounded-lg bg-slate-50 px-5 py-4 font-mono text-xl font-bold tracking-[0.3em] text-slate-800">{cardGuest.invitation.scan_payload}</p>
                 ) : cardQrUrl ? <img src={cardQrUrl} alt="Guest check-in QR code" className="h-48 w-48" /> : <p className="text-xs text-slate-500">QR preview unavailable</p>}
-                <a href={cardGuest.invitation.scan_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-gold-700 hover:underline">Open check-in card</a>
-                {cardGuest.device_type === "feature_phone" && <p className="text-xs text-slate-500">SMS check-in token</p>}
+                <a href={`/events/${router.query.id}/guest/${cardGuest.guest_id}`} target="_blank" rel="noreferrer" className="text-xs font-medium text-gold-700 hover:underline">Open Check-in Card</a>
+                {cardGuest.device_type === "feature_phone" && <p className="text-xs text-slate-500">SMS check-in token (human-readable code)</p>}
               </div>
             )}
             <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: cardGuest.contact_method === "email" ? "email" : "whatsapp" })} isLoading={sendGuestInvitationMutation.isPending}>
-                <Send className="h-4 w-4" /> Send {cardGuest.contact_method === "email" ? "Email" : "WhatsApp"}
-              </Button>
-              {cardGuest.device_type === "feature_phone" && <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: "sms" })} isLoading={sendGuestInvitationMutation.isPending}>
-                <Smartphone className="h-4 w-4" /> Send SMS token
-              </Button>}
+              {cardGuest.device_type === "feature_phone" ? (
+                <>
+                  <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: "sms" })} isLoading={sendGuestInvitationMutation.isPending}><Smartphone className="h-4 w-4" /> Send SMS</Button>
+                  {cardGuest.email && <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: "email" })} isLoading={sendGuestInvitationMutation.isPending}><Mail className="h-4 w-4" /> Send Email</Button>}
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: "whatsapp" })} isLoading={sendGuestInvitationMutation.isPending}><Send className="h-4 w-4" /> Send WhatsApp</Button>
+                  {cardGuest.email && <Button variant="outline" onClick={() => sendGuestInvitationMutation.mutate({ guestId: cardGuest.guest_id, channel: "email" })} isLoading={sendGuestInvitationMutation.isPending}><Mail className="h-4 w-4" /> Send Email</Button>}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -854,6 +816,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
     </div>
   );
 }
+
 // ============================================================================
 // GUESTS TAB (WITH BULK ACTIONS)
 // ============================================================================
@@ -893,6 +856,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
     invitation: invitations.find((invitation: any) => invitation.guest_id === guest.id),
     pledge: pledgeResponse.find((pledge: any) => pledge.guest_id === guest.id),
   }));
+
   const visibleGuests = guestRows.filter((guest: any) => {
     const needle = search.trim().toLowerCase();
     const matchesSearch = !needle || [guest.full_name, guest.phone, guest.email].some((value) => String(value ?? "").toLowerCase().includes(needle));
@@ -916,8 +880,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
   });
 
   const generateLinksMutation = useMutation({
-    mutationFn: (payload: { guest_ids: string[] }) =>
-      api.post(`/events/${eventId}/invitations/generate`, payload),
+    mutationFn: (payload: { guest_ids: string[] }) => api.post(`/events/${eventId}/invitations/generate`, payload),
     onSuccess: (r: any) => {
       qc.invalidateQueries({ queryKey: ["guests", eventId] });
       setSelectedGuests(new Set());
@@ -930,12 +893,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
 
   const sendReminderMutation = useMutation({
     mutationFn: (payload: { guest_ids: string[]; channel: string; message?: string }) =>
-      api.post(`/events/${eventId}/broadcast`, {
-        recipient_type: "guests",
-        guest_ids: payload.guest_ids,
-        channel: payload.channel,
-        message: payload.message || `Reminder: You're invited to our event! Please check your invitation.`,
-      }),
+      api.post(`/events/${eventId}/broadcast`, { recipient_type: "guests", guest_ids: payload.guest_ids, channel: payload.channel, message: payload.message || `Reminder: You're invited to our event! Please check your invitation.` }),
     onSuccess: (r: any) => {
       qc.invalidateQueries({ queryKey: ["guests", eventId] });
       setSelectedGuests(new Set());
@@ -984,9 +942,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
       if (!csvFile) throw new Error("No CSV file selected");
       const form = new FormData();
       form.append("file", csvFile);
-      return api.post(`/events/${eventId}/guests/import`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      return api.post(`/events/${eventId}/guests/import`, form, { headers: { "Content-Type": "multipart/form-data" } });
     },
     onSuccess: (r: any) => {
       const result = r.data?.data ?? r.data;
@@ -1054,85 +1010,30 @@ function GuestsTab({ eventId }: { eventId: string }) {
   };
 
   const columns: ColumnDef<any>[] = [
-    {
-      key: "select",
-      label: " ",
-      render: (g) => (
-        <button onClick={() => toggleGuest(g.id)} className="p-1">
-          {selectedGuests.has(g.id) ? (
-            <CheckSquare className="h-4 w-4 text-gold-600" />
-          ) : (
-            <Square className="h-4 w-4 text-slate-400" />
-          )}
-        </button>
-      ),
-    },
+    { key: "select", label: " ", render: (g) => (<button onClick={() => toggleGuest(g.id)} className="p-1">{selectedGuests.has(g.id) ? <CheckSquare className="h-4 w-4 text-gold-600" /> : <Square className="h-4 w-4 text-slate-400" />}</button>) },
     { key: "full_name", label: "Name", sortable: true, render: (g) => <span className="font-medium text-slate-900">{g.full_name}</span> },
     { key: "phone", label: "Phone", sortable: true, render: (g) => <span className="text-slate-500">{g.phone}</span> },
-    {
-      key: "device_type",
-      label: "Device",
-      render: (g) => <Badge label={g.device_type === "feature_phone" ? "Feature phone" : "Smartphone"} variant={g.device_type === "feature_phone" ? "amber" : "green"} />,
-    },
-    {
-      key: "guest_category",
-      label: "Category",
-      render: (g) => <Badge label={g.guest_category ?? "Regular"} variant="blue" />,
-    },
+    { key: "device_type", label: "Device", render: (g) => <Badge label={g.device_type === "feature_phone" ? "Feature phone" : "Smartphone"} variant={g.device_type === "feature_phone" ? "amber" : "green"} /> },
+    { key: "guest_category", label: "Category", render: (g) => <Badge label={g.guest_category ?? "Regular"} variant="blue" /> },
     { key: "table_number", label: "Table", render: (g) => <span className="text-slate-600">{g.table_number ?? "—"}</span> },
     {
-      key: "invitation_status",
-      label: "Invitation",
-      render: (g) => {
+      key: "invitation_status", label: "Invitation", render: (g) => {
         const status = g.invitation_status ?? "pending";
-        const variants: Record<string, string> = {
-          sent: "blue", opened: "purple", confirmed: "green", declined: "rose", pending: "slate",
-        };
+        const variants: Record<string, string> = { sent: "blue", opened: "purple", confirmed: "green", declined: "rose", pending: "slate" };
         return <Badge label={status} variant={variants[status] ?? "slate"} />;
-      },
+      }
     },
+    { key: "pledge_status", label: "Pledge", render: (g) => <Badge label={g.pledge ? (g.pledge.payment_status === "paid" ? "Paid in full" : g.pledge.payment_status) : "No pledge"} variant={g.pledge?.payment_status === "paid" ? "green" : g.pledge?.payment_status === "partial" ? "amber" : "slate"} /> },
     {
-      key: "pledge_status",
-      label: "Pledge",
-      render: (g) => <Badge label={g.pledge ? (g.pledge.payment_status === "paid" ? "Paid in full" : g.pledge.payment_status) : "No pledge"} variant={g.pledge?.payment_status === "paid" ? "green" : g.pledge?.payment_status === "partial" ? "amber" : "slate"} />,
-    },
-    {
-      key: "actions",
-      label: " ",
-      render: (g) => (
+      key: "actions", label: " ", render: (g) => (
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => {
-              if (!g.invitation?.public_url) return toast.error("Generate an invitation link first");
-              navigator.clipboard.writeText(g.invitation.public_url).then(() => toast.success("Invitation link copied"));
-            }}
-            className="rounded p-1 text-slate-500 hover:bg-slate-100"
-            title="Copy invitation link"
-          >
-            <Copy className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => handleBulkAction("send_reminder", g.id)}
-            className="rounded p-1 text-gold-600 hover:bg-gold-50"
-            title="Send reminder"
-          >
-            <Bell className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => handleBulkAction("send_invitation", g.id)}
-            className="rounded p-1 text-sky-600 hover:bg-sky-50"
-            title="Send invitation"
-          >
-            <Send className="h-4 w-4" />
-          </button>
-          <button onClick={() => setEditGuest(g)} className="rounded p-1 text-slate-500 hover:bg-slate-100" title="Edit guest">
-            <Pencil className="h-4 w-4" />
-          </button>
-          <button onClick={() => { if (window.confirm(`Remove ${g.full_name}?`)) deleteMutation.mutate(g.id); }} className="rounded p-1 text-rose-600 hover:bg-rose-50" title="Remove guest">
-            <Trash2 className="h-4 w-4" />
-          </button>
+          <button onClick={() => { if (!g.invitation?.public_url) return toast.error("Generate an invitation link first"); navigator.clipboard.writeText(g.invitation.public_url).then(() => toast.success("Invitation link copied")); }} className="rounded p-1 text-slate-500 hover:bg-slate-100" title="Copy invitation link"><Copy className="h-4 w-4" /></button>
+          <button onClick={() => handleBulkAction("send_reminder", g.id)} className="rounded p-1 text-gold-600 hover:bg-gold-50" title="Send reminder"><Bell className="h-4 w-4" /></button>
+          <button onClick={() => handleBulkAction("send_invitation", g.id)} className="rounded p-1 text-sky-600 hover:bg-sky-50" title="Send invitation"><Send className="h-4 w-4" /></button>
+          <button onClick={() => setEditGuest(g)} className="rounded p-1 text-slate-500 hover:bg-slate-100" title="Edit guest"><Pencil className="h-4 w-4" /></button>
+          <button onClick={() => { if (window.confirm(`Remove ${g.full_name}?`)) deleteMutation.mutate(g.id); }} className="rounded p-1 text-rose-600 hover:bg-rose-50" title="Remove guest"><Trash2 className="h-4 w-4" /></button>
         </div>
-      ),
+      )
     },
   ];
 
@@ -1149,7 +1050,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
       plus_one_allowed: (f.elements.namedItem("plus_one_allowed") as HTMLInputElement).checked,
       contact_method: (f.elements.namedItem("contact_method") as HTMLSelectElement).value || "whatsapp",
       device_type: (f.elements.namedItem("device_type") as HTMLSelectElement).value || "smartphone",
-      pledge_exempt: (f.elements.namedItem("pledge_exempt") as HTMLInputElement).checked, // <-- ADD THIS
+      pledge_exempt: (f.elements.namedItem("pledge_exempt") as HTMLInputElement).checked,
     });
   };
 
@@ -1157,7 +1058,6 @@ function GuestsTab({ eventId }: { eventId: string }) {
 
   return (
     <Card title={`Guests (${guests.length})`}>
-      {/* Bulk Action Bar */}
       {selectedGuests.size > 0 && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold-200 bg-gold-50 p-3">
           <div className="flex items-center gap-2">
@@ -1165,23 +1065,11 @@ function GuestsTab({ eventId }: { eventId: string }) {
             <span className="text-sm font-semibold text-slate-900">{selectedGuests.size} guest(s) selected</span>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_invitation")}>
-              <Mail className="h-3.5 w-3.5" /> Send Pledge Card
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => handleBulkAction("generate_links")}>
-              <QrCode className="h-3.5 w-3.5" /> Generate Links
-            </Button>
-            {hasSentInvitations && (
-              <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_reminder")}>
-                <Bell className="h-3.5 w-3.5" /> Send Reminder
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" onClick={() => setSelectedGuests(new Set())}>
-              Clear selection
-            </Button>
-            <Button size="sm" variant="danger" onClick={() => { if (window.confirm(`Remove ${selectedGuests.size} guest(s)?`)) deleteSelected(); }} isLoading={deleteMutation.isPending}>
-              <Trash2 className="h-3.5 w-3.5" /> Remove
-            </Button>
+            <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_invitation")}><Mail className="h-3.5 w-3.5" /> Send Pledge Card</Button>
+            <Button size="sm" variant="outline" onClick={() => handleBulkAction("generate_links")}><QrCode className="h-3.5 w-3.5" /> Generate Links</Button>
+            {hasSentInvitations && <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_reminder")}><Bell className="h-3.5 w-3.5" /> Send Reminder</Button>}
+            <Button size="sm" variant="ghost" onClick={() => setSelectedGuests(new Set())}>Clear selection</Button>
+            <Button size="sm" variant="danger" onClick={() => { if (window.confirm(`Remove ${selectedGuests.size} guest(s)?`)) deleteSelected(); }} isLoading={deleteMutation.isPending}><Trash2 className="h-3.5 w-3.5" /> Remove</Button>
           </div>
         </div>
       )}
@@ -1189,11 +1077,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <button onClick={toggleSelectAll} className="p-1">
-            {selectedGuests.size === guests.length && guests.length > 0 ? (
-              <CheckSquare className="h-5 w-5 text-gold-600" />
-            ) : (
-              <Square className="h-5 w-5 text-slate-400" />
-            )}
+            {selectedGuests.size === guests.length && guests.length > 0 ? <CheckSquare className="h-5 w-5 text-gold-600" /> : <Square className="h-5 w-5 text-slate-400" />}
           </button>
           <span className="text-sm text-slate-600">Select all guests</span>
         </div>
@@ -1205,15 +1089,9 @@ function GuestsTab({ eventId }: { eventId: string }) {
           <Select label="Pledge status" value={pledgeFilter} onChange={(event) => setPledgeFilter(event.target.value)}>
             <option value="">All pledge statuses</option><option value="paid">Paid in full</option><option value="partial">Partial</option><option value="pending">Unpaid</option><option value="overdue">Overdue</option>
           </Select>
-          <Button variant="outline" size="sm" onClick={downloadTemplate}>
-            <Download className="h-3.5 w-3.5" /> CSV template
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-            <Upload className="h-3.5 w-3.5" /> Import CSV
-          </Button>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <UserPlus className="h-3.5 w-3.5" /> Add guest
-          </Button>
+          <Button variant="outline" size="sm" onClick={downloadTemplate}><Download className="h-3.5 w-3.5" /> CSV template</Button>
+          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}><Upload className="h-3.5 w-3.5" /> Import CSV</Button>
+          <Button size="sm" onClick={() => setAddOpen(true)}><UserPlus className="h-3.5 w-3.5" /> Add guest</Button>
         </div>
       </div>
 
@@ -1224,21 +1102,13 @@ function GuestsTab({ eventId }: { eventId: string }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200">
-                {columns.map((col) => (
-                  <th key={col.key} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    {col.label}
-                  </th>
-                ))}
+                {columns.map((col) => (<th key={col.key} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{col.label}</th>))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {visibleGuests.map((g: any) => (
                 <tr key={g.id} className={cn("transition hover:bg-slate-50", selectedGuests.has(g.id) && "bg-gold-50/50")}>
-                  {columns.map((col) => (
-                    <td key={col.key} className="px-4 py-3">
-                      {col.render ? col.render(g) : g[col.key]}
-                    </td>
-                  ))}
+                  {columns.map((col) => (<td key={col.key} className="px-4 py-3">{col.render ? col.render(g) : g[col.key]}</td>))}
                 </tr>
               ))}
             </tbody>
@@ -1247,7 +1117,6 @@ function GuestsTab({ eventId }: { eventId: string }) {
         </div>
       )}
 
-      {/* Bulk Action Confirmation Modal */}
       <Modal isOpen={bulkActionOpen} onClose={() => setBulkActionOpen(false)} title="Confirm Bulk Action" size="md">
         <div className="space-y-4">
           <div className="rounded-lg bg-slate-50 p-4">
@@ -1256,16 +1125,11 @@ function GuestsTab({ eventId }: { eventId: string }) {
               {bulkActionType === "generate_links" && "Generate Invitation Links"}
               {bulkActionType === "send_reminder" && "Send Reminder Messages"}
             </p>
-            <p className="mt-1 text-xs text-slate-600">
-              This action will be applied to <strong>{selectedGuests.size}</strong> selected guest(s).
-            </p>
+            <p className="mt-1 text-xs text-slate-600">This action will be applied to <strong>{selectedGuests.size}</strong> selected guest(s).</p>
           </div>
           {bulkActionType === "send_reminder" && (
             <Select label="Reminder Channel" value={reminderChannel} onChange={(e) => setReminderChannel(e.target.value)}>
-              <option value="sms">SMS</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="email">Email</option>
-              <option value="telegram">Telegram</option>
+              <option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="telegram">Telegram</option>
             </Select>
           )}
           {bulkActionType === "send_invitation" && (
@@ -1275,12 +1139,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
           )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setBulkActionOpen(false)}>Cancel</Button>
-            <Button
-              onClick={executeBulkAction}
-              isLoading={sendInvitationsMutation.isPending || generateLinksMutation.isPending || sendReminderMutation.isPending}
-            >
-              Confirm
-            </Button>
+            <Button onClick={executeBulkAction} isLoading={sendInvitationsMutation.isPending || generateLinksMutation.isPending || sendReminderMutation.isPending}>Confirm</Button>
           </div>
         </div>
       </Modal>
@@ -1290,13 +1149,22 @@ function GuestsTab({ eventId }: { eventId: string }) {
           <Input label="Full name" name="full_name" defaultValue={editGuest.full_name} required />
           <Input label="Phone" name="phone" defaultValue={editGuest.phone} required />
           <Input label="Email" name="email" type="email" defaultValue={editGuest.email ?? ""} />
-          <div className="grid grid-cols-2 gap-4"><Input label="Table" name="table_number" defaultValue={editGuest.table_number ?? ""} /><Select label="Category" name="guest_category" defaultValue={editGuest.guest_category ?? "Regular"}><option value="VIP">VIP</option><option value="Regular">Regular</option><option value="Special Guest">Special Guest</option><option value="Staff">Staff</option></Select></div>
-          <Select label="Contact method" name="contact_method" defaultValue={editGuest.contact_method ?? "whatsapp"}><option value="whatsapp">WhatsApp</option><option value="sms">SMS</option><option value="email">Email</option><option value="telegram">Telegram</option></Select>
-          <div className="flex justify-end gap-2"><Button variant="ghost" type="button" onClick={() => setEditGuest(null)}>Cancel</Button><Button type="submit" isLoading={updateMutation.isPending}>Save</Button></div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Table" name="table_number" defaultValue={editGuest.table_number ?? ""} />
+            <Select label="Category" name="guest_category" defaultValue={editGuest.guest_category ?? "Regular"}>
+              <option value="VIP">VIP</option><option value="Regular">Regular</option><option value="Special Guest">Special Guest</option><option value="Staff">Staff</option>
+            </Select>
+          </div>
+          <Select label="Contact method" name="contact_method" defaultValue={editGuest.contact_method ?? "whatsapp"}>
+            <option value="whatsapp">WhatsApp</option><option value="sms">SMS</option><option value="email">Email</option><option value="telegram">Telegram</option>
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" type="button" onClick={() => setEditGuest(null)}>Cancel</Button>
+            <Button type="submit" isLoading={updateMutation.isPending}>Save</Button>
+          </div>
         </form>}
       </Modal>
 
-      {/* Add guest modal */}
       <Modal isOpen={addOpen} onClose={() => setAddOpen(false)} title="Add Guest" size="lg">
         <form onSubmit={handleAddGuest} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -1310,19 +1178,9 @@ function GuestsTab({ eventId }: { eventId: string }) {
           <div className="grid grid-cols-2 gap-4">
             <Input label="Table number" name="table_number" />
             <Select label="Category" name="guest_category" defaultValue="Regular">
-              <option value="VVIP">VVIP</option>
-              <option value="VIP">VIP</option>
-              <option value="Platinum">Platinum</option>
-              <option value="Gold">Gold</option>
-              <option value="Silver">Silver</option>
-              <option value="Premium">Premium</option>
-              <option value="Regular">Regular</option>
-              <option value="Normal">Normal</option>
-              <option value="Family">Family</option>
-              <option value="Staff">Staff</option>
-              <option value="Service Provider">Service Provider</option>
-              <option value="Special Guest">Special Guest</option>
-              <option value="Event Character">Event Character</option>
+              <option value="VVIP">VVIP</option><option value="VIP">VIP</option><option value="Platinum">Platinum</option><option value="Gold">Gold</option><option value="Silver">Silver</option>
+              <option value="Premium">Premium</option><option value="Regular">Regular</option><option value="Normal">Normal</option><option value="Family">Family</option><option value="Staff">Staff</option>
+              <option value="Service Provider">Service Provider</option><option value="Special Guest">Special Guest</option><option value="Event Character">Event Character</option>
             </Select>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -1331,23 +1189,14 @@ function GuestsTab({ eventId }: { eventId: string }) {
               <option value="feature_phone">Feature phone (SMS link + OTP)</option>
             </Select>
             <Select label="Contact method" name="contact_method" defaultValue="whatsapp">
-              <option value="whatsapp">WhatsApp</option>
-              <option value="sms">SMS</option>
-              <option value="email">Email</option>
-              <option value="telegram">Telegram</option>
+              <option value="whatsapp">WhatsApp</option><option value="sms">SMS</option><option value="email">Email</option><option value="telegram">Telegram</option>
             </Select>
           </div>
           <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <input
-              type="checkbox"
-              name="pledge_exempt"
-              className="h-4 w-4 rounded accent-gold-500"
-            />
+            <input type="checkbox" name="pledge_exempt" className="h-4 w-4 rounded accent-gold-500" />
             <div>
               <span className="text-sm font-semibold text-slate-900">Pledge Exempt</span>
-              <p className="text-xs text-slate-500">
-                Mark this guest as a special person (e.g., MC, Sponsor) who is not expected to contribute.
-              </p>
+              <p className="text-xs text-slate-500">Mark this guest as a special person (e.g., MC, Sponsor) who is not expected to contribute.</p>
             </div>
           </label>
           <label className="flex items-center gap-3">
@@ -1361,36 +1210,22 @@ function GuestsTab({ eventId }: { eventId: string }) {
         </form>
       </Modal>
 
-      {/* CSV import modal */}
       <Modal isOpen={importOpen} onClose={() => setImportOpen(false)} title="Import Guests from CSV" size="md">
         <div className="space-y-4">
           <div className="flex items-start gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
             <FileUp className="mt-0.5 h-4 w-4 flex-shrink-0" />
             <div>
               <p className="font-semibold">CSV format</p>
-              <p className="mt-0.5 text-xs">
-                Required columns: <code>full_name</code>, <code>phone</code>. Optional: email, whatsapp_phone, device_type, table_number, guest_category, plus_one_allowed, contact_method.
-              </p>
+              <p className="mt-0.5 text-xs">Required columns: <code>full_name</code>, <code>phone</code>. Optional: email, whatsapp_phone, device_type, table_number, guest_category, plus_one_allowed, contact_method.</p>
             </div>
           </div>
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
-            className="block w-full cursor-pointer rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-gold-500 file:px-3 file:py-1.5 file:font-semibold file:text-navy-950"
-          />
-          {csvFile && (
-            <p className="text-xs text-slate-500">Selected: <span className="font-mono">{csvFile.name}</span> ({Math.round(csvFile.size / 1024)} KB)</p>
-          )}
+          <input type="file" accept=".csv,text/csv" onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)} className="block w-full cursor-pointer rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-gold-500 file:px-3 file:py-1.5 file:font-semibold file:text-navy-950" />
+          {csvFile && <p className="text-xs text-slate-500">Selected: <span className="font-mono">{csvFile.name}</span> ({Math.round(csvFile.size / 1024)} KB)</p>}
           <div className="flex justify-between gap-2">
-            <Button variant="ghost" size="sm" onClick={downloadTemplate}>
-              <Download className="h-3.5 w-3.5" /> Download template
-            </Button>
+            <Button variant="ghost" size="sm" onClick={downloadTemplate}><Download className="h-3.5 w-3.5" /> Download template</Button>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => setImportOpen(false)}>Cancel</Button>
-              <Button onClick={() => importMutation.mutate()} isLoading={importMutation.isPending} disabled={!csvFile}>
-                <Upload className="h-3.5 w-3.5" /> Import
-              </Button>
+              <Button onClick={() => importMutation.mutate()} isLoading={importMutation.isPending} disabled={!csvFile}><Upload className="h-3.5 w-3.5" /> Import</Button>
             </div>
           </div>
         </div>
@@ -1412,13 +1247,12 @@ function EventStaffTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/staff`)).data.data,
   });
 
-  const staff = staffData ?? [];
-
   const { data: availableData, isLoading: availLoading } = useQuery({
     queryKey: ["event-staff-available", eventId],
     queryFn: async () => (await api.get(`/events/${eventId}/staff/available`)).data.data,
   });
 
+  const staff = staffData ?? [];
   const available = availableData ?? [];
 
   const assignMutation = useMutation({
@@ -1437,9 +1271,7 @@ function EventStaffTab({ eventId }: { eventId: string }) {
     <Card title="Event Staff">
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-slate-500">Assign account staff members to this event for scanning, hosting, or support roles.</p>
-        <Button size="sm" onClick={() => setAssignOpen(true)}>
-          <Plus className="h-4 w-4" /> Assign staff
-        </Button>
+        <Button size="sm" onClick={() => setAssignOpen(true)}><Plus className="h-4 w-4" /> Assign staff</Button>
       </div>
 
       {staffLoading ? (
@@ -1451,9 +1283,7 @@ function EventStaffTab({ eventId }: { eventId: string }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200">
-                {["Name", "Email", "Role", "Assigned", "Actions"].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{h}</th>
-                ))}
+                {["Name", "Email", "Role", "Assigned", "Actions"].map((h) => (<th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{h}</th>))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1464,9 +1294,7 @@ function EventStaffTab({ eventId }: { eventId: string }) {
                   <td className="px-4 py-3"><Badge label={s.user_role} variant="blue" /></td>
                   <td className="px-4 py-3 text-xs text-slate-400">{formatDate(s.created_at)}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => removeMutation.mutate(s.user_id)} className="rounded p-1 text-rose-600 hover:bg-rose-50" title="Remove">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <button onClick={() => removeMutation.mutate(s.user_id)} className="rounded p-1 text-rose-600 hover:bg-rose-50" title="Remove"><Trash2 className="h-4 w-4" /></button>
                   </td>
                 </tr>
               ))}

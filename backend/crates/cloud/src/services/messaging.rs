@@ -1,6 +1,10 @@
 use crate::{
+    channels::{
+        email::EmailChannel,
+        telegram::TelegramChannel,
+        traits::{MessageChannel, OutboundMessage},
+    },
     error::AppResult,
-    channels::{email::EmailChannel, telegram::TelegramChannel, traits::{MessageChannel, OutboundMessage}},
     services::{sms::SmsService, whatsapp::WhatsappService},
 };
 
@@ -30,7 +34,23 @@ impl MessagingService {
         }
     }
 
-    pub async fn send(&self, channel: &str, to: &str, message: &str) -> AppResult<Vec<DeliveryAttempt>> {
+    pub async fn send(
+        &self,
+        channel: &str,
+        to: &str,
+        message: &str,
+    ) -> AppResult<Vec<DeliveryAttempt>> {
+        self.send_with_attachments(channel, to, message, Vec::new())
+            .await
+    }
+
+    pub async fn send_with_attachments(
+        &self,
+        channel: &str,
+        to: &str,
+        message: &str,
+        attachments: Vec<crate::channels::traits::Attachment>,
+    ) -> AppResult<Vec<DeliveryAttempt>> {
         let normalized = channel.trim().to_lowercase();
         let mut attempts = Vec::new();
 
@@ -39,14 +59,27 @@ impl MessagingService {
                 attempts.push(self.send_sms(to, message).await);
             }
             "whatsapp" => {
-                attempts.push(self.send_whatsapp(to, message).await);
+                // Send image if attachment exists
+                if let Some(image_attachment) =
+                    attachments.iter().find(|a| a.mime_type == "image/png")
+                {
+                    attempts.push(
+                        self.send_whatsapp_image(to, &image_attachment.url, Some(message))
+                            .await,
+                    );
+                } else {
+                    attempts.push(self.send_whatsapp(to, message).await);
+                }
             }
             "email" => {
-                let result = self.email.send(&OutboundMessage {
-                    to: to.to_string(),
-                    body: message.to_string(),
-                    attachments: Vec::new(),
-                }).await;
+                let result = self
+                    .email
+                    .send(&OutboundMessage {
+                        to: to.to_string(),
+                        body: message.to_string(),
+                        attachments,
+                    })
+                    .await;
                 attempts.push(match result {
                     Ok(receipt) => DeliveryAttempt {
                         channel: "email".to_string(),
@@ -63,11 +96,14 @@ impl MessagingService {
                 });
             }
             "telegram" => {
-                let result = self.telegram.send(&OutboundMessage {
-                    to: to.to_string(),
-                    body: message.to_string(),
-                    attachments: Vec::new(),
-                }).await;
+                let result = self
+                    .telegram
+                    .send(&OutboundMessage {
+                        to: to.to_string(),
+                        body: message.to_string(),
+                        attachments,
+                    })
+                    .await;
                 attempts.push(match result {
                     Ok(receipt) => DeliveryAttempt {
                         channel: "telegram".to_string(),
@@ -84,7 +120,16 @@ impl MessagingService {
                 });
             }
             "both" => {
-                attempts.push(self.send_whatsapp(to, message).await);
+                if let Some(image_attachment) =
+                    attachments.iter().find(|a| a.mime_type == "image/png")
+                {
+                    attempts.push(
+                        self.send_whatsapp_image(to, &image_attachment.url, Some(message))
+                            .await,
+                    );
+                } else {
+                    attempts.push(self.send_whatsapp(to, message).await);
+                }
                 attempts.push(self.send_sms(to, message).await);
             }
             other => {
@@ -119,6 +164,28 @@ impl MessagingService {
 
     async fn send_whatsapp(&self, to: &str, message: &str) -> DeliveryAttempt {
         match self.whatsapp.send_message(to, message).await {
+            Ok(result) => DeliveryAttempt {
+                channel: "whatsapp".to_string(),
+                success: true,
+                provider_message_id: result.message_id,
+                error_message: None,
+            },
+            Err(err) => DeliveryAttempt {
+                channel: "whatsapp".to_string(),
+                success: false,
+                provider_message_id: None,
+                error_message: Some(err.to_string()),
+            },
+        }
+    }
+
+    async fn send_whatsapp_image(
+        &self,
+        to: &str,
+        image_url: &str,
+        caption: Option<&str>,
+    ) -> DeliveryAttempt {
+        match self.whatsapp.send_image(to, image_url, caption).await {
             Ok(result) => DeliveryAttempt {
                 channel: "whatsapp".to_string(),
                 success: true,

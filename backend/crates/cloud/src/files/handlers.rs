@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub async fn upload_file(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     mut multipart: Multipart,
 ) -> AppResult<Json<serde_json::Value>> {

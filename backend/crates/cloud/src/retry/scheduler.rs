@@ -1,4 +1,3 @@
-use std::time::Duration;
 
 pub const RETRY_DELAYS: [u64; 5] = [60, 300, 900, 3600, 21600]; // 1m, 5m, 15m, 1h, 6h
 

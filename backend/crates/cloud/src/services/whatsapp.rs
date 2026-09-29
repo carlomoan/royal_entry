@@ -1,106 +1,192 @@
+use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-
-use crate::{error::{AppError, AppResult}};
+use urlencoding::encode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhatsappDeliveryResult {
     pub message_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct WhatsappTextBody<'a> {
-    messaging_product: &'static str,
-    recipient_type: &'static str,
-    to: &'a str,
-    r#type: &'static str,
-    text: WhatsappTextPayload<'a>,
-}
-
-#[derive(Debug, Serialize)]
-struct WhatsappTextPayload<'a> {
-    preview_url: bool,
-    body: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct WhatsappResponse {
-    messages: Option<Vec<WhatsappMessage>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WhatsappMessage {
-    id: String,
+    pub status: String,
 }
 
 #[derive(Clone)]
 pub struct WhatsappService {
     client: Client,
+    api_key: String,
 }
 
 impl WhatsappService {
     pub fn new() -> Self {
+        let api_key = std::env::var("WHATSAPP_CALLMEBOT_API_KEY")
+            .unwrap_or_else(|_| "your_api_key".to_string());
+
         Self {
             client: Client::new(),
+            api_key,
         }
     }
 
-    async fn access_token(&self) -> AppResult<String> {
-        let consumer_key = std::env::var("WHATSAPP_CONSUMER_KEY")
-            .map_err(|_| AppError::InternalServerError)?;
-        let consumer_secret = std::env::var("WHATSAPP_CONSUMER_SECRET")
-            .map_err(|_| AppError::InternalServerError)?;
+    /// Send WhatsApp message using CallMeBot free API
+    pub async fn send_message(&self, to: &str, message: &str) -> AppResult<WhatsappDeliveryResult> {
+        let formatted_phone = to.trim_start_matches('+');
+        let encoded_message = encode(message);
 
-        let response = self.client
-            .get("https://graph.facebook.com/v17.0/oauth/access_token")
-            .query(&[
-                ("grant_type", "client_credentials"),
-                ("client_id", &consumer_key),
-                ("client_secret", &consumer_secret),
-            ])
-            .send()
-            .await
-            .map_err(|_| AppError::InternalServerError)?;
+        let url = format!(
+            "https://api.callmebot.com/whatsapp.php?phone={}&text={}&apikey={}",
+            formatted_phone, encoded_message, self.api_key
+        );
 
-        let json: serde_json::Value = response.json().await.map_err(|_| AppError::InternalServerError)?;
-        json["access_token"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or(AppError::InternalServerError)
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            AppError::ExternalApiError(format!("WhatsApp API request failed: {}", e))
+        })?;
+
+        if response.status().is_success() {
+            let response_text = response.text().await.map_err(|e| {
+                AppError::ExternalApiError(format!("Failed to read response: {}", e))
+            })?;
+
+            if response_text.contains("Message sent successfully") || response_text.contains("OK") {
+                Ok(WhatsappDeliveryResult {
+                    message_id: Some(format!(
+                        "msg_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                    )),
+                    status: "sent".to_string(),
+                })
+            } else {
+                Err(AppError::WhatsappError(format!(
+                    "WhatsApp API error: {}",
+                    response_text
+                )))
+            }
+        } else {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+
+            Err(AppError::WhatsappError(format!(
+                "WhatsApp API failed with status {}: {}",
+                status, error_text
+            )))
+        }
     }
 
-    pub async fn send_message(&self, to: &str, message: &str) -> AppResult<WhatsappDeliveryResult> {
-        let token = self.access_token().await?;
-        let phone_number_id = std::env::var("WHATSAPP_PHONE_NUMBER_ID")
-            .map_err(|_| AppError::InternalServerError)?;
+    /// Send WhatsApp message with image attachment
+    pub async fn send_image(
+        &self,
+        to: &str,
+        image_url: &str,
+        caption: Option<&str>,
+    ) -> AppResult<WhatsappDeliveryResult> {
+        let formatted_phone = to.trim_start_matches('+');
+        let encoded_caption = encode(caption.unwrap_or(""));
 
-        let body = WhatsappTextBody {
-            messaging_product: "whatsapp",
-            recipient_type: "individual",
-            to,
-            r#type: "text",
-            text: WhatsappTextPayload {
-                preview_url: false,
-                body: message,
-            },
-        };
+        let url = format!(
+            "https://api.callmebot.com/whatsapp.php?phone={}&image={}&caption={}&apikey={}",
+            formatted_phone, image_url, encoded_caption, self.api_key
+        );
 
-        let response = self.client
-            .post(&format!("https://graph.facebook.com/v17.0/{}/messages", phone_number_id))
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| AppError::InternalServerError)?;
+        // ✅ FIXED: Changed InternalServerError to WhatsappError
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            AppError::WhatsappError(format!("WhatsApp image API request failed: {}", e))
+        })?;
 
-        let json: serde_json::Value = response.json().await.map_err(|_| AppError::InternalServerError)?;
+        if response.status().is_success() {
+            let response_text = response
+                .text()
+                .await
+                .map_err(|e| AppError::WhatsappError(format!("Failed to read response: {}", e)))?;
 
-        let message_id = json["messages"]
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|msg| msg["id"].as_str())
-            .map(|s| s.to_string());
+            if response_text.contains("Message sent successfully") || response_text.contains("OK") {
+                Ok(WhatsappDeliveryResult {
+                    message_id: Some(format!(
+                        "img_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                    )),
+                    status: "sent".to_string(),
+                })
+            } else {
+                Err(AppError::WhatsappError(format!(
+                    "WhatsApp image API error: {}",
+                    response_text
+                )))
+            }
+        } else {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
 
-        Ok(WhatsappDeliveryResult { message_id })
+            Err(AppError::WhatsappError(format!(
+                "WhatsApp image API failed with status {}: {}",
+                status, error_text
+            )))
+        }
+    }
+
+    /// Send WhatsApp message with file/document attachment
+    pub async fn send_file(
+        &self,
+        to: &str,
+        file_url: &str,
+        filename: Option<&str>,
+    ) -> AppResult<WhatsappDeliveryResult> {
+        let formatted_phone = to.trim_start_matches('+');
+        let encoded_filename = encode(filename.unwrap_or("document"));
+
+        let url = format!(
+            "https://api.callmebot.com/whatsapp.php?phone={}&file={}&filename={}&apikey={}",
+            formatted_phone, file_url, encoded_filename, self.api_key
+        );
+
+        // ✅ FIXED: Changed InternalServerError to WhatsappError
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            AppError::WhatsappError(format!("WhatsApp file API request failed: {}", e))
+        })?;
+
+        if response.status().is_success() {
+            let response_text = response
+                .text()
+                .await
+                .map_err(|e| AppError::WhatsappError(format!("Failed to read response: {}", e)))?;
+
+            if response_text.contains("Message sent successfully") || response_text.contains("OK") {
+                Ok(WhatsappDeliveryResult {
+                    message_id: Some(format!(
+                        "file_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                    )),
+                    status: "sent".to_string(),
+                })
+            } else {
+                Err(AppError::WhatsappError(format!(
+                    "WhatsApp file API error: {}",
+                    response_text
+                )))
+            }
+        } else {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+
+            Err(AppError::WhatsappError(format!(
+                "WhatsApp file API failed with status {}: {}",
+                status, error_text
+            )))
+        }
     }
 }
