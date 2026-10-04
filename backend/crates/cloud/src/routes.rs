@@ -2,11 +2,11 @@
 // FILE: crates/cloud/src/routes.rs
 // ==============================================================================
 use crate::{
-    cards, files,
+    files,
     handlers::{
-        audit, auth, billing, broadcast, card_templates, event, event_assignment, guest,
-        invitations, michango, notifications, payment, platform, public_invitation, qr_code, rbac,
-        reports, scanner, settings, templates, verify_token, webhooks,
+        audit, auth, billing, broadcast, event, event_assignment, guest, invitations, michango,
+        notifications, payment, platform, public_invitation, qr_code, rbac, reports, scanner,
+        settings, templates, verify_token, webhooks,
     },
     logs,
     middleware::{
@@ -119,10 +119,24 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     // ── Card template routes ────────────────────────────────────────────────────
     let card_routes = Router::new()
-        .route("/api/v1/cards/templates", get(cards::list_card_templates))
+        .route(
+            "/api/v1/cards/templates",
+            get(crate::cards::handlers::list_card_templates)
+                .post(crate::cards::handlers::create_card_template),
+        )
         .route(
             "/api/v1/cards/templates/{id}",
-            get(cards::get_card_template),
+            get(crate::cards::handlers::get_card_template)
+                .put(crate::cards::handlers::update_card_template)
+                .delete(crate::cards::handlers::delete_card_template),
+        )
+        .route(
+            "/api/v1/cards/templates/{id}/upload",
+            post(crate::cards::handlers::upload_template_image),
+        )
+        .route(
+            "/api/v1/cards/render",
+            post(crate::cards::handlers::render_card_template),
         )
         .layer(middleware::from_fn(require_permission_middleware(
             "cards:read",
@@ -198,10 +212,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/events/{eid}/invitations/{inv_id}/qr",
             get(qr_code::generate_qr_code),
-        )
-        .route(
-            "/api/v1/events/{eid}/invitations/{inv_id}/render-card",
-            get(cards::handlers::render_invitation_card),
         )
         .layer(middleware::from_fn(require_permission_middleware(
             "invitations:read",
@@ -405,18 +415,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/platform/organizations/{id}/usage/track",
             post(platform::track_organization_usage),
-        )
-        .route(
-            "/api/v1/platform/card-templates",
-            get(card_templates::list_card_templates).post(card_templates::create_card_template),
-        )
-        .route(
-            "/api/v1/platform/card-templates/{id}",
-            put(card_templates::update_card_template).delete(card_templates::delete_card_template),
-        )
-        .route(
-            "/api/v1/platform/card-templates/{id}/upload",
-            post(card_templates::upload_template_image),
         )
         .route(
             "/api/v1/platform/templates",

@@ -350,7 +350,7 @@ pub async fn send_invitations(
         };
 
         // Send with card attachment if available
-        let attempts = if let Some(ref card_bytes) = card_png {
+        let attempts = if let Some(ref _card_bytes) = card_png {
             // For now, send message with link (card rendering integration can be enhanced)
             messaging.send(channel, destination, &message_body).await?
         } else {

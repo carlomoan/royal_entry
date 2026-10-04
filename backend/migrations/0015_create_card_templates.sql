@@ -5,13 +5,16 @@
 
 CREATE TABLE IF NOT EXISTS card_templates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
     description TEXT,
-    theme_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    theme_config JSONB NOT NULL DEFAULT '{}', 
+    background_file_id VARCHAR(255), 
     preview_image_url TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_card_templates_active ON card_templates (is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_card_templates_org_id ON card_templates(org_id);
+CREATE INDEX idx_card_templates_is_active ON card_templates(is_active);

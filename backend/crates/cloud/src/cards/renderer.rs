@@ -1,56 +1,62 @@
-// ==============================================================================
-// FILE: crates/cloud/src/cards/renderer.rs
-// ==============================================================================
-use image::{DynamicImage, ImageEncoder, Rgba, RgbaImage};
+use crate::error::{AppError, AppResult};
+use image::{ImageEncoder, Rgba, RgbaImage};
 use rusttype::{point, Font, Scale};
 use serde_json::Value;
-use std::path::Path;
+use std::collections::HashMap;
 
-use crate::error::{AppError, AppResult};
-
-/// Theme config structure matching the frontend Card Studio
 #[derive(Debug, Clone)]
 pub struct CardThemeConfig {
-    pub background_color: String,
-    pub text_color: String,
-    pub accent_color: String,
-    pub font_family: String,
-    pub positions: std::collections::HashMap<String, (f32, f32)>,
-    pub text_configs: std::collections::HashMap<String, TextLayerConfig>,
-    pub custom_texts: Vec<CustomTextLayer>,
+    pub version: i32,
+    pub size: (u32, u32),
+    pub background: ThemeBackground,
+    pub pages: Vec<ThemePage>,
 }
 
 #[derive(Debug, Clone)]
-pub struct TextLayerConfig {
-    pub font_size: f32,
-    pub color: String,
-    pub font_family: String,
-    pub text_align: String,
-    pub font_weight: String,
-    pub letter_spacing: f32,
-    pub line_height: f32,
+pub struct ThemeBackground {
+    pub r#type: String,
+    pub value: String,
+    pub overlay: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CustomTextLayer {
-    pub content: String,
+pub struct ThemePage {
+    pub id: String,
+    pub name: String,
+    pub background: ThemeBackground,
+    pub layers: Vec<ThemeLayer>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThemeLayer {
+    pub id: String,
+    pub r#type: String,
     pub x: f32,
     pub y: f32,
-    pub font_size: f32,
-    pub color: String,
-    pub font_family: String,
-    pub font_weight: String,
-    pub text_align: String,
-    pub letter_spacing: f32,
-    pub line_height: f32,
-    pub shape: String,
-    pub arc_radius: f32,
+    pub w: f32,
+    pub h: f32,
     pub rotation: f32,
-    pub max_width: f32,
+    pub opacity: f32,
     pub visible: bool,
+    pub content: Option<String>,
+    pub font_size: Option<f32>,
+    pub font_family: Option<String>,
+    pub font_weight: Option<String>,
+    pub color: Option<String>,
+    pub text_align: Option<String>,
+    pub letter_spacing: Option<f32>,
+    pub line_height: Option<f32>,
+    pub curve: Option<String>,
+    pub src: Option<String>,
+    pub fit: Option<String>,
+    pub radius: Option<f32>,
+    pub shape_type: Option<String>,
+    pub shape_color: Option<String>,
+    pub shape_border: Option<String>,
+    pub shape_border_width: Option<f32>,
+    pub qr_variable: Option<String>,
 }
 
-/// Parse hex color string to RGBA tuple
 fn parse_color(color: &str, default: (u8, u8, u8, u8)) -> (u8, u8, u8, u8) {
     let color = color.trim().trim_start_matches('#');
     if color.len() == 6 {
@@ -65,9 +71,7 @@ fn parse_color(color: &str, default: (u8, u8, u8, u8)) -> (u8, u8, u8, u8) {
     default
 }
 
-/// Load font from configured path, with fallbacks
 fn load_font(font_family: &str) -> Font<'static> {
-    // Map font family names to file paths
     let font_path = match font_family {
         "Playfair Display" => std::env::var("CARD_FONT_PLAYFAIR")
             .unwrap_or_else(|_| "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf".to_string()),
@@ -78,371 +82,319 @@ fn load_font(font_family: &str) -> Font<'static> {
         _ => std::env::var("CARD_FONT_PATH")
             .unwrap_or_else(|_| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".to_string()),
     };
-
-    // Try to load the font
     if let Ok(font_data) = std::fs::read(&font_path) {
         if let Some(font) = Font::try_from_vec(font_data) {
             return font;
         }
     }
-
-    // Fallback: try common system fonts
-    let fallbacks = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "C:\\Windows\\Fonts\\arial.ttf",
-    ];
-
-    for path in &fallbacks {
-        if let Ok(font_data) = std::fs::read(path) {
-            if let Some(font) = Font::try_from_vec(font_data) {
-                return font;
-            }
-        }
-    }
-
-    // Last resort: embedded minimal font data (will render boxes but won't crash)
-    panic!("No font file found. Set CARD_FONT_PATH environment variable or install DejaVu fonts.")
+    panic!("No font file found. Set CARD_FONT_PATH or install DejaVu fonts.")
 }
 
-/// Parse theme_config JSON into CardThemeConfig
 pub fn parse_theme_config(config: &Value) -> AppResult<CardThemeConfig> {
-    let obj = config
-        .as_object()
-        .ok_or_else(|| AppError::BadRequest("Invalid theme_config: expected object".to_string()))?;
+    let obj = config.as_object().ok_or_else(|| {
+        AppError::BadRequest("Invalid theme_config: expected JSON object".to_string())
+    })?;
 
-    let get_str = |key: &str, default: &str| -> String {
-        obj.get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or(default)
-            .to_string()
-    };
-
-    let positions = if let Some(pos_obj) = obj.get("positions").and_then(|v| v.as_object()) {
-        let mut map = std::collections::HashMap::new();
-        for (key, val) in pos_obj {
-            if let Some(pos) = val.as_object() {
-                let x = pos.get("x").and_then(|v| v.as_f64()).unwrap_or(50.0) as f32;
-                let y = pos.get("y").and_then(|v| v.as_f64()).unwrap_or(50.0) as f32;
-                map.insert(key.clone(), (x, y));
-            }
-        }
-        map
+    let version = obj.get("version").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+    let size = if let Some(size_obj) = obj.get("size").and_then(|v| v.as_object()) {
+        (
+            size_obj
+                .get("width")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(900.0) as u32,
+            size_obj
+                .get("height")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1200.0) as u32,
+        )
     } else {
-        std::collections::HashMap::new()
+        (900, 1200)
     };
 
-    let text_configs = if let Some(tc_obj) = obj.get("text_configs").and_then(|v| v.as_object()) {
-        let mut map = std::collections::HashMap::new();
-        for (key, val) in tc_obj {
-            if let Some(tc) = val.as_object() {
-                map.insert(
-                    key.clone(),
-                    TextLayerConfig {
-                        font_size: tc.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(16.0)
-                            as f32,
-                        color: tc
-                            .get("color")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        font_family: tc
-                            .get("fontFamily")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("DM Sans")
-                            .to_string(),
-                        text_align: tc
-                            .get("textAlign")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("center")
-                            .to_string(),
-                        font_weight: tc
-                            .get("fontWeight")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("400")
-                            .to_string(),
-                        letter_spacing: tc
-                            .get("letterSpacing")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0) as f32,
-                        line_height: tc.get("lineHeight").and_then(|v| v.as_f64()).unwrap_or(1.2)
-                            as f32,
-                    },
-                );
-            }
+    let background = if let Some(bg) = obj.get("background").and_then(|v| v.as_object()) {
+        ThemeBackground {
+            r#type: bg
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("color")
+                .to_string(),
+            value: bg
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("#ffffff")
+                .to_string(),
+            overlay: bg
+                .get("overlay")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         }
-        map
     } else {
-        std::collections::HashMap::new()
+        ThemeBackground {
+            r#type: "color".to_string(),
+            value: "#ffffff".to_string(),
+            overlay: None,
+        }
     };
 
-    let custom_texts = if let Some(ct_arr) = obj.get("custom_texts").and_then(|v| v.as_array()) {
-        ct_arr
+    let pages = if let Some(pages_arr) = obj.get("pages").and_then(|v| v.as_array()) {
+        pages_arr
             .iter()
-            .filter_map(|val| {
-                val.as_object().map(|ct| CustomTextLayer {
-                    content: ct
-                        .get("content")
+            .filter_map(|page_val| {
+                let page = page_val.as_object()?;
+                let bg = page
+                    .get("background")
+                    .and_then(|v| v.as_object())
+                    .map(|b| ThemeBackground {
+                        r#type: b
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("color")
+                            .to_string(),
+                        value: b
+                            .get("value")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("#ffffff")
+                            .to_string(),
+                        overlay: b
+                            .get("overlay")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    })
+                    .unwrap_or_else(|| background.clone());
+
+                let layers = page
+                    .get("layers")
+                    .and_then(|v| v.as_array())
+                    .map(|layers_arr| {
+                        layers_arr
+                            .iter()
+                            .filter_map(|layer_val| {
+                                let l = layer_val.as_object()?;
+                                Some(ThemeLayer {
+                                    id: l
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    r#type: l
+                                        .get("type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("text")
+                                        .to_string(),
+                                    x: l.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                                    y: l.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                                    w: l.get("w").and_then(|v| v.as_f64()).unwrap_or(10.0) as f32,
+                                    h: l.get("h").and_then(|v| v.as_f64()).unwrap_or(10.0) as f32,
+                                    rotation: l
+                                        .get("rotation")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0)
+                                        as f32,
+                                    opacity: l
+                                        .get("opacity")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(100.0)
+                                        as f32,
+                                    visible: l
+                                        .get("visible")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(true),
+                                    content: l
+                                        .get("content")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    font_size: l
+                                        .get("fontSize")
+                                        .and_then(|v| v.as_f64())
+                                        .map(|v| v as f32),
+                                    font_family: l
+                                        .get("fontFamily")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    font_weight: l
+                                        .get("fontWeight")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    color: l
+                                        .get("color")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    text_align: l
+                                        .get("textAlign")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    letter_spacing: l
+                                        .get("letterSpacing")
+                                        .and_then(|v| v.as_f64())
+                                        .map(|v| v as f32),
+                                    line_height: l
+                                        .get("lineHeight")
+                                        .and_then(|v| v.as_f64())
+                                        .map(|v| v as f32),
+                                    curve: l
+                                        .get("curve")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    src: l
+                                        .get("src")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    fit: l
+                                        .get("fit")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    radius: l
+                                        .get("radius")
+                                        .and_then(|v| v.as_f64())
+                                        .map(|v| v as f32),
+                                    shape_type: l
+                                        .get("shapeType")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    shape_color: l
+                                        .get("shapeColor")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    shape_border: l
+                                        .get("shapeBorder")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    shape_border_width: l
+                                        .get("shapeBorderWidth")
+                                        .and_then(|v| v.as_f64())
+                                        .map(|v| v as f32),
+                                    qr_variable: l
+                                        .get("qrVariable")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                Some(ThemePage {
+                    id: page
+                        .get("id")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or("front")
                         .to_string(),
-                    x: ct.get("x").and_then(|v| v.as_f64()).unwrap_or(50.0) as f32,
-                    y: ct.get("y").and_then(|v| v.as_f64()).unwrap_or(50.0) as f32,
-                    font_size: ct.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(16.0) as f32,
-                    color: ct
-                        .get("color")
+                    name: page
+                        .get("name")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
+                        .unwrap_or("Page")
                         .to_string(),
-                    font_family: ct
-                        .get("fontFamily")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("DM Sans")
-                        .to_string(),
-                    font_weight: ct
-                        .get("fontWeight")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("400")
-                        .to_string(),
-                    text_align: ct
-                        .get("textAlign")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("center")
-                        .to_string(),
-                    letter_spacing: ct
-                        .get("letterSpacing")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0) as f32,
-                    line_height: ct.get("lineHeight").and_then(|v| v.as_f64()).unwrap_or(1.2)
-                        as f32,
-                    shape: ct
-                        .get("shape")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("straight")
-                        .to_string(),
-                    arc_radius: ct
-                        .get("arcRadius")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(200.0) as f32,
-                    rotation: ct.get("rotation").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                    max_width: ct.get("maxWidth").and_then(|v| v.as_f64()).unwrap_or(80.0) as f32,
-                    visible: ct.get("visible").and_then(|v| v.as_bool()).unwrap_or(true),
+                    background: bg,
+                    layers,
                 })
             })
             .collect()
     } else {
-        Vec::new()
+        vec![ThemePage {
+            id: "front".to_string(),
+            name: "Front".to_string(),
+            background: background.clone(),
+            layers: vec![],
+        }]
     };
 
     Ok(CardThemeConfig {
-        background_color: get_str("background_color", "#ffffff"),
-        text_color: get_str("text_color", "#1a1a1a"),
-        accent_color: get_str("accent_color", "#d4af37"),
-        font_family: get_str("font_family", "DM Sans"),
-        positions,
-        text_configs,
-        custom_texts,
+        version,
+        size,
+        background,
+        pages,
     })
 }
 
-/// Main render function: composites background + text layers + QR code
 pub fn render_card(
     theme_config: &CardThemeConfig,
-    background_image: Option<&[u8]>,
-    qr_image_bytes: &[u8],
-    render_data: &std::collections::HashMap<String, String>,
+    _background_image: Option<&[u8]>,
+    _qr_image_bytes: &[u8],
+    render_data: &HashMap<String, String>,
 ) -> AppResult<Vec<u8>> {
-    let width: u32 = 900;
-    let height: u32 = 1200;
+    let (width, height) = theme_config.size;
+    let mut final_images = Vec::new();
 
-    // Create background
-    let mut canvas = if let Some(bg_bytes) = background_image {
-        let bg_img =
-            image::load_from_memory(bg_bytes).map_err(|e| AppError::InternalServerError)?;
-        let resized = bg_img.resize_to_fill(width, height, image::imageops::FilterType::Lanczos3);
-        resized.to_rgba8()
-    } else {
-        // Solid color background
-        let bg_color = parse_color(&theme_config.background_color, (255, 255, 255, 255));
-        let mut img = RgbaImage::new(width, height);
-        for pixel in img.pixels_mut() {
-            *pixel = Rgba([bg_color.0, bg_color.1, bg_color.2, bg_color.3]);
-        }
-        img
-    };
-
-    // Add subtle overlay for readability
-    {
-        let overlay = Rgba([0, 0, 0, 20]);
-        for pixel in canvas.pixels_mut() {
-            let r = ((pixel[0] as u16 * 235 + 0 * 20) / 255) as u8;
-            let g = ((pixel[1] as u16 * 235 + 0 * 20) / 255) as u8;
-            let b = ((pixel[2] as u16 * 235 + 0 * 20) / 255) as u8;
-            *pixel = Rgba([r, g, b, 255]);
-        }
-    }
-
-    // Draw accent border
-    let accent_color = parse_color(&theme_config.accent_color, (212, 175, 55, 255));
-    draw_rect_border(
-        &mut canvas,
-        55,
-        55,
-        width - 110,
-        height - 110,
-        4,
-        accent_color,
-    );
-
-    // Render fixed text layers (title, guest, date, venue)
-    for (layer_name, position) in &theme_config.positions {
-        if layer_name == "qr"
-            || layer_name == "icon"
-            || layer_name == "frame"
-            || layer_name == "polygon"
-        {
-            continue;
-        }
-
-        let text = match layer_name.as_str() {
-            "title" => render_data
-                .get("EVENT_TITLE")
-                .cloned()
-                .unwrap_or_else(|| "Event Title".to_string()),
-            "guest" => render_data
-                .get("GUEST_NAME")
-                .cloned()
-                .unwrap_or_else(|| "Guest Name".to_string()),
-            "date" => render_data
-                .get("EVENT_DATE")
-                .cloned()
-                .unwrap_or_else(|| "Event Date".to_string()),
-            "venue" => render_data
-                .get("EVENT_VENUE")
-                .cloned()
-                .unwrap_or_else(|| "Event Venue".to_string()),
-            _ => continue,
-        };
-
-        if let Some(config) = theme_config.text_configs.get(layer_name) {
-            let color_str = if config.color.is_empty() {
-                &theme_config.text_color
-            } else {
-                &config.color
-            };
-            let color = parse_color(color_str, (26, 26, 26, 255));
-
-            draw_text_on_canvas(
-                &mut canvas,
-                &text,
-                position.0,
-                position.1,
-                config.font_size,
-                &config.font_family,
-                color,
-                &config.text_align,
-                width,
-                height,
-            );
-        }
-    }
-
-    // Render custom text layers
-    for custom_text in &theme_config.custom_texts {
-        if !custom_text.visible {
-            continue;
-        }
-
-        // Replace variables in content
-        let mut content = custom_text.content.clone();
-        for (key, value) in render_data {
-            content = content.replace(&format!("[{}]", key), value);
-        }
-
-        let color_str = if custom_text.color.is_empty() {
-            &theme_config.text_color
+    for page in &theme_config.pages {
+        let mut canvas = if page.background.r#type == "color" {
+            let bg_color = parse_color(&page.background.value, (255, 255, 255, 255));
+            let mut img = RgbaImage::new(width, height);
+            for pixel in img.pixels_mut() {
+                *pixel = Rgba([bg_color.0, bg_color.1, bg_color.2, bg_color.3]);
+            }
+            img
         } else {
-            &custom_text.color
+            let mut img = RgbaImage::new(width, height);
+            for pixel in img.pixels_mut() {
+                *pixel = Rgba([255, 255, 255, 255]);
+            }
+            img
         };
-        let color = parse_color(color_str, (26, 26, 26, 255));
 
-        draw_text_on_canvas(
-            &mut canvas,
-            &content,
-            custom_text.x,
-            custom_text.y,
-            custom_text.font_size,
-            &custom_text.font_family,
-            color,
-            &custom_text.text_align,
-            width,
-            height,
-        );
-    }
-
-    // Render QR code
-    if let Some((qr_x, qr_y)) = theme_config.positions.get("qr") {
-        if !qr_image_bytes.is_empty() {
-            if let Ok(qr_img) = image::load_from_memory(qr_image_bytes) {
-                let qr_size = 180u32;
-                let qr_resized =
-                    qr_img.resize_exact(qr_size, qr_size, image::imageops::FilterType::Nearest);
-
-                // Add white background for QR
-                let qr_x_px = ((*qr_x / 100.0) * width as f32) as i64 - (qr_size as i64 / 2);
-                let qr_y_px = ((*qr_y / 100.0) * height as f32) as i64 - (qr_size as i64 / 2);
-
-                // Draw white padding
-                for dy in -10i64..(qr_size as i64 + 10) {
-                    for dx in -10i64..(qr_size as i64 + 10) {
-                        let px = qr_x_px + dx;
-                        let py = qr_y_px + dy;
-                        if px >= 0 && py >= 0 && (px as u32) < width && (py as u32) < height {
-                            canvas.put_pixel(px as u32, py as u32, Rgba([255, 255, 255, 255]));
-                        }
-                    }
+        if let Some(overlay) = &page.background.overlay {
+            let ov_color = parse_color(overlay, (0, 0, 0, 0));
+            if ov_color.3 > 0 {
+                for pixel in canvas.pixels_mut() {
+                    let bg_r = pixel[0] as f32 / 255.0;
+                    let bg_g = pixel[1] as f32 / 255.0;
+                    let bg_b = pixel[2] as f32 / 255.0;
+                    let fg_a = ov_color.3 as f32 / 255.0;
+                    let fg_r = ov_color.0 as f32 / 255.0;
+                    let fg_g = ov_color.1 as f32 / 255.0;
+                    let fg_b = ov_color.2 as f32 / 255.0;
+                    pixel[0] = ((fg_r * fg_a + bg_r * (1.0 - fg_a)) * 255.0) as u8;
+                    pixel[1] = ((fg_g * fg_a + bg_g * (1.0 - fg_a)) * 255.0) as u8;
+                    pixel[2] = ((fg_b * fg_a + bg_b * (1.0 - fg_a)) * 255.0) as u8;
                 }
-
-                image::imageops::overlay(&mut canvas, &qr_resized, qr_x_px, qr_y_px);
-
-                // Draw "SCAN TO CHECK IN" label below QR
-                let label_color = parse_color(&theme_config.accent_color, (212, 175, 55, 255));
-                draw_text_on_canvas(
-                    &mut canvas,
-                    "SCAN TO CHECK IN",
-                    *qr_x,
-                    qr_y + 12.0,
-                    14.0,
-                    "DM Sans",
-                    label_color,
-                    "center",
-                    width,
-                    height,
-                );
             }
         }
-    }
 
-    // Encode to PNG
-    let mut png_bytes: Vec<u8> = Vec::new();
-    {
-        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-        encoder
-            .write_image(
-                canvas.as_raw(),
-                width,
-                height,
-                image::ColorType::Rgba8.into(),
-            )
-            .map_err(|_| AppError::InternalServerError)?;
-    }
+        for layer in &page.layers {
+            if !layer.visible {
+                continue;
+            }
+            if layer.r#type == "text" {
+                if let Some(content) = &layer.content {
+                    let mut text = content.clone();
+                    for (key, value) in render_data {
+                        text = text.replace(&format!("{{{{{}}}}}", key), value);
+                    }
+                    let color_str = layer.color.as_deref().unwrap_or("#000000");
+                    let color = parse_color(color_str, (0, 0, 0, 255));
+                    let font_family = layer.font_family.as_deref().unwrap_or("DM Sans");
+                    draw_text_on_canvas(
+                        &mut canvas,
+                        &text,
+                        layer.x,
+                        layer.y,
+                        layer.font_size.unwrap_or(16.0),
+                        font_family,
+                        color,
+                        layer.text_align.as_deref().unwrap_or("center"),
+                        width,
+                        height,
+                    );
+                }
+            }
+        }
 
-    Ok(png_bytes)
+        let mut png_bytes: Vec<u8> = Vec::new();
+        {
+            let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+            encoder
+                .write_image(
+                    canvas.as_raw(),
+                    width,
+                    height,
+                    image::ColorType::Rgba8.into(),
+                )
+                .map_err(|_| AppError::InternalServerError)?;
+        }
+        final_images.extend(png_bytes);
+    }
+    Ok(final_images)
 }
 
-/// Draw text on canvas at percentage-based position
 fn draw_text_on_canvas(
     canvas: &mut RgbaImage,
     text: &str,
@@ -457,35 +409,28 @@ fn draw_text_on_canvas(
 ) {
     let font = load_font(font_family);
     let scale = Scale::uniform(font_size);
-
     let x = (x_percent / 100.0) * canvas_width as f32;
     let y = (y_percent / 100.0) * canvas_height as f32;
 
-    // Calculate text width for alignment
     let mut text_width = 0.0f32;
     for c in text.chars() {
-        let glyph = font.glyph(c).scaled(scale);
-        let advance = glyph.h_metrics().advance_width;
-        text_width += advance;
+        text_width += font.glyph(c).scaled(scale).h_metrics().advance_width;
     }
 
     let mut start_x = x;
     match text_align {
         "left" => start_x = x - text_width / 2.0,
         "right" => start_x = x + text_width / 2.0,
-        _ => {} // center is default
+        _ => {}
     }
 
-    // Render character by character
     let mut cursor_x = start_x;
     for c in text.chars() {
         let glyph = font.glyph(c).scaled(scale).positioned(point(cursor_x, y));
-
         if let Some(bounding_box) = glyph.pixel_bounding_box() {
             glyph.draw(|px, py, v| {
                 let pixel_x = bounding_box.min.x + px as i32;
                 let pixel_y = bounding_box.min.y + py as i32;
-
                 if pixel_x >= 0
                     && pixel_y >= 0
                     && (pixel_x as u32) < canvas_width
@@ -495,88 +440,21 @@ fn draw_text_on_canvas(
                     if alpha == 0 {
                         return;
                     }
-
                     let pixel = canvas.get_pixel_mut(pixel_x as u32, pixel_y as u32);
-
-                    // Alpha blending
                     let bg_r = pixel[0] as f32 / 255.0;
                     let bg_g = pixel[1] as f32 / 255.0;
                     let bg_b = pixel[2] as f32 / 255.0;
-
                     let fg_a = alpha as f32 / 255.0;
                     let fg_r = color.0 as f32 / 255.0;
                     let fg_g = color.1 as f32 / 255.0;
                     let fg_b = color.2 as f32 / 255.0;
-
-                    let out_r = fg_r * fg_a + bg_r * (1.0 - fg_a);
-                    let out_g = fg_g * fg_a + bg_g * (1.0 - fg_a);
-                    let out_b = fg_b * fg_a + bg_b * (1.0 - fg_a);
-
-                    pixel[0] = (out_r * 255.0) as u8;
-                    pixel[1] = (out_g * 255.0) as u8;
-                    pixel[2] = (out_b * 255.0) as u8;
+                    pixel[0] = ((fg_r * fg_a + bg_r * (1.0 - fg_a)) * 255.0) as u8;
+                    pixel[1] = ((fg_g * fg_a + bg_g * (1.0 - fg_a)) * 255.0) as u8;
+                    pixel[2] = ((fg_b * fg_a + bg_b * (1.0 - fg_a)) * 255.0) as u8;
                     pixel[3] = 255;
                 }
             });
         }
-
         cursor_x += glyph.unpositioned().h_metrics().advance_width;
-    }
-}
-
-/// Draw a rectangle border
-fn draw_rect_border(
-    canvas: &mut RgbaImage,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    thickness: u32,
-    color: (u8, u8, u8, u8),
-) {
-    let rgba = Rgba([color.0, color.1, color.2, color.3]);
-
-    // Top border
-    for dy in 0..thickness {
-        for dx in 0..width {
-            let px = x + dx;
-            let py = y + dy;
-            if px < canvas.width() && py < canvas.height() {
-                canvas.put_pixel(px, py, rgba);
-            }
-        }
-    }
-
-    // Bottom border
-    for dy in 0..thickness {
-        for dx in 0..width {
-            let px = x + dx;
-            let py = y + height - thickness + dy;
-            if px < canvas.width() && py < canvas.height() {
-                canvas.put_pixel(px, py, rgba);
-            }
-        }
-    }
-
-    // Left border
-    for dy in 0..height {
-        for dx in 0..thickness {
-            let px = x + dx;
-            let py = y + dy;
-            if px < canvas.width() && py < canvas.height() {
-                canvas.put_pixel(px, py, rgba);
-            }
-        }
-    }
-
-    // Right border
-    for dy in 0..height {
-        for dx in 0..thickness {
-            let px = x + width - thickness + dx;
-            let py = y + dy;
-            if px < canvas.width() && py < canvas.height() {
-                canvas.put_pixel(px, py, rgba);
-            }
-        }
     }
 }

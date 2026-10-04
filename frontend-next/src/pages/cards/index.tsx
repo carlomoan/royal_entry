@@ -1,1456 +1,859 @@
 "use client";
-import "@fontsource/playfair-display/600.css";
-import "@fontsource/great-vibes/400.css";
-import "@fontsource/dm-sans/400.css";
-import { useMemo, useRef, useState, useEffect } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Download, FileText, ImagePlus, Mail, Move, Palette, Send, Smartphone, Sparkles,
-  Type, AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Hexagon, Circle, Square,
-  Variable, Layers, Edit3, Copy, RotateCw,
+  Type, Image as ImageIcon, QrCode, Square, Trash2, Copy, Eye, EyeOff,
+  Lock, Unlock, Download, FileText, Save, Plus, Sparkles, Variable,
+  AlignLeft, AlignCenter, AlignRight, ChevronUp, ChevronDown,
+  ZoomIn, ZoomOut, Undo2, Redo2, ArrowLeft, FileImage, X, Layers,
 } from "lucide-react";
+import { Rnd } from "react-rnd";
 import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Badge, Button, Card, Select, Input, Modal } from "@/components/ui";
+import { Button, Badge, Modal, Input, Select } from "@/components/ui";
+import {
+  RoyalCardTheme, CardPage, ThemeLayer,
+  CARD_VARIABLES, emptyTheme, normalizeTheme, collectVariables,
+} from "@/types/royal-card";
+import { RoyalCardPage } from "@/components/cards/RoyalCard";
+
+const DRAFT_KEY = "royal-card-studio-draft";
 
 // ============================================================================
-// TYPES
+// PRESET — matches the reference card (ivory + botanical + gold, front/back)
+// Image layers ship with empty src; the designer uploads the floral art /
+// couple photo. Empty-src images render nothing until filled.
 // ============================================================================
-type Design = {
-  id: string;
-  name: string;
-  description: string;
-  background: string;
-  ink: string;
-  accent: string;
-  font: string;
-  previewImage?: string;
-  sourceId?: string;
-  presetContent?: PresetContent;
-};
+const GOLD = "#A9802E", GOLD_SOFT = "#B88952", GREEN = "#1F3D2B", IVORY = "#FBF6EA";
 
-type PresetContent = {
-  customTexts: Omit<CustomTextLayer, "id">[];
-  positions: Record<string, { x: number; y: number }>;
-  textConfigs: Record<string, TextLayerConfig>;
-};
-
-type Layer = "title" | "guest" | "date" | "venue" | "qr" | "icon" | "frame" | "polygon" | "custom";
-type TextAlign = "left" | "center" | "right";
-type FrameType = "none" | "rectangle" | "ellipse" | "flower";
-type PolygonType = "triangle" | "pentagon" | "hexagon" | "star";
-type TextShape = "straight" | "arc-up" | "arc-down" | "circle" | "wave";
-
-type TextLayerConfig = {
-  fontSize: number;
-  color: string;
-  fontFamily: string;
-  textAlign: TextAlign;
-  fontWeight: string;
-  letterSpacing: number;
-  lineHeight: number;
-};
-
-type CustomTextLayer = {
-  id: string;
-  content: string;
-  x: number;
-  y: number;
-  fontSize: number;
-  color: string;
-  fontFamily: string;
-  fontWeight: string;
-  textAlign: TextAlign;
-  letterSpacing: number;
-  lineHeight: number;
-  shape: TextShape;
-  arcRadius: number;
-  rotation: number;
-  maxWidth: number;
-  visible: boolean;
-};
-
-type IconLayer = {
-  id: string;
-  icon: string;
-  x: number;
-  y: number;
-  size: number;
-  color: string;
-  rotation: number;
-};
-
-type FrameLayer = {
-  type: FrameType;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  color: string;
-  borderWidth: number;
-  borderColor: string;
-  rotation: number;
-};
-
-type PolygonLayer = {
-  id: string;
-  type: PolygonType;
-  x: number;
-  y: number;
-  size: number;
-  color: string;
-  borderColor: string;
-  borderWidth: number;
-  rotation: number;
-  sides?: number;
-};
-
-// ============================================================================
-// DATABASE VARIABLES (fetched from backend at render time)
-// ============================================================================
-const VARIABLES = [
-  { key: "GUEST_NAME", label: "Jina la Mgeni", example: "Ndugu John Doe", category: "Mgeni" },
-  { key: "GUEST_SEATNO", label: "Namba ya Kiti", example: "A-12", category: "Mgeni" },
-  { key: "GUEST_TABLE", label: "Meza ya Mgeni", example: "Meza 5", category: "Mgeni" },
-  { key: "GUEST_CATEGORY", label: "Aina ya Mgeni", example: "VIP", category: "Mgeni" },
-  { key: "EVENT_TYPE", label: "Aina ya Sherehe", example: "Harusi", category: "Sherehe" },
-  { key: "EVENT_TITLE", label: "Kichwa cha Sherehe", example: "Harusi ya Mary na Joseph", category: "Sherehe" },
-  { key: "EVENT_CHARACTER_NAME1", label: "Jina la Kijana 1", example: "Mary", category: "Sherehe" },
-  { key: "EVENT_CHARACTER_NAME2", label: "Jina la Kijana 2", example: "Joseph", category: "Sherehe" },
-  { key: "EVENT_VENUE", label: "Ukumbi", example: "White Sands Hotel", category: "Sherehe" },
-  { key: "EVENT_DATE", label: "Tarehe", example: "tarehe 25 Desemba 2026", category: "Sherehe" },
-  { key: "EVENT_START_TIME", label: "Muda wa Kuanza", example: "Saa 6:00 alasiri", category: "Sherehe" },
-  { key: "EVENT_END_TIME", label: "Muda wa Kuisha", example: "Saa 12:00 usiku", category: "Sherehe" },
-  { key: "EVENT_REPORTING_TIME", label: "Muda wa Kufika", example: "Saa 5:30 alasiri", category: "Sherehe" },
-  { key: "CHURCH", label: "Kanisa", example: "Kanisa la Nuru", category: "Sherehe" },
-  { key: "EVENT_ORGANISATION_NAME", label: "Jina la Familia", example: "Mwanga", category: "Sherehe" },
-  { key: "QR_CODE", label: "QR Code (Check-in)", example: "[QR]", category: "Mfumo" },
-];
-
-// ============================================================================
-// PRESET TEMPLATES
-// ============================================================================
-const SWAHILI_WEDDING_PRESET: PresetContent = {
-  positions: {
-    title: { x: 50, y: 8 },
-    guest: { x: 50, y: 78 },
-    date: { x: 50, y: 88 },
-    venue: { x: 50, y: 93 },
-    qr: { x: 50, y: 68 },
-  },
-  textConfigs: {
-    title: { fontSize: 28, color: "", fontFamily: "Playfair Display", textAlign: "center", fontWeight: "600", letterSpacing: 2, lineHeight: 1.3 },
-    guest: { fontSize: 20, color: "", fontFamily: "Great Vibes", textAlign: "center", fontWeight: "400", letterSpacing: 0, lineHeight: 1.2 },
-    date: { fontSize: 14, color: "", fontFamily: "DM Sans", textAlign: "center", fontWeight: "400", letterSpacing: 0, lineHeight: 1.2 },
-    venue: { fontSize: 13, color: "", fontFamily: "DM Sans", textAlign: "center", fontWeight: "400", letterSpacing: 0, lineHeight: 1.2 },
-  },
-  customTexts: [
-    {
-      content: "Familia ya Bw. na Bi. [EVENT_ORGANISATION_NAME]",
-      x: 50, y: 15, fontSize: 14, color: "", fontFamily: "Playfair Display",
-      fontWeight: "600", textAlign: "center", letterSpacing: 1, lineHeight: 1.3,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 80, visible: true,
-    },
-    {
-      content: "Wanayofuraha kukukaribisha",
-      x: 50, y: 22, fontSize: 12, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 80, visible: true,
-    },
-    {
-      content: "Ndugu/Jamaa/Rafiki",
-      x: 50, y: 28, fontSize: 11, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 80, visible: true,
-    },
-    {
-      content: "[GUEST_NAME]",
-      x: 50, y: 36, fontSize: 32, color: "", fontFamily: "Great Vibes",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 80, visible: true,
-    },
-    {
-      content: "Katika Sherehe ya [EVENT_TYPE]",
-      x: 50, y: 46, fontSize: 13, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-    {
-      content: "ya Kijana wao [EVENT_CHARACTER_NAME1]",
-      x: 50, y: 50, fontSize: 13, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-    {
-      content: "anayetarajia kufunga ndoa na [EVENT_CHARACTER_NAME2]",
-      x: 50, y: 54, fontSize: 13, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 90, visible: true,
-    },
-    {
-      content: "katika kanisa la [CHURCH]",
-      x: 50, y: 58, fontSize: 13, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-    {
-      content: "Ukumbi: [EVENT_VENUE], Njombe",
-      x: 50, y: 82, fontSize: 12, color: "", fontFamily: "DM Sans",
-      fontWeight: "500", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-    {
-      content: "Tarehe: [EVENT_DATE]",
-      x: 50, y: 86, fontSize: 12, color: "", fontFamily: "DM Sans",
-      fontWeight: "500", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-    {
-      content: "Muda: [EVENT_START_TIME] - [EVENT_END_TIME]",
-      x: 50, y: 90, fontSize: 11, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-    {
-      content: "Fika [EVENT_REPORTING_TIME] | Kiti: [GUEST_SEATNO]",
-      x: 50, y: 95, fontSize: 10, color: "", fontFamily: "DM Sans",
-      fontWeight: "400", textAlign: "center", letterSpacing: 0.5, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 85, visible: true,
-    },
-  ],
-};
-
-// ============================================================================
-// BASE DESIGNS
-// ============================================================================
-const DESIGNS: Design[] = [
-  {
-    id: "swahili-wedding",
-    name: "Harusi ya Kiszawahi",
-    description: "Templeti ya harusi ya Kiswahili - tayari kutumia",
-    background: "#1a1a2e",
-    ink: "#f4e4bc",
-    accent: "#d4af37",
-    font: "Playfair Display",
-    presetContent: SWAHILI_WEDDING_PRESET,
-  },
-  { id: "noir", name: "Midnight Gala", description: "Velvet navy, champagne type", background: "#111827", ink: "#fff8e7", accent: "#d6ad55", font: "Playfair Display" },
-  { id: "garden", name: "Botanical Garden", description: "Fresh sage and soft ivory", background: "#e9f0e5", ink: "#20352b", accent: "#8b9c72", font: "Playfair Display" },
-  { id: "rose", name: "Rosewater", description: "Romantic blush and rose ink", background: "#f4dfdf", ink: "#512f38", accent: "#b66c7b", font: "Great Vibes" },
-  { id: "ivory", name: "Modern Ivory", description: "Quiet, editorial minimalism", background: "#f7f3ed", ink: "#25221f", accent: "#b88952", font: "DM Sans" },
-];
-
-const LAYER_LABELS: Record<Layer, string> = {
-  title: "Event title", guest: "Guest name", date: "Date", venue: "Venue",
-  qr: "QR code", icon: "Icon", frame: "Frame", polygon: "Polygon", custom: "Custom text",
-};
-
-const INITIAL_POSITIONS: Record<string, { x: number; y: number }> = {
-  title: { x: 50, y: 15 }, guest: { x: 50, y: 37 }, date: { x: 50, y: 48 },
-  venue: { x: 50, y: 56 }, qr: { x: 50, y: 73 }, icon: { x: 50, y: 50 },
-  frame: { x: 50, y: 50 }, polygon: { x: 50, y: 50 },
-};
-
-const INITIAL_TEXT_CONFIG: Record<string, TextLayerConfig> = {
-  title: { fontSize: 34, color: "", fontFamily: "Playfair Display", textAlign: "center", fontWeight: "600", letterSpacing: 0, lineHeight: 1.2 },
-  guest: { fontSize: 58, color: "", fontFamily: "Great Vibes", textAlign: "center", fontWeight: "400", letterSpacing: 0, lineHeight: 1.2 },
-  date: { fontSize: 16, color: "", fontFamily: "DM Sans", textAlign: "center", fontWeight: "400", letterSpacing: 0, lineHeight: 1.2 },
-  venue: { fontSize: 15, color: "", fontFamily: "DM Sans", textAlign: "center", fontWeight: "400", letterSpacing: 0, lineHeight: 1.2 },
-};
-
-const ICONS = [
-  { id: "star", name: "Star", svg: "★" }, { id: "heart", name: "Heart", svg: "♥" },
-  { id: "diamond", name: "Diamond", svg: "♦" }, { id: "club", name: "Club", svg: "♣" },
-  { id: "spade", name: "Spade", svg: "♠" }, { id: "crown", name: "Crown", svg: "👑" },
-  { id: "flower", name: "Flower", svg: "❀" }, { id: "leaf", name: "Leaf", svg: "🍃" },
-  { id: "music", name: "Music", svg: "♪" }, { id: "champagne", name: "Champagne", svg: "🥂" },
-  { id: "ring", name: "Ring", svg: "💍" }, { id: "butterfly", name: "Butterfly", svg: "🦋" },
-  { id: "snowflake", name: "Snowflake", svg: "❄" }, { id: "sun", name: "Sun", svg: "☀" },
-  { id: "moon", name: "Moon", svg: "🌙" }, { id: "sparkle", name: "Sparkle", svg: "✨" },
-];
-
-// ============================================================================
-// HELPER: Replace variables in text with preview values
-// ============================================================================
-function replaceVariables(text: string, previewData: Record<string, string>): string {
-  let result = text;
-  VARIABLES.forEach((v) => {
-    const regex = new RegExp(`\\[${v.key}\\]`, "g");
-    result = result.replace(regex, previewData[v.key] || v.example);
-  });
-  return result;
+function baseLayer(partial: Partial<ThemeLayer> & Pick<ThemeLayer, "id" | "type">): ThemeLayer {
+  return {
+    x: 25, y: 25, w: 50, h: 10, rotation: 0, opacity: 100,
+    locked: false, visible: true, ...partial,
+  };
 }
+
+const PRESET_THEMES: RoyalCardTheme[] = [
+  {
+    version: 2, id: "swahili-ivory-gold", name: "Swahili Ivory & Gold",
+    description: "Botanical ivory wedding with gold accents, front + check-in back",
+    category: "wedding", createdBy: "system", isPublic: true,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    size: { width: 900, height: 1200 },
+    variables: ["EVENT_CHARACTERS", "EVENT_DATE", "EVENT_VENUE", "EVENT_ADDRESS", "QR_CODE"],
+    pages: [
+      {
+        id: "front", name: "Invitation",
+        background: { type: "color", value: IVORY },
+        layers: [
+          baseLayer({ id: "f-floral-top", type: "image", name: "Floral frame (top)", x: 0, y: 0, w: 100, h: 22 }),
+          baseLayer({ id: "f-floral-bottom", type: "image", name: "Floral frame (bottom)", x: 0, y: 80, w: 100, h: 20 }),
+          baseLayer({ id: "f-families", type: "text", x: 20, y: 7, w: 60, h: 3, content: "TOGETHER WITH THEIR FAMILIES", fontSize: 12, fontFamily: "DM Sans", fontWeight: "500", color: GREEN, textAlign: "center", letterSpacing: 3 }),
+          baseLayer({ id: "f-invited", type: "text", x: 15, y: 10, w: 70, h: 10, content: "You are Invited", fontSize: 54, fontFamily: "Great Vibes", fontWeight: "400", color: GOLD, textAlign: "center", curve: "arc-up" }),
+          baseLayer({ id: "f-ceremony", type: "text", x: 25, y: 21, w: 50, h: 3, content: "TO THE WEDDING CEREMONY OF", fontSize: 12, fontFamily: "DM Sans", fontWeight: "500", color: GREEN, textAlign: "center", letterSpacing: 3 }),
+          baseLayer({ id: "f-photo", type: "image", name: "Couple photo", x: 17, y: 26, w: 66, h: 34, radius: 170, fit: "cover" }),
+          baseLayer({ id: "f-names", type: "text", x: 10, y: 62.5, w: 80, h: 8, content: "{{EVENT_CHARACTERS}}", fontSize: 46, fontFamily: "Playfair Display", fontWeight: "600", color: GREEN, textAlign: "center" }),
+          baseLayer({ id: "f-date", type: "text", x: 10, y: 71.5, w: 80, h: 4, content: "{{EVENT_DATE}}", fontSize: 15, fontFamily: "DM Sans", fontWeight: "500", color: GREEN, textAlign: "center", letterSpacing: 4 }),
+          baseLayer({ id: "f-divider", type: "shape", shapeType: "rectangle", x: 35, y: 77.5, w: 30, h: 0.35, shapeColor: GOLD_SOFT }),
+          baseLayer({ id: "f-venue", type: "text", x: 15, y: 80, w: 70, h: 7, content: "{{EVENT_VENUE}}\n{{EVENT_ADDRESS}}", fontSize: 14, fontFamily: "DM Sans", fontWeight: "500", color: GREEN, textAlign: "center", letterSpacing: 2, lineHeight: 1.7 }),
+          baseLayer({ id: "f-motto", type: "text", x: 25, y: 91, w: 50, h: 6, content: "Pamoja Daima, Milele", fontSize: 26, fontFamily: "Great Vibes", fontWeight: "400", color: GOLD, textAlign: "center" }),
+        ],
+      },
+      {
+        id: "back", name: "Check-in",
+        background: { type: "color", value: IVORY },
+        layers: [
+          baseLayer({ id: "b-floral-top", type: "image", name: "Floral frame (top)", x: 0, y: 0, w: 100, h: 18 }),
+          baseLayer({ id: "b-floral-bottom", type: "image", name: "Floral frame (bottom)", x: 0, y: 84, w: 100, h: 16 }),
+          baseLayer({ id: "b-checkin", type: "text", x: 20, y: 9, w: 60, h: 4, content: "WEDDING CHECK-IN", fontSize: 17, fontFamily: "DM Sans", fontWeight: "600", color: GREEN, textAlign: "center", letterSpacing: 6 }),
+          baseLayer({ id: "b-scan", type: "text", x: 20, y: 14, w: 60, h: 10, content: "Scan QR Code", fontSize: 52, fontFamily: "Great Vibes", fontWeight: "400", color: GREEN, textAlign: "center" }),
+          baseLayer({ id: "b-hint", type: "text", x: 20, y: 25, w: 60, h: 5, content: "TO CHECK IN AND CONFIRM\nYOUR ATTENDANCE", fontSize: 11, fontFamily: "DM Sans", fontWeight: "500", color: GREEN, textAlign: "center", letterSpacing: 2, lineHeight: 1.7 }),
+          baseLayer({ id: "b-qr", type: "qr", name: "Check-in QR", x: 28, y: 34, w: 44, h: 44, qrVariable: "QR_CODE" }),
+          baseLayer({ id: "b-camera", type: "text", x: 20, y: 81, w: 60, h: 5, content: "OPEN YOUR CAMERA APP\nAND SCAN THE QR CODE", fontSize: 11, fontFamily: "DM Sans", fontWeight: "600", color: GREEN, textAlign: "center", letterSpacing: 2, lineHeight: 1.7 }),
+          baseLayer({ id: "b-thanks", type: "text", x: 22, y: 90, w: 56, h: 7, content: "Thank you for being part\nof our special day", fontSize: 23, fontFamily: "Great Vibes", fontWeight: "400", color: GREEN, textAlign: "center", lineHeight: 1.4 }),
+        ],
+      },
+    ],
+  },
+];
 
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
-export default function CardTemplatesPage() {
-  const [design, setDesign] = useState<Design>(DESIGNS[0]);
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(INITIAL_POSITIONS);
-  const [activeLayer, setActiveLayer] = useState<Layer>("title");
-  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
-  const [backgroundFileId, setBackgroundFileId] = useState("");
-  const [eventId, setEventId] = useState("");
-  const [guestId, setGuestId] = useState("");
-  const [draggingLayer, setDraggingLayer] = useState<string | null>(null);
-  const [draggingCustomId, setDraggingCustomId] = useState<string | null>(null);
+export default function CardStudioPage() {
+  const qc = useQueryClient();
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  const [textConfigs, setTextConfigs] = useState<Record<string, TextLayerConfig>>(INITIAL_TEXT_CONFIG);
+  const [view, setView] = useState<"gallery" | "editor">("gallery");
+  const [theme, setTheme] = useState<RoyalCardTheme>(emptyTheme());
+  const [activePageId, setActivePageId] = useState("front");
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(0.55);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [showVariablePicker, setShowVariablePicker] = useState(false);
+  const [showPreviewData, setShowPreviewData] = useState(false);
+  const [uploading, setUploading] = useState<"background" | "layer" | null>(null);
+  const [previewData, setPreviewData] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<{ past: RoyalCardTheme[]; future: RoyalCardTheme[] }>({ past: [], future: [] });
 
-  // Custom text layers (NEW)
-  const [customTexts, setCustomTexts] = useState<CustomTextLayer[]>([]);
-  const [activeCustomId, setActiveCustomId] = useState<string | null>(null);
-  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
-
-  // Variable menu
-  const [showVariableMenu, setShowVariableMenu] = useState(false);
-  const [variableTargetId, setVariableTargetId] = useState<string | null>(null);
-  const [variableTargetLayer, setVariableTargetLayer] = useState<keyof typeof INITIAL_TEXT_CONFIG | null>(null);
-
-  // Other layers
-  const [icons, setIcons] = useState<IconLayer[]>([]);
-  const [frame, setFrame] = useState<FrameLayer>({ type: "none", x: 50, y: 50, width: 90, height: 90, color: "transparent", borderWidth: 2, borderColor: design.accent, rotation: 0 });
-  const [polygons, setPolygons] = useState<PolygonLayer[]>([]);
-
-  // UI state
-  const [showTextEditor, setShowTextEditor] = useState(false);
-  const [showIconLibrary, setShowIconLibrary] = useState(false);
-  const [showFrameTools, setShowFrameTools] = useState(false);
-  const [showPolygonTools, setShowPolygonTools] = useState(false);
-  const [showCustomTextPanel, setShowCustomTextPanel] = useState(false);
-  const [customText, setCustomText] = useState({ title: "", guest: "", date: "", venue: "" });
-
-  // Preview data (for variable replacement)
-  const [previewOverrides, setPreviewOverrides] = useState<Record<string, string>>({});
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-
-  const previewData = useMemo(() => {
-    const base: Record<string, string> = {};
-    VARIABLES.forEach((v) => { base[v.key] = v.example; });
-    return { ...base, ...previewOverrides };
-  }, [previewOverrides]);
-
-  // Queries
-  const { data: events = [] } = useQuery({
-    queryKey: ["card-events"],
-    queryFn: async () => (await api.get("/events?per_page=100")).data.data ?? [],
-  });
-  const { data: savedDesigns = [] } = useQuery({
-    queryKey: ["active-card-designs"],
+  const { data: savedThemes = [] } = useQuery({
+    queryKey: ["card-themes"],
     queryFn: async () => (await api.get("/cards/templates")).data.data ?? [],
   });
-  const { data: guests = [] } = useQuery({
-    queryKey: ["card-guests", eventId],
-    queryFn: async () => (await api.get(`/events/${eventId}/guests?per_page=500`)).data.data ?? [],
-    enabled: !!eventId,
-  });
 
-  const selectedEvent: any = events.find((item: any) => item.id === eventId);
-  const selectedGuest: any = guests.find((item: any) => item.id === guestId);
-
-  const { data: invitations = [] } = useQuery({
-    queryKey: ["card-invitations", eventId],
-    queryFn: async () => {
-      const response = await api.get(`/events/${eventId}/invitations`);
-      return response.data.data ?? [];
-    },
-    enabled: !!eventId,
-  });
-
-  const selectedInvitation: any = invitations.find((item: any) => item.guest_id === guestId);
-
-  const { data: qrUrl } = useQuery({
-    queryKey: ["card-qr", eventId, selectedInvitation?.id],
-    queryFn: async () => {
-      const response = await api.get(`/events/${eventId}/invitations/${selectedInvitation.id}/qr`, { responseType: "blob" });
-      return URL.createObjectURL(response.data);
-    },
-    enabled: !!eventId && !!selectedInvitation?.id,
-  });
-
-  // Build preview data from real event/guest
-  useEffect(() => {
-    if (selectedEvent || selectedGuest) {
-      const overrides: Record<string, string> = {};
-      if (selectedEvent) {
-        overrides.EVENT_TITLE = selectedEvent.title || "";
-        overrides.EVENT_VENUE = selectedEvent.venue_name || "";
-        overrides.EVENT_DATE = selectedEvent.event_date ? new Date(selectedEvent.event_date).toLocaleDateString("sw-TZ", { day: "numeric", month: "long", year: "numeric" }) : "";
-        overrides.EVENT_START_TIME = selectedEvent.event_time || "";
-        overrides.EVENT_TYPE = selectedEvent.event_type || "Harusi";
-        overrides.CHURCH = selectedEvent.church || "";
-        overrides.EVENT_ORGANISATION_NAME = selectedEvent.organisation_name || "";
-        overrides.EVENT_CHARACTER_NAME1 = selectedEvent.character_name_1 || "";
-        overrides.EVENT_CHARACTER_NAME2 = selectedEvent.character_name_2 || "";
-      }
-      if (selectedGuest) {
-        overrides.GUEST_NAME = selectedGuest.full_name || "";
-        overrides.GUEST_SEATNO = selectedGuest.table_number || "";
-        overrides.GUEST_CATEGORY = selectedGuest.guest_category || "";
-      }
-      setPreviewOverrides(overrides);
-    }
-  }, [selectedEvent, selectedGuest]);
-
-  const galleryDesigns = useMemo<Design[]>(() => [
-    ...DESIGNS,
-    ...savedDesigns.map((template: any) => {
-      const config = template.theme_config ?? {};
-      return {
-        id: `saved-${template.id}`, sourceId: template.id, name: template.name,
-        description: template.description ?? "Published admin design",
-        background: config.background_color ?? "#f7f3ed",
-        ink: config.text_color ?? "#25221f",
-        accent: config.accent_color ?? "#b88952",
-        font: config.font_family ?? "Playfair Display",
-        previewImage: template.preview_image_url ?? undefined,
-      };
-    }),
-  ], [savedDesigns]);
-
-  const values = useMemo(() => ({
-    title: (customText.title || selectedEvent?.title) ?? "An Evening to Remember",
-    guest: (customText.guest || selectedGuest?.full_name) ?? "Guest of Honour",
-    date: customText.date || (selectedEvent?.event_date ? new Date(selectedEvent.event_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "Saturday, 14 December 2026"),
-    venue: (customText.venue || selectedEvent?.venue_name) ?? "The Royal Garden",
-  }), [selectedEvent, selectedGuest, customText]);
-
-  // ============================================================================
-  // MUTATIONS
-  // ============================================================================
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      if (file.type === "image/svg+xml") {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve({ data: { file_id: "svg-inline", svg_data: e.target?.result } });
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-      }
-      const form = new FormData();
-      form.append("file", file);
-      return api.post("/files/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
-    },
-    onSuccess: (response: any, file) => {
-      if (file.type === "image/svg+xml") {
-        setBackgroundFileId("svg-inline");
-        setBackgroundUrl(response.data.svg_data);
-      } else {
-        setBackgroundFileId(response.data.data.file_id);
-        setBackgroundUrl(URL.createObjectURL(file));
-      }
-      toast.success("Background uploaded");
-    },
-    onError: () => toast.error("Background upload failed"),
-  });
-
-  const saveDesignMutation = useMutation({
-    mutationFn: async (payload: any) => api.post("/cards/templates", payload),
-    onSuccess: () => { toast.success("Design saved as template"); },
+  const saveThemeMutation = useMutation({
+    mutationFn: (payload: any) => api.post("/cards/templates", payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["card-themes"] }); localStorage.removeItem(DRAFT_KEY); toast.success("Theme saved"); setView("gallery"); },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to save"),
   });
 
-  const sendMutation = useMutation({
-    mutationFn: (channel: string) => api.post(`/events/${eventId}/invitations/send`, { guest_ids: [guestId], channel }),
-    onSuccess: () => toast.success("Card sent to guest"),
-    onError: (error: any) => toast.error(error?.response?.data?.error?.message ?? "Could not send card"),
+  const updateThemeMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: any }) => api.put(`/cards/templates/${id}`, payload),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["card-themes"] }); localStorage.removeItem(DRAFT_KEY); toast.success("Theme updated"); setView("gallery"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to update"),
   });
 
-  // ============================================================================
-  // HANDLERS
-  // ============================================================================
-  const moveLayer = (layer: string, event: React.PointerEvent<HTMLDivElement>) => {
-    const bounds = canvasRef.current?.getBoundingClientRect();
-    if (!bounds) return;
-    const x = Math.round(((event.clientX - bounds.left) / bounds.width) * 100);
-    const y = Math.round(((event.clientY - bounds.top) / bounds.height) * 100);
-    setPositions((current) => ({ ...current, [layer]: { x, y } }));
-  };
+  const currentPage = theme.pages.find((p) => p.id === activePageId) ?? theme.pages[0];
+  const selectedLayer = currentPage?.layers.find((l) => l.id === selectedLayerId);
 
-  const moveCustomText = (id: string, event: React.PointerEvent<HTMLDivElement>) => {
-    const bounds = canvasRef.current?.getBoundingClientRect();
-    if (!bounds) return;
-    const x = Math.round(((event.clientX - bounds.left) / bounds.width) * 100);
-    const y = Math.round(((event.clientY - bounds.top) / bounds.height) * 100);
-    setCustomTexts((prev) => prev.map((t) => (t.id === id ? { ...t, x, y } : t)));
-  };
+  // ------------------------------------------------------------ history
+  const commit = useCallback((updater: (t: RoyalCardTheme) => RoyalCardTheme) => {
+    setHistory((h) => ({ past: [...h.past.slice(-49), theme], future: [] }));
+    setTheme(updater);
+  }, [theme]);
 
-  const addCustomText = (initialContent: string = "New text box") => {
-    const newLayer: CustomTextLayer = {
-      id: `custom-${Date.now()}`,
-      content: initialContent,
-      x: 50, y: 50,
-      fontSize: 16, color: design.ink, fontFamily: design.font,
-      fontWeight: "400", textAlign: "center", letterSpacing: 0, lineHeight: 1.2,
-      shape: "straight", arcRadius: 200, rotation: 0, maxWidth: 80, visible: true,
-    };
-    setCustomTexts([...customTexts, newLayer]);
-    setActiveCustomId(newLayer.id);
-    setActiveLayer("custom");
-    setShowCustomTextPanel(true);
-    toast.success("Text box added");
-  };
-
-  const updateCustomText = (id: string, updates: Partial<CustomTextLayer>) => {
-    setCustomTexts((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
-  };
-
-  const deleteCustomText = (id: string) => {
-    setCustomTexts((prev) => prev.filter((t) => t.id !== id));
-    if (activeCustomId === id) setActiveCustomId(null);
-    toast.success("Text box deleted");
-  };
-
-  const duplicateCustomText = (id: string) => {
-    const source = customTexts.find((t) => t.id === id);
-    if (!source) return;
-    const newLayer: CustomTextLayer = { ...source, id: `custom-${Date.now()}`, x: source.x + 3, y: source.y + 3 };
-    setCustomTexts([...customTexts, newLayer]);
-    setActiveCustomId(newLayer.id);
-    toast.success("Text box duplicated");
-  };
-
-  const insertVariable = (variableKey: string) => {
-    const varText = `[${variableKey}]`;
-    if (variableTargetLayer && textConfigs[variableTargetLayer]) {
-      const current = customText[variableTargetLayer as keyof typeof customText] || values[variableTargetLayer as keyof typeof values] || "";
-      setCustomText((prev) => ({ ...prev, [variableTargetLayer]: current + " " + varText }));
-    } else if (variableTargetId) {
-      const target = customTexts.find((t) => t.id === variableTargetId);
-      if (target) {
-        updateCustomText(variableTargetId, { content: target.content + " " + varText });
-      }
-    }
-    setShowVariableMenu(false);
-    setVariableTargetId(null);
-    setVariableTargetLayer(null);
-    toast.success(`Variable [${variableKey}] inserted`);
-  };
-
-  const addIcon = (icon: string) => {
-    const newIcon: IconLayer = { id: `icon-${Date.now()}`, icon, x: 50, y: 50, size: 48, color: design.accent, rotation: 0 };
-    setIcons([...icons, newIcon]);
-    setActiveLayer("icon");
-    setShowIconLibrary(false);
-    toast.success("Icon added");
-  };
-
-  const removeIcon = (id: string) => setIcons(icons.filter((icon) => icon.id !== id));
-  const updateIcon = (id: string, updates: Partial<IconLayer>) => setIcons(icons.map((icon) => (icon.id === id ? { ...icon, ...updates } : icon)));
-  const updateFrame = (updates: Partial<FrameLayer>) => setFrame((prev) => ({ ...prev, ...updates }));
-
-  const addPolygon = (type: PolygonType) => {
-    const newPolygon: PolygonLayer = {
-      id: `polygon-${Date.now()}`, type, x: 50, y: 50, size: 60,
-      color: design.accent + "40", borderColor: design.accent, borderWidth: 2, rotation: 0,
-      sides: type === "triangle" ? 3 : type === "pentagon" ? 5 : type === "hexagon" ? 6 : 5,
-    };
-    setPolygons([...polygons, newPolygon]);
-    setActiveLayer("polygon");
-    setShowPolygonTools(false);
-    toast.success("Polygon added");
-  };
-
-  const removePolygon = (id: string) => setPolygons(polygons.filter((p) => p.id !== id));
-  const updatePolygon = (id: string, updates: Partial<PolygonLayer>) => setPolygons(polygons.map((p) => (p.id === id ? { ...p, ...updates } : p)));
-
-  const updateTextConfig = (layer: string, updates: Partial<TextLayerConfig>) => {
-    setTextConfigs((prev) => ({ ...prev, [layer]: { ...prev[layer], ...updates } }));
-  };
-
-  const getPolygonClipPath = (type: PolygonType): string => {
-    switch (type) {
-      case "triangle": return "polygon(50% 0%, 0% 100%, 100% 100%)";
-      case "pentagon": return "polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)";
-      case "hexagon": return "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)";
-      case "star": return "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)";
-      default: return "none";
-    }
-  };
-
-  const getPolygonPoints = (type: PolygonType, radius: number, sides?: number): { x: number; y: number }[] => {
-    const points: { x: number; y: number }[] = [];
-    const numSides = sides || (type === "triangle" ? 3 : type === "pentagon" ? 5 : type === "hexagon" ? 6 : 5);
-    if (type === "star") {
-      for (let i = 0; i < 10; i++) {
-        const r = i % 2 === 0 ? radius : radius * 0.4;
-        const angle = (i * Math.PI) / 5 - Math.PI / 2;
-        points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
-      }
-    } else {
-      for (let i = 0; i < numSides; i++) {
-        const angle = (i * 2 * Math.PI) / numSides - Math.PI / 2;
-        points.push({ x: radius * Math.cos(angle), y: radius * Math.sin(angle) });
-      }
-    }
-    return points;
-  };
-
-  // ============================================================================
-  // EXPORT FUNCTIONS
-  // ============================================================================
-  const drawCanvas = async (canvas: HTMLCanvasElement) => {
-    const width = 900;
-    const height = 1200;
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-
-    // Background
-    if (backgroundUrl) {
-      if (backgroundFileId === "svg-inline" && backgroundUrl.startsWith("data:image/svg+xml")) {
-        const svgData = backgroundUrl.split(",")[1];
-        const svgBlob = new Blob([decodeURIComponent(svgData)], { type: "image/svg+xml;charset=utf-8" });
-        const url = URL.createObjectURL(svgBlob);
-        const img = new Image();
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => {
-            const imgRatio = img.width / img.height;
-            const canvasRatio = width / height;
-            let drawWidth, drawHeight, drawX, drawY;
-            if (imgRatio > canvasRatio) {
-              drawWidth = width; drawHeight = width / imgRatio; drawX = 0; drawY = (height - drawHeight) / 2;
-            } else {
-              drawHeight = height; drawWidth = height * imgRatio; drawX = (width - drawWidth) / 2; drawY = 0;
-            }
-            context.drawImage(img, drawX, drawY, drawWidth, drawHeight);
-            context.fillStyle = "rgba(0,0,0,0.08)";
-            context.fillRect(0, 0, width, height);
-            URL.revokeObjectURL(url);
-            resolve();
-          };
-          img.onerror = reject;
-          img.src = url;
-        });
-      } else {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => {
-            context.drawImage(img, 0, 0, width, height);
-            context.fillStyle = "rgba(0,0,0,0.08)";
-            context.fillRect(0, 0, width, height);
-            resolve();
-          };
-          img.onerror = reject;
-          img.src = backgroundUrl;
-        });
-      }
-    } else {
-      context.fillStyle = design.background;
-      context.fillRect(0, 0, width, height);
-    }
-
-    // Frame
-    if (frame.type !== "none") {
-      context.save();
-      const frameX = (frame.x / 100) * width;
-      const frameY = (frame.y / 100) * height;
-      const frameW = (frame.width / 100) * width;
-      const frameH = (frame.height / 100) * height;
-      context.translate(frameX, frameY);
-      context.rotate((frame.rotation * Math.PI) / 180);
-      if (frame.color && frame.color !== "transparent") {
-        context.fillStyle = frame.color;
-        if (frame.type === "ellipse") {
-          context.beginPath();
-          context.ellipse(0, 0, frameW / 2, frameH / 2, 0, 0, 2 * Math.PI);
-          context.fill();
-        } else if (frame.type === "rectangle") {
-          context.fillRect(-frameW / 2, -frameH / 2, frameW, frameH);
-        }
-      }
-      if (frame.borderWidth > 0) {
-        context.strokeStyle = frame.borderColor;
-        context.lineWidth = frame.borderWidth;
-        if (frame.type === "ellipse") {
-          context.beginPath();
-          context.ellipse(0, 0, frameW / 2, frameH / 2, 0, 0, 2 * Math.PI);
-          context.stroke();
-        } else if (frame.type === "rectangle") {
-          context.strokeRect(-frameW / 2, -frameH / 2, frameW, frameH);
-        }
-      }
-      context.restore();
-    }
-
-    // Polygons
-    polygons.forEach((polygon) => {
-      context.save();
-      const polyX = (polygon.x / 100) * width;
-      const polyY = (polygon.y / 100) * height;
-      context.translate(polyX, polyY);
-      context.rotate((polygon.rotation * Math.PI) / 180);
-      context.fillStyle = polygon.color;
-      context.strokeStyle = polygon.borderColor;
-      context.lineWidth = polygon.borderWidth;
-      context.beginPath();
-      const points = getPolygonPoints(polygon.type, polygon.size / 2, polygon.sides);
-      context.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) context.lineTo(points[i].x, points[i].y);
-      context.closePath();
-      context.fill();
-      if (polygon.borderWidth > 0) context.stroke();
-      context.restore();
+  const undo = useCallback(() => {
+    setHistory((h) => {
+      if (!h.past.length) return h;
+      const prev = h.past[h.past.length - 1];
+      setTheme(prev);
+      setSelectedLayerId(null);
+      return { past: h.past.slice(0, -1), future: [theme, ...h.future] };
     });
+  }, [theme]);
 
-    // Icons
-    icons.forEach((icon) => {
-      context.save();
-      const iconX = (icon.x / 100) * width;
-      const iconY = (icon.y / 100) * height;
-      context.translate(iconX, iconY);
-      context.rotate((icon.rotation * Math.PI) / 180);
-      context.fillStyle = icon.color;
-      context.font = `${icon.size}px serif`;
-      context.textAlign = "center";
-      context.textBaseline = "middle";
-      context.fillText(icon.icon, 0, 0);
-      context.restore();
+  const redo = useCallback(() => {
+    setHistory((h) => {
+      if (!h.future.length) return h;
+      const next = h.future[0];
+      setTheme(next);
+      setSelectedLayerId(null);
+      return { past: [...h.past, theme], future: h.future.slice(1) };
     });
+  }, [theme]);
 
-    // Fixed text layers
-    const drawText = (text: string, layer: string) => {
-      const config = textConfigs[layer];
-      if (!config) return;
-      const point = positions[layer];
-      if (!point) return;
-      const x = (point.x / 100) * width;
-      const y = (point.y / 100) * height;
-      const processedText = replaceVariables(text, previewData);
-      context.font = `${config.fontWeight} ${config.fontSize}px "${config.fontFamily}"`;
-      context.fillStyle = config.color || design.ink;
-      context.textAlign = config.textAlign;
-      let textX = x;
-      if (config.textAlign === "left") textX = x - width / 2;
-      else if (config.textAlign === "right") textX = x + width / 2;
-      context.fillText(processedText, textX, y);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (view !== "editor") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
     };
-    drawText(values.title, "title");
-    drawText(values.guest, "guest");
-    drawText(values.date, "date");
-    drawText(values.venue, "venue");
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, undo, redo]);
 
-    // Custom text layers (with curved text support)
-    customTexts.forEach((ct) => {
-      if (!ct.visible) return;
-      const processedContent = replaceVariables(ct.content, previewData);
-      const x = (ct.x / 100) * width;
-      const y = (ct.y / 100) * height;
+  // ------------------------------------------------------------ autosave draft
+  useEffect(() => {
+    if (view !== "editor") return;
+    const t = setTimeout(() => localStorage.setItem(DRAFT_KEY, JSON.stringify(theme)), 1500);
+    return () => clearTimeout(t);
+  }, [theme, view]);
 
-      context.save();
-      context.translate(x, y);
-      context.rotate((ct.rotation * Math.PI) / 180);
-      context.font = `${ct.fontWeight} ${ct.fontSize}px "${ct.fontFamily}"`;
-      context.fillStyle = ct.color || design.ink;
-      context.textAlign = ct.textAlign;
-      context.letterSpacing = `${ct.letterSpacing}px`;
-
-      if (ct.shape === "straight") {
-        // Word wrap for long text
-        const maxWidthPx = (ct.maxWidth / 100) * width;
-        const words = processedContent.split(" ");
-        const lines: string[] = [];
-        let currentLine = "";
-        for (const word of words) {
-          const testLine = currentLine ? `${currentLine} ${word}` : word;
-          const metrics = context.measureText(testLine);
-          if (metrics.width > maxWidthPx && currentLine) {
-            lines.push(currentLine);
-            currentLine = word;
-          } else {
-            currentLine = testLine;
-          }
-        }
-        if (currentLine) lines.push(currentLine);
-
-        let textX = 0;
-        if (ct.textAlign === "left") textX = -maxWidthPx / 2;
-        else if (ct.textAlign === "right") textX = maxWidthPx / 2;
-
-        lines.forEach((line, idx) => {
-          context.fillText(line, textX, idx * ct.fontSize * ct.lineHeight);
-        });
-      } else if (ct.shape === "arc-up" || ct.shape === "arc-down") {
-        // Curved text along arc
-        const radius = ct.arcRadius;
-        const direction = ct.shape === "arc-up" ? -1 : 1;
-        const chars = processedContent.split("");
-        const totalAngle = chars.length * 0.08;
-        let startAngle = -Math.PI / 2 - totalAngle / 2;
-
-        chars.forEach((char, idx) => {
-          const angle = startAngle + (idx * totalAngle) / (chars.length - 1 || 1);
-          const charX = Math.cos(angle) * radius * direction;
-          const charY = Math.sin(angle) * radius * direction;
-          context.save();
-          context.translate(charX, charY);
-          context.rotate(angle + Math.PI / 2);
-          context.fillText(char, 0, 0);
-          context.restore();
-        });
-      } else if (ct.shape === "circle") {
-        const radius = ct.arcRadius;
-        const chars = processedContent.split("");
-        const totalAngle = (chars.length * 0.1) % (Math.PI * 2);
-        chars.forEach((char, idx) => {
-          const angle = (idx / chars.length) * Math.PI * 2 - Math.PI / 2;
-          const charX = Math.cos(angle) * radius;
-          const charY = Math.sin(angle) * radius;
-          context.save();
-          context.translate(charX, charY);
-          context.rotate(angle + Math.PI / 2);
-          context.fillText(char, 0, 0);
-          context.restore();
-        });
-      }
-      context.restore();
-    });
-
-    // Border
-    context.strokeStyle = design.accent;
-    context.lineWidth = 4;
-    context.strokeRect(55, 55, width - 110, height - 110);
-
-    // QR label
-    context.fillStyle = design.accent;
-    context.font = "20px DM Sans";
-    context.textAlign = "center";
-    context.fillText("SCAN TO CHECK IN", width / 2, (positions.qr.y / 100) * height + 180);
+  // ------------------------------------------------------------ actions
+  const resetTheme = () => {
+    setTheme(emptyTheme());
+    setActivePageId("front");
+    setSelectedLayerId(null);
+    setHistory({ past: [], future: [] });
   };
 
-  const exportPng = async () => {
-    const canvas = document.createElement("canvas");
-    await drawCanvas(canvas);
-    const link = document.createElement("a");
-    link.download = `${design.name.toLowerCase().replaceAll(" ", "-")}.png`;
-    link.href = canvas.toDataURL("image/png");
-    link.click();
-    toast.success("PNG downloaded");
+  const loadTheme = (raw: any) => {
+    const t = normalizeTheme(raw.theme_config ? { ...raw.theme_config, id: raw.id, name: raw.name, description: raw.description, category: raw.category } : raw);
+    setTheme({ ...t, id: raw.id ?? t.id, name: raw.name ?? t.name });
+    setActivePageId(t.pages[0]?.id ?? "front");
+    setSelectedLayerId(null);
+    setHistory({ past: [], future: [] });
   };
 
-  const exportPdf = async () => {
-    const canvas = document.createElement("canvas");
-    await drawCanvas(canvas);
-    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a6" });
-    const imgData = canvas.toDataURL("image/png");
-    pdf.addImage(imgData, "PNG", 0, 0, 105, 148);
-    pdf.save(`${design.name.toLowerCase().replaceAll(" ", "-")}.pdf`);
-    toast.success("PDF downloaded");
+  const addPage = () => {
+    const id = `page_${Date.now().toString(36)}`;
+    commit((t) => ({
+      ...t,
+      pages: [...t.pages, { id, name: `Page ${t.pages.length + 1}`, background: { type: "color", value: "#FBF6EA" }, layers: [] }],
+    }));
+    setActivePageId(id);
   };
 
-  const saveAsTemplate = () => {
+  const removePage = (pageId: string) => {
+    if (theme.pages.length <= 1) return toast.error("A theme needs at least one page");
+    commit((t) => ({ ...t, pages: t.pages.filter((p) => p.id !== pageId) }));
+    if (activePageId === pageId) setActivePageId(theme.pages.find((p) => p.id !== pageId)?.id ?? "front");
+  };
+
+  const updatePage = (pageId: string, updates: Partial<CardPage>) =>
+    commit((t) => ({ ...t, pages: t.pages.map((p) => (p.id === pageId ? { ...p, ...updates } : p)) }));
+
+  const updateLayer = (layerId: string, updates: Partial<ThemeLayer>) =>
+    updatePage(currentPage.id, { layers: currentPage.layers.map((l) => (l.id === layerId ? { ...l, ...updates } : l)) });
+
+  const deleteLayer = (layerId: string) => {
+    updatePage(currentPage.id, { layers: currentPage.layers.filter((l) => l.id !== layerId) });
+    if (selectedLayerId === layerId) setSelectedLayerId(null);
+  };
+
+  const duplicateLayer = (layerId: string) => {
+    const src = currentPage.layers.find((l) => l.id === layerId);
+    if (!src) return;
+    const copy = { ...src, id: `layer_${Date.now().toString(36)}`, x: Math.min(src.x + 3, 95), y: Math.min(src.y + 3, 95), name: src.name ? `${src.name} copy` : undefined };
+    updatePage(currentPage.id, { layers: [...currentPage.layers, copy] });
+    setSelectedLayerId(copy.id);
+  };
+
+  const moveLayer = (layerId: string, dir: "up" | "down") => {
+    const idx = currentPage.layers.findIndex((l) => l.id === layerId);
+    const j = dir === "up" ? idx + 1 : idx - 1; // "up" = later in array = visually on top
+    if (idx < 0 || j < 0 || j >= currentPage.layers.length) return;
+    const layers = [...currentPage.layers];
+    [layers[idx], layers[j]] = [layers[j], layers[idx]];
+    updatePage(currentPage.id, { layers });
+  };
+
+  const addLayer = (type: ThemeLayer["type"], preset: Partial<ThemeLayer> = {}): string => {
+    const id = `layer_${Date.now().toString(36)}`;
+    const defaults: Partial<ThemeLayer> =
+      type === "text" ? { x: 20, y: 20, w: 60, h: 8, content: "New text", fontSize: 24, fontFamily: "DM Sans", fontWeight: "400", color: GREEN, textAlign: "center", curve: "none" }
+      : type === "shape" ? { x: 35, y: 45, w: 30, h: 4, shapeType: "rectangle", shapeColor: GOLD_SOFT }
+      : type === "qr" ? { x: 38, y: 38, w: 24, h: 24, qrVariable: "QR_CODE" }
+      : { x: 25, y: 30, w: 50, h: 30, fit: "cover", radius: 0 };
+    updatePage(currentPage.id, { layers: [...currentPage.layers, baseLayer({ id, type, ...defaults, ...preset })] });
+    setSelectedLayerId(id);
+    return id;
+  };
+
+  const insertVariable = (key: string) => {
+    if (!selectedLayer || selectedLayer.type !== "text") return;
+    updateLayer(selectedLayer.id, { content: (selectedLayer.content ?? "") + `{{${key}}}` });
+    setShowVariablePicker(false);
+  };
+
+  const uploadFile = async (file: File): Promise<{ url: string; fileId?: string }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await api.post("/files/upload", form);
+    const d = res.data.data ?? {};
+    return { url: d.url ?? d.path ?? URL.createObjectURL(file), fileId: d.file_id ?? d.id };
+  };
+
+  const handleBackgroundUpload = async (file: File) => {
+    setUploading("background");
+    try {
+      const { url, fileId } = await uploadFile(file);
+      updatePage(currentPage.id, { background: { type: "image", value: url, fileId } });
+      toast.success("Background uploaded");
+    } catch { toast.error("Failed to upload background"); }
+    finally { setUploading(null); }
+  };
+
+  const handleImageLayerUpload = async (file: File, layerId?: string) => {
+    setUploading("layer");
+    const objectUrl = URL.createObjectURL(file);
+    const targetId = layerId ?? addLayer("image", { src: objectUrl });
+    try {
+      const { url, fileId } = await uploadFile(file);
+      updateLayer(targetId, { src: url, fileId });
+      toast.success("Image uploaded");
+    } catch { toast.error("Failed to upload image"); }
+    finally { setUploading(null); }
+  };
+
+  const saveAsTheme = () => {
     const payload = {
-      name: `${design.name} - Custom`,
-      description: "Custom design from Card Studio",
-      theme_config: {
-        background_color: design.background,
-        text_color: design.ink,
-        accent_color: design.accent,
-        font_family: design.font,
-        positions,
-        text_configs: textConfigs,
-        custom_texts: customTexts,  // ✅ Include custom text layers
-        background_file_id: backgroundFileId || null,
-      },
-      background_file_id: backgroundFileId || null,
-      preview_image_url: null,
+      name: theme.name, description: theme.description, category: theme.category,
+      theme_config: { ...theme, variables: collectVariables(theme) },
     };
-    saveDesignMutation.mutate(payload);
+    if (theme.id && !theme.id.startsWith("custom_")) updateThemeMutation.mutate({ id: theme.id, payload });
+    else saveThemeMutation.mutate(payload);
+  };
+
+  // html2canvas fallback export. Scale compensates for editor zoom so output
+  // is always at the theme's true pixel size (×2 for retina).
+  const exportCard = async (format: "png" | "jpeg" | "pdf") => {
+    if (!canvasRef.current) return;
+    try {
+      const canvas = await html2canvas(canvasRef.current, {
+        scale: 2 / zoom, useCORS: true, allowTaint: true, backgroundColor: null,
+      });
+      if (format === "pdf") {
+        const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [theme.size.width, theme.size.height] });
+        pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, theme.size.width, theme.size.height);
+        pdf.save(`${theme.name.replace(/\s+/g, "_")}.pdf`);
+      } else {
+        const link = document.createElement("a");
+        link.download = `${theme.name.replace(/\s+/g, "_")}.${format}`;
+        link.href = canvas.toDataURL(`image/${format}`, 0.95);
+        link.click();
+      }
+      toast.success(`Exported as ${format.toUpperCase()}`);
+    } catch { toast.error("Export failed — install the server render route for reliable output"); }
   };
 
   // ============================================================================
-  // Apply preset when selecting a template with preset content
+  // INTERACTIVE LAYER (editor chrome: selection, drag, resize, inline edit)
   // ============================================================================
-  const applyDesign = (item: Design) => {
-    setDesign(item);
-    if (item.presetContent) {
-      setPositions({ ...INITIAL_POSITIONS, ...item.presetContent.positions });
-      setTextConfigs({ ...INITIAL_TEXT_CONFIG, ...item.presetContent.textConfigs });
-      setCustomTexts(item.presetContent.customTexts.map((ct, idx) => ({ ...ct, id: `custom-${Date.now()}-${idx}` })));
-    } else {
-      setPositions(INITIAL_POSITIONS);
-      setTextConfigs(INITIAL_TEXT_CONFIG);
-      setCustomTexts([]);
-    }
-    setBackgroundUrl(null);
-    setBackgroundFileId("");
+  const cw = theme.size.width, ch = theme.size.height;
+
+  const renderInteractiveLayer = (layer: ThemeLayer) => {
+    if (!layer.visible) return null;
+    const isSelected = selectedLayerId === layer.id;
+    const boxStyle: React.CSSProperties = {
+      outline: isSelected ? "2px solid #d4af37" : "1px dashed rgba(100,116,139,0.35)",
+      background: isSelected ? "rgba(212,175,55,0.06)" : "transparent",
+      pointerEvents: layer.locked ? "none" : "auto",
+    };
+
+    return (
+      <Rnd
+        key={layer.id}
+        scale={zoom}
+        bounds="parent"
+        disableDragging={layer.locked}
+        enableResizing={layer.locked ? false : undefined}
+        lockAspectRatio={layer.type === "qr" || (layer.type === "image" && (layer.fit ?? "cover") === "cover") ? undefined : false}
+        size={{ width: (layer.w / 100) * cw, height: (layer.h / 100) * ch }}
+        position={{ x: (layer.x / 100) * cw, y: (layer.y / 100) * ch }}
+        onDragStart={() => setSelectedLayerId(layer.id)}
+        onDragStop={(_, d) => updateLayer(layer.id, {
+          x: +((d.x / cw) * 100).toFixed(2),
+          y: +((d.y / ch) * 100).toFixed(2),
+        })}
+        onResizeStop={(_, __, ref, ___, pos) => updateLayer(layer.id, {
+          w: +((ref.offsetWidth / cw) * 100).toFixed(2),
+          h: +((ref.offsetHeight / ch) * 100).toFixed(2),
+          x: +((pos.x / cw) * 100).toFixed(2),
+          y: +((pos.y / ch) * 100).toFixed(2),
+        })}
+        onClick={(e) => { e.stopPropagation(); setSelectedLayerId(layer.id); }}
+        onDoubleClick={() => layer.type === "text" && !layer.locked && setEditingTextId(layer.id)}
+      >
+        <div style={{ ...boxStyle, width: "100%", height: "100%", overflow: "hidden" }}>
+          {renderLayerContent(layer, isSelected)}
+        </div>
+      </Rnd>
+    );
   };
 
-  // ============================================================================
-  // RENDER
-  // ============================================================================
-  const activeCustomText = customTexts.find((t) => t.id === activeCustomId);
+  const renderLayer = (layer: ThemeLayer, pageIndex: number) => {
+    if (!layer.visible) return null;
 
+    // ✅ FIX: Safely get canvas dimensions, defaulting to theme size if ref is missing
+    const cw = canvasRef.current?.offsetWidth || theme.size.width;
+    const ch = canvasRef.current?.offsetHeight || theme.size.height;
+
+    // Prevent NaN by ensuring cw/ch are never 0
+    const safeW = cw > 0 ? cw : 900;
+    const safeH = ch > 0 ? ch : 1200;
+
+    const baseStyle: React.CSSProperties = {
+      position: "absolute",
+      left: `${layer.x}%`,
+      top: `${layer.y}%`,
+      width: `${layer.w}%`,
+      height: `${layer.h}%`,
+      transform: `rotate(${layer.rotation}deg)`,
+      opacity: layer.opacity / 100,
+      zIndex: layer.zIndex || 0,
+    };
+
+  // ============================================================================
+  // GALLERY
+  // ============================================================================
+  if (view === "gallery") {
+    const draft = typeof window !== "undefined" ? localStorage.getItem(DRAFT_KEY) : null;
+    return (
+      <div className="space-y-6 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Card Templates</h1>
+            <p className="text-sm text-slate-500">Design invitation & check-in cards with the visual studio</p>
+          </div>
+          <Button onClick={() => { resetTheme(); setView("editor"); }}>
+            <Plus className="h-4 w-4 mr-2" /> Create New Template
+          </Button>
+        </div>
+
+        {draft && (
+          <button onClick={() => { loadTheme(JSON.parse(draft)); setView("editor"); }}
+            className="flex w-full items-center gap-3 rounded-xl border border-dashed border-gold-400 bg-gold-50 p-4 text-left transition hover:bg-gold-100">
+            <Sparkles className="h-5 w-5 text-gold-600" />
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Restore unsaved draft</p>
+              <p className="text-xs text-slate-500">You have an auto-saved theme from your last session</p>
+            </div>
+          </button>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {PRESET_THEMES.map((preset) => (
+            <button key={preset.id} onClick={() => { loadTheme(preset); setView("editor"); }}
+              className="p-4 rounded-xl border border-slate-200 bg-white hover:border-gold-400 hover:bg-gold-50 text-left transition shadow-sm">
+              <div className="h-32 rounded-lg mb-3 flex items-center justify-center" style={{ backgroundColor: preset.pages[0].background.value }}>
+                <Sparkles className="h-8 w-8 text-slate-400" />
+              </div>
+              <p className="font-semibold text-sm text-slate-900">{preset.name}</p>
+              <p className="text-xs text-slate-500">{preset.description}</p>
+              <Badge label="Preset" variant="gold" className="mt-2" />
+            </button>
+          ))}
+
+          {savedThemes.map((t: any) => (
+            <button key={t.id} onClick={() => { loadTheme(t); setView("editor"); }}
+              className="p-4 rounded-xl border border-slate-200 bg-white hover:border-gold-400 hover:bg-gold-50 text-left transition shadow-sm">
+              <div className="h-32 rounded-lg mb-3 bg-slate-100 flex items-center justify-center">
+                <Layers className="h-8 w-8 text-slate-400" />
+              </div>
+              <p className="font-semibold text-sm text-slate-900">{t.name}</p>
+              <p className="text-xs text-slate-500">{t.description || "Saved theme"}</p>
+              <Badge label="Saved" variant="blue" className="mt-2" />
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // EDITOR
+  // ============================================================================
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-gold-700">
-            <Sparkles className="h-4 w-4" /> Card Studio
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* Top bar */}
+      <div className="sticky top-0 z-50 bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setView("gallery")}>
+            <ArrowLeft className="h-4 w-4 mr-1" /> Gallery
+          </Button>
+          <Sparkles className="h-5 w-5 text-gold-600" />
+          <div>
+            <input value={theme.name} onChange={(e) => setTheme({ ...theme, name: e.target.value })}
+              className="text-lg font-bold text-slate-900 bg-transparent border-none outline-none" placeholder="Theme name" />
+            <p className="text-xs text-slate-500">
+              {theme.pages.length} page{theme.pages.length > 1 ? "s" : ""} · {theme.size.width}×{theme.size.height}px · {currentPage?.layers.length ?? 0} layers on this page
+            </p>
           </div>
-          <h1 className="text-3xl font-bold text-slate-900">Make the first impression unforgettable.</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Choose a refined starting point, add unlimited text boxes with database variables,
-            shape text in arcs or circles, then export or send a finished invitation.
-          </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={saveAsTemplate} isLoading={saveDesignMutation.isPending}>
-            <Copy className="h-4 w-4 mr-1" /> Save Template
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" onClick={undo} disabled={!history.past.length} title="Undo (Ctrl+Z)"><Undo2 className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="sm" onClick={redo} disabled={!history.future.length} title="Redo (Ctrl+Y)"><Redo2 className="h-4 w-4" /></Button>
+          <div className="flex items-center gap-1 border border-slate-200 rounded-md px-1">
+            <button onClick={() => setZoom((z) => Math.max(0.15, +(z - 0.1).toFixed(2)))} className="p-1.5 hover:bg-slate-100 rounded"><ZoomOut className="h-3.5 w-3.5" /></button>
+            <span className="text-xs w-11 text-center text-slate-600">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))} className="p-1.5 hover:bg-slate-100 rounded"><ZoomIn className="h-3.5 w-3.5" /></button>
+          </div>
+          <Button variant={previewMode ? "primary" : "outline"} size="sm" onClick={() => { setPreviewMode(!previewMode); setSelectedLayerId(null); }}>
+            <Eye className="h-4 w-4 mr-1" /> {previewMode ? "Exit Preview" : "Preview"}
           </Button>
-          <Button variant="outline" onClick={exportPng}>
-            <Download className="h-4 w-4" /> PNG
+          <Button variant="outline" size="sm" onClick={() => setShowPreviewData(true)}>
+            <Variable className="h-4 w-4 mr-1" /> Preview Data
           </Button>
-          <Button variant="outline" onClick={exportPdf}>
-            <FileText className="h-4 w-4" /> PDF
+          <Button variant="outline" size="sm" onClick={() => exportCard("png")}><Download className="h-4 w-4 mr-1" /> PNG</Button>
+          <Button variant="outline" size="sm" onClick={() => exportCard("pdf")}><FileText className="h-4 w-4 mr-1" /> PDF</Button>
+          <Button size="sm" onClick={saveAsTheme} isLoading={saveThemeMutation.isPending || updateThemeMutation.isPending}>
+            <Save className="h-4 w-4 mr-1" /> Save Theme
           </Button>
         </div>
-      </header>
-
-      <div className="grid gap-6 xl:grid-cols-[250px_minmax(420px,1fr)_320px]">
-        {/* Template Gallery */}
-        <Card title="Template gallery">
-          <div className="space-y-3">
-            {galleryDesigns.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => applyDesign(item)}
-                className={`w-full overflow-hidden rounded-xl border text-left transition ${design.id === item.id ? "border-gold-500 ring-2 ring-gold-200" : "border-slate-200 hover:border-gold-300"
-                  }`}
-              >
-                <div
-                  className="h-28 bg-cover bg-center p-3"
-                  style={{
-                    background: item.background,
-                    backgroundImage: item.previewImage ? `url(${item.previewImage})` : undefined,
-                    color: item.ink,
-                    fontFamily: item.font,
-                  }}
-                >
-                  <p className="text-[9px] uppercase tracking-[0.2em]" style={{ color: item.accent }}>Royal Entry</p>
-                  <p className="mt-5 text-lg">{item.name}</p>
-                </div>
-                <div className="p-3">
-                  <p className="text-sm font-semibold text-slate-800">{item.name}</p>
-                  <p className="text-xs text-slate-500">{item.description}</p>
-                  {item.presetContent && (
-                    <Badge label="Preset" variant="gold" className="mt-2" />
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </Card>
-
-        {/* Visual Editor Canvas */}
-        <Card title="Visual editor" action={<span className="text-xs text-slate-400">Drag layers into place</span>}>
-          <div
-            ref={canvasRef}
-            className="relative mx-auto aspect-[3/4] max-h-[720px] max-w-[540px] touch-none select-none overflow-hidden rounded-[2px] shadow-2xl"
-            style={{
-              backgroundColor: design.background,
-              color: design.ink,
-              backgroundImage: backgroundUrl
-                ? `linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.08)), url(${backgroundUrl})`
-                : design.previewImage
-                  ? `linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.08)), url(${design.previewImage})`
-                  : undefined,
-              backgroundSize: backgroundFileId === "svg-inline" ? "contain" : "cover",
-              backgroundPosition: "center",
-              backgroundRepeat: "no-repeat",
-              fontFamily: design.font,
-            }}
-            onClick={(event) => {
-              if (draggingLayer) moveLayer(draggingLayer, event as unknown as React.PointerEvent<HTMLDivElement>);
-              else if (draggingCustomId) moveCustomText(draggingCustomId, event as unknown as React.PointerEvent<HTMLDivElement>);
-              else moveLayer(activeLayer === "custom" && activeCustomId ? activeCustomId : activeLayer, event as unknown as React.PointerEvent<HTMLDivElement>);
-            }}
-            onPointerMove={(event) => {
-              if (draggingLayer) moveLayer(draggingLayer, event);
-              else if (draggingCustomId) moveCustomText(draggingCustomId, event);
-            }}
-            onPointerUp={() => { setDraggingLayer(null); setDraggingCustomId(null); }}
-            onPointerLeave={() => { setDraggingLayer(null); setDraggingCustomId(null); }}
-          >
-            {/* Frame */}
-            {frame.type !== "none" && (
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  left: `${frame.x}%`, top: `${frame.y}%`,
-                  width: `${frame.width}%`, height: `${frame.height}%`,
-                  transform: `translate(-50%, -50%) rotate(${frame.rotation}deg)`,
-                  border: `${frame.borderWidth}px solid ${frame.borderColor}`,
-                  backgroundColor: frame.color,
-                  borderRadius: frame.type === "ellipse" ? "50%" : frame.type === "flower" ? "30% 70% 70% 30% / 30% 30% 70% 70%" : "0",
-                }}
-              />
-            )}
-
-            {/* Polygons */}
-            {polygons.map((polygon) => (
-              <div
-                key={polygon.id}
-                className={`absolute cursor-grab ${activeLayer === "polygon" ? "ring-2 ring-gold-300 ring-offset-2" : "hover:ring-1 hover:ring-gold-200"}`}
-                style={{
-                  left: `${polygon.x}%`, top: `${polygon.y}%`,
-                  width: `${polygon.size}px`, height: `${polygon.size}px`,
-                  transform: `translate(-50%, -50%) rotate(${polygon.rotation}deg)`,
-                  backgroundColor: polygon.color,
-                  border: `${polygon.borderWidth}px solid ${polygon.borderColor}`,
-                  clipPath: getPolygonClipPath(polygon.type),
-                }}
-                onPointerDown={(e) => { e.stopPropagation(); setActiveLayer("polygon"); setDraggingLayer("polygon"); }}
-                onClick={(e) => { e.stopPropagation(); setActiveLayer("polygon"); }}
-              >
-                <button className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white text-xs hover:bg-red-600" onClick={(e) => { e.stopPropagation(); removePolygon(polygon.id); }}>×</button>
-              </div>
-            ))}
-
-            {/* Icons */}
-            {icons.map((icon) => (
-              <div
-                key={icon.id}
-                className={`absolute flex items-center justify-center cursor-grab ${activeLayer === "icon" ? "ring-2 ring-gold-300 ring-offset-2" : "hover:ring-1 hover:ring-gold-200"}`}
-                style={{
-                  left: `${icon.x}%`, top: `${icon.y}%`,
-                  fontSize: `${icon.size}px`, color: icon.color,
-                  transform: `translate(-50%, -50%) rotate(${icon.rotation}deg)`,
-                }}
-                onPointerDown={(e) => { e.stopPropagation(); setActiveLayer("icon"); setDraggingLayer("icon"); }}
-                onClick={(e) => { e.stopPropagation(); setActiveLayer("icon"); }}
-              >
-                {icon.icon}
-                <button className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white text-xs hover:bg-red-600" onClick={(e) => { e.stopPropagation(); removeIcon(icon.id); }}>×</button>
-              </div>
-            ))}
-
-            {/* Inner border */}
-            <div className="pointer-events-none absolute inset-5 border" style={{ borderColor: design.accent }} />
-
-            {/* Fixed text layers */}
-            <LayerText layer="title" value={replaceVariables(values.title, previewData)} position={positions.title} active={activeLayer === "title"} onSelect={setActiveLayer} onDragStart={setDraggingLayer} config={textConfigs.title} />
-            <LayerText layer="guest" value={replaceVariables(values.guest, previewData)} position={positions.guest} active={activeLayer === "guest"} onSelect={setActiveLayer} onDragStart={setDraggingLayer} config={textConfigs.guest} />
-            <LayerText layer="date" value={replaceVariables(values.date, previewData)} position={positions.date} active={activeLayer === "date"} onSelect={setActiveLayer} onDragStart={setDraggingLayer} config={textConfigs.date} />
-            <LayerText layer="venue" value={replaceVariables(values.venue, previewData)} position={positions.venue} active={activeLayer === "venue"} onSelect={setActiveLayer} onDragStart={setDraggingLayer} config={textConfigs.venue} />
-
-            {/* Custom text layers */}
-            {customTexts.map((ct) => (
-              <CustomTextLayerView
-                key={ct.id}
-                layer={ct}
-                active={activeCustomId === ct.id}
-                previewData={previewData}
-                defaultColor={design.ink}
-                onSelect={() => { setActiveCustomId(ct.id); setActiveLayer("custom"); }}
-                onDragStart={() => { setActiveCustomId(ct.id); setDraggingCustomId(ct.id); }}
-                onEdit={() => setEditingCustomId(ct.id)}
-                onDelete={() => deleteCustomText(ct.id)}
-              />
-            ))}
-
-            {/* QR Code */}
-            <div
-              onPointerDown={(event) => { event.stopPropagation(); setActiveLayer("qr"); setDraggingLayer("qr"); }}
-              onClick={(event) => { event.stopPropagation(); setActiveLayer("qr"); }}
-              className={`absolute flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center border-2 border-dashed bg-white/80 text-center text-[9px] font-bold text-slate-700 active:cursor-grabbing ${activeLayer === "qr" ? "ring-4 ring-gold-300" : ""}`}
-              style={{ left: `${positions.qr.x}%`, top: `${positions.qr.y}%` }}
-            >
-              {qrUrl ? (
-                <img src={qrUrl} alt="Invitation QR preview" className="h-full w-full object-contain p-1" />
-              ) : (
-                <span>
-                  <span className="mb-1 block text-xl">▦</span>
-                  {selectedInvitation ? "QR" : "Select guest"}
-                </span>
-              )}
-            </div>
-
-            <div className="absolute bottom-9 left-0 right-0 text-center text-[9px] uppercase tracking-[0.3em]" style={{ color: design.accent }}>
-              Invitation · Check-in · Celebration
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
-            <Move className="h-3.5 w-3.5" />
-            Selected: <strong className="text-slate-700">
-              {activeLayer === "custom" && activeCustomId
-                ? `Custom text: ${customTexts.find((t) => t.id === activeCustomId)?.content.slice(0, 20) || "..."}`
-                : LAYER_LABELS[activeLayer]}
-            </strong>
-            . Click anywhere to reposition it.
-          </div>
-        </Card>
-
-        {/* Design Tools Panel */}
-        <Card title="Design tools">
-          <div className="space-y-4">
-            {/* Tool toggles */}
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant={showTextEditor ? "primary" : "outline"} size="sm" onClick={() => setShowTextEditor(!showTextEditor)}>
-                <Type className="h-3.5 w-3.5" /> Text
-              </Button>
-              <Button variant={showCustomTextPanel ? "primary" : "outline"} size="sm" onClick={() => setShowCustomTextPanel(!showCustomTextPanel)}>
-                <Layers className="h-3.5 w-3.5" /> Text Boxes
-              </Button>
-              <Button variant={showIconLibrary ? "primary" : "outline"} size="sm" onClick={() => setShowIconLibrary(!showIconLibrary)}>
-                <Palette className="h-3.5 w-3.5" /> Icons
-              </Button>
-              <Button variant={showFrameTools ? "primary" : "outline"} size="sm" onClick={() => setShowFrameTools(!showFrameTools)}>
-                <Square className="h-3.5 w-3.5" /> Frames
-              </Button>
-              <Button variant={showPolygonTools ? "primary" : "outline"} size="sm" onClick={() => setShowPolygonTools(!showPolygonTools)}>
-                <Hexagon className="h-3.5 w-3.5" /> Polygons
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setShowPreviewModal(true)}>
-                <Variable className="h-3.5 w-3.5" /> Preview Data
-              </Button>
-            </div>
-
-            {/* Fixed Text Editor */}
-            {showTextEditor && activeLayer !== "qr" && activeLayer !== "icon" && activeLayer !== "frame" && activeLayer !== "polygon" && activeLayer !== "custom" && (
-              <div className="space-y-3 border-t border-slate-100 pt-3">
-                <p className="text-xs font-semibold text-slate-600">Edit {LAYER_LABELS[activeLayer as keyof typeof LAYER_LABELS]}</p>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={customText[activeLayer as keyof typeof customText] || values[activeLayer as keyof typeof values]}
-                    onChange={(e) => setCustomText((prev) => ({ ...prev, [activeLayer]: e.target.value }))}
-                    className="w-full rounded border border-slate-200 px-2 py-1 pr-8 text-sm"
-                    placeholder="Custom text"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => { setVariableTargetLayer(activeLayer as any); setVariableTargetId(null); setShowVariableMenu(true); }}
-                    className="absolute right-1 top-1 rounded bg-gold-100 p-1 text-gold-700 hover:bg-gold-200"
-                    title="Insert variable"
-                  >
-                    <Variable className="h-3 w-3" />
-                  </button>
-                </div>
-                <TextConfigEditor
-                  config={textConfigs[activeLayer]}
-                  onChange={(updates) => updateTextConfig(activeLayer, updates)}
-                  designInk={design.ink}
-                  designFont={design.font}
-                />
-              </div>
-            )}
-
-            {/* Custom Text Boxes Panel */}
-            {showCustomTextPanel && (
-              <div className="space-y-3 border-t border-slate-100 pt-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-slate-600">Custom Text Boxes ({customTexts.length})</p>
-                  <Button size="sm" variant="outline" onClick={() => addCustomText()}>
-                    <Plus className="h-3 w-3 mr-1" /> Add
-                  </Button>
-                </div>
-
-                {/* Quick add presets */}
-                <div className="grid grid-cols-2 gap-1">
-                  <button onClick={() => addCustomText("[GUEST_NAME]")} className="rounded border border-slate-200 px-2 py-1 text-[10px] hover:bg-gold-50">+ Guest Name</button>
-                  <button onClick={() => addCustomText("[EVENT_DATE]")} className="rounded border border-slate-200 px-2 py-1 text-[10px] hover:bg-gold-50">+ Event Date</button>
-                  <button onClick={() => addCustomText("[EVENT_VENUE]")} className="rounded border border-slate-200 px-2 py-1 text-[10px] hover:bg-gold-50">+ Venue</button>
-                  <button onClick={() => addCustomText("[GUEST_SEATNO]")} className="rounded border border-slate-200 px-2 py-1 text-[10px] hover:bg-gold-50">+ Seat No</button>
-                </div>
-
-                {customTexts.length > 0 && (
-                  <div className="max-h-64 space-y-2 overflow-y-auto">
-                    {customTexts.map((ct) => (
-                      <div
-                        key={ct.id}
-                        className={`rounded border p-2 text-xs ${activeCustomId === ct.id ? "border-gold-500 bg-gold-50" : "border-slate-200"}`}
-                        onClick={() => { setActiveCustomId(ct.id); setActiveLayer("custom"); }}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="flex-1 truncate font-medium text-slate-800">{ct.content}</p>
-                          <div className="flex gap-1">
-                            <button onClick={(e) => { e.stopPropagation(); setEditingCustomId(ct.id); }} className="rounded p-1 hover:bg-slate-100" title="Edit">
-                              <Edit3 className="h-3 w-3" />
-                            </button>
-                            <button onClick={(e) => { e.stopPropagation(); duplicateCustomText(ct.id); }} className="rounded p-1 hover:bg-slate-100" title="Duplicate">
-                              <Copy className="h-3 w-3" />
-                            </button>
-                            <button onClick={(e) => { e.stopPropagation(); deleteCustomText(ct.id); }} className="rounded p-1 text-rose-600 hover:bg-rose-50" title="Delete">
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
-                          <span>Shape: {ct.shape}</span>
-                          <span>·</span>
-                          <span>{ct.fontSize}px</span>
-                          <span>·</span>
-                          <span>{ct.fontFamily}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Active custom text editor */}
-                {activeCustomText && (
-                  <div className="space-y-2 border-t border-slate-100 pt-2">
-                    <p className="text-[10px] font-semibold text-slate-600">Edit: {activeCustomText.content.slice(0, 30)}</p>
-                    <div className="relative">
-                      <textarea
-                        value={activeCustomText.content}
-                        onChange={(e) => updateCustomText(activeCustomText.id, { content: e.target.value })}
-                        className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
-                        rows={2}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => { setVariableTargetId(activeCustomText.id); setVariableTargetLayer(null); setShowVariableMenu(true); }}
-                        className="absolute right-1 top-1 rounded bg-gold-100 p-1 text-gold-700 hover:bg-gold-200"
-                        title="Insert variable"
-                      >
-                        <Variable className="h-3 w-3" />
-                      </button>
-                    </div>
-
-                    {/* Text shape selector */}
-                    <div>
-                      <label className="mb-1 block text-[10px] text-slate-500">Text Shape</label>
-                      <div className="grid grid-cols-5 gap-1">
-                        {(["straight", "arc-up", "arc-down", "circle", "wave"] as TextShape[]).map((shape) => (
-                          <button
-                            key={shape}
-                            onClick={() => updateCustomText(activeCustomText.id, { shape })}
-                            className={`rounded border px-1 py-1 text-[9px] ${activeCustomText.shape === shape ? "border-gold-500 bg-gold-50 text-gold-700" : "border-slate-200 hover:border-gold-300"}`}
-                          >
-                            {shape === "straight" ? "—" : shape === "arc-up" ? "⌒" : shape === "arc-down" ? "⌢" : shape === "circle" ? "○" : "〰"}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {(activeCustomText.shape === "arc-up" || activeCustomText.shape === "arc-down" || activeCustomText.shape === "circle") && (
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Arc Radius: {activeCustomText.arcRadius}</label>
-                        <input
-                          type="range"
-                          min="50"
-                          max="400"
-                          value={activeCustomText.arcRadius}
-                          onChange={(e) => updateCustomText(activeCustomText.id, { arcRadius: parseInt(e.target.value) })}
-                          className="w-full"
-                        />
-                      </div>
-                    )}
-
-                    <TextConfigEditor
-                      config={{
-                        fontSize: activeCustomText.fontSize,
-                        color: activeCustomText.color,
-                        fontFamily: activeCustomText.fontFamily,
-                        textAlign: activeCustomText.textAlign,
-                        fontWeight: activeCustomText.fontWeight,
-                        letterSpacing: activeCustomText.letterSpacing,
-                        lineHeight: activeCustomText.lineHeight,
-                      }}
-                      onChange={(updates) => updateCustomText(activeCustomText.id, updates as Partial<CustomTextLayer>)}
-                      designInk={design.ink}
-                      designFont={design.font}
-                    />
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Rotation: {activeCustomText.rotation}°</label>
-                        <input
-                          type="range"
-                          min="-180"
-                          max="180"
-                          value={activeCustomText.rotation}
-                          onChange={(e) => updateCustomText(activeCustomText.id, { rotation: parseInt(e.target.value) })}
-                          className="w-full"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Max Width: {activeCustomText.maxWidth}%</label>
-                        <input
-                          type="range"
-                          min="20"
-                          max="100"
-                          value={activeCustomText.maxWidth}
-                          onChange={(e) => updateCustomText(activeCustomText.id, { maxWidth: parseInt(e.target.value) })}
-                          className="w-full"
-                        />
-                      </div>
-                    </div>
-
-                    <label className="flex items-center gap-2 text-[10px]">
-                      <input
-                        type="checkbox"
-                        checked={activeCustomText.visible}
-                        onChange={(e) => updateCustomText(activeCustomText.id, { visible: e.target.checked })}
-                        className="h-3 w-3"
-                      />
-                      Visible
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Icon Library */}
-            {showIconLibrary && (
-              <div className="space-y-3 border-t border-slate-100 pt-3">
-                <p className="text-xs font-semibold text-slate-600">Add icons</p>
-                <div className="grid grid-cols-5 gap-2 max-h-48 overflow-y-auto">
-                  {ICONS.map((icon) => (
-                    <button
-                      key={icon.id}
-                      onClick={() => addIcon(icon.svg)}
-                      className="flex aspect-square items-center justify-center rounded border border-slate-200 text-2xl hover:border-gold-400 hover:bg-gold-50 transition"
-                      title={icon.name}
-                    >
-                      {icon.svg}
-                    </button>
-                  ))}
-                </div>
-                {icons.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[10px] text-slate-500">Active icons ({icons.length})</p>
-                    {icons.map((icon) => (
-                      <div key={icon.id} className="flex items-center gap-2 rounded border border-slate-200 p-2">
-                        <span className="text-xl">{icon.icon}</span>
-                        <input type="number" value={icon.size} onChange={(e) => updateIcon(icon.id, { size: parseInt(e.target.value) })} className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs" title="Size" />
-                        <input type="color" value={icon.color} onChange={(e) => updateIcon(icon.id, { color: e.target.value })} className="h-6 w-8 rounded border border-slate-200" title="Color" />
-                        <input type="number" value={icon.rotation} onChange={(e) => updateIcon(icon.id, { rotation: parseInt(e.target.value) })} className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs" title="Rotation" />
-                        <Button variant="ghost" size="sm" onClick={() => removeIcon(icon.id)}><Trash2 className="h-3 w-3" /></Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Frame Tools */}
-            {showFrameTools && (
-              <div className="space-y-3 border-t border-slate-100 pt-3">
-                <p className="text-xs font-semibold text-slate-600">Frame style</p>
-                <div className="grid grid-cols-4 gap-2">
-                  <Button variant={frame.type === "none" ? "primary" : "outline"} size="sm" onClick={() => updateFrame({ type: "none" })}>None</Button>
-                  <Button variant={frame.type === "rectangle" ? "primary" : "outline"} size="sm" onClick={() => updateFrame({ type: "rectangle" })}><Square className="h-3 w-3" /></Button>
-                  <Button variant={frame.type === "ellipse" ? "primary" : "outline"} size="sm" onClick={() => updateFrame({ type: "ellipse" })}><Circle className="h-3 w-3" /></Button>
-                  <Button variant={frame.type === "flower" ? "primary" : "outline"} size="sm" onClick={() => updateFrame({ type: "flower" })}>❀</Button>
-                </div>
-                {frame.type !== "none" && (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Border width</label>
-                        <input type="number" value={frame.borderWidth} onChange={(e) => updateFrame({ borderWidth: parseInt(e.target.value) })} className="w-full rounded border border-slate-200 px-2 py-1 text-sm" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Rotation</label>
-                        <input type="number" value={frame.rotation} onChange={(e) => updateFrame({ rotation: parseInt(e.target.value) })} className="w-full rounded border border-slate-200 px-2 py-1 text-sm" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] text-slate-500">Border color</label>
-                      <input type="color" value={frame.borderColor} onChange={(e) => updateFrame({ borderColor: e.target.value })} className="w-full h-8 rounded border border-slate-200" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] text-slate-500">Background color</label>
-                      <input type="color" value={frame.color === "transparent" ? "#ffffff" : frame.color} onChange={(e) => updateFrame({ color: e.target.value })} className="w-full h-8 rounded border border-slate-200" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Polygon Tools */}
-            {showPolygonTools && (
-              <div className="space-y-3 border-t border-slate-100 pt-3">
-                <p className="text-xs font-semibold text-slate-600">Add polygons</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" onClick={() => addPolygon("triangle")}><Hexagon className="h-3 w-3 mr-1" /> Triangle</Button>
-                  <Button variant="outline" size="sm" onClick={() => addPolygon("pentagon")}><Hexagon className="h-3 w-3 mr-1" /> Pentagon</Button>
-                  <Button variant="outline" size="sm" onClick={() => addPolygon("hexagon")}><Hexagon className="h-3 w-3 mr-1" /> Hexagon</Button>
-                  <Button variant="outline" size="sm" onClick={() => addPolygon("star")}><Sparkles className="h-3 w-3 mr-1" /> Star</Button>
-                </div>
-                {polygons.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[10px] text-slate-500">Active polygons ({polygons.length})</p>
-                    {polygons.map((polygon) => (
-                      <div key={polygon.id} className="flex items-center gap-2 rounded border border-slate-200 p-2">
-                        <span className="text-xs w-16">{polygon.type}</span>
-                        <input type="number" value={polygon.size} onChange={(e) => updatePolygon(polygon.id, { size: parseInt(e.target.value) })} className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs" />
-                        <input type="color" value={polygon.color} onChange={(e) => updatePolygon(polygon.id, { color: e.target.value })} className="h-6 w-8 rounded border border-slate-200" />
-                        <input type="color" value={polygon.borderColor} onChange={(e) => updatePolygon(polygon.id, { borderColor: e.target.value })} className="h-6 w-8 rounded border border-slate-200" />
-                        <input type="number" value={polygon.rotation} onChange={(e) => updatePolygon(polygon.id, { rotation: parseInt(e.target.value) })} className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs" />
-                        <Button variant="ghost" size="sm" onClick={() => removePolygon(polygon.id)}><Trash2 className="h-3 w-3" /></Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Background image */}
-            <div className="border-t border-slate-100 pt-3">
-              <label className="mb-2 block text-xs font-semibold text-slate-600">Background image</label>
-              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-gold-300 bg-gold-50 p-4 text-sm font-semibold text-gold-800 hover:bg-gold-100">
-                <ImagePlus className="h-4 w-4" /> {uploadMutation.isPending ? "Uploading…" : "Upload image"}
-                <input type="file" accept="image/jpeg,image/jpg,image/png,image/svg+xml" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadMutation.mutate(file); }} />
-              </label>
-              {backgroundFileId && <p className="mt-2 truncate text-[10px] text-slate-400">Asset: {backgroundFileId}</p>}
-            </div>
-
-            {/* Preview data */}
-            <div className="border-t border-slate-100 pt-3">
-              <label className="mb-2 block text-xs font-semibold text-slate-600">Preview data</label>
-              <Select value={eventId} onChange={(event) => { setEventId(event.target.value); setGuestId(""); }}>
-                <option value="">Sample event</option>
-                {events.map((item: any) => <option key={item.id} value={item.id}>{item.title}</option>)}
-              </Select>
-              {eventId && (
-                <Select label="Guest" value={guestId} onChange={(event) => setGuestId(event.target.value)}>
-                  <option value="">Choose guest</option>
-                  {guests.map((item: any) => <option key={item.id} value={item.id}>{item.full_name}</option>)}
-                </Select>
-              )}
-            </div>
-
-            {/* Send directly */}
-            <div className="border-t border-slate-100 pt-3">
-              <p className="mb-2 text-xs font-semibold text-slate-600">Send directly</p>
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="outline" size="sm" disabled={!eventId || !guestId} onClick={() => sendMutation.mutate("whatsapp")}><Send className="h-3.5 w-3.5" /> WhatsApp</Button>
-                <Button variant="outline" size="sm" disabled={!eventId || !guestId} onClick={() => sendMutation.mutate("email")}><Mail className="h-3.5 w-3.5" /> Email</Button>
-                <Button variant="outline" size="sm" disabled={!eventId || !guestId} onClick={() => sendMutation.mutate("sms")}><Smartphone className="h-3.5 w-3.5" /> SMS</Button>
-              </div>
-              <p className="mt-2 text-[10px] text-slate-400">Select an event and guest to activate delivery.</p>
-            </div>
-          </div>
-        </Card>
       </div>
 
-      {/* Variable Insertion Modal */}
-      <Modal isOpen={showVariableMenu} onClose={() => setShowVariableMenu(false)} title="Insert Database Variable" size="md">
-        <div className="space-y-3">
-          <p className="text-xs text-slate-600">Click a variable to insert it at the cursor position. Variables are replaced with real data when the card is sent.</p>
-          {["Mgeni", "Sherehe", "Mfumo"].map((category) => (
-            <div key={category}>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{category}</p>
+      <div className="flex flex-1 overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
+        {/* Left: pages + layers */}
+        <div className="w-64 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0">
+          {/* Page tabs */}
+          <div className="p-3 border-b border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase">Pages</p>
+              <button onClick={addPage} className="p-1 hover:bg-slate-100 rounded" title="Add page"><Plus className="h-3.5 w-3.5" /></button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {theme.pages.map((p) => (
+                <div key={p.id} className={`group flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium cursor-pointer ${p.id === currentPage.id ? "border-gold-400 bg-gold-50 text-gold-800" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+                  <span onClick={() => { setActivePageId(p.id); setSelectedLayerId(null); }}>{p.name}</span>
+                  {theme.pages.length > 1 && (
+                    <button onClick={() => removePage(p.id)} className="opacity-0 group-hover:opacity-100 text-rose-500"><X className="h-3 w-3" /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Add layer */}
+          <div className="p-3 border-b border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Add Layer</p>
+            <div className="grid grid-cols-4 gap-1">
+              <button onClick={() => addLayer("text")} className="p-2 rounded border border-slate-200 hover:bg-gold-50 hover:border-gold-300" title="Text"><Type className="h-4 w-4 mx-auto" /></button>
+              <button onClick={() => addLayer("shape")} className="p-2 rounded border border-slate-200 hover:bg-gold-50 hover:border-gold-300" title="Shape"><Square className="h-4 w-4 mx-auto" /></button>
+              <button onClick={() => addLayer("qr")} className="p-2 rounded border border-slate-200 hover:bg-gold-50 hover:border-gold-300" title="QR Code"><QrCode className="h-4 w-4 mx-auto" /></button>
+              <label className="p-2 rounded border border-slate-200 hover:bg-gold-50 hover:border-gold-300 cursor-pointer" title="Image layer">
+                <ImageIcon className="h-4 w-4 mx-auto" />
+                <input type="file" accept="image/*" className="sr-only" disabled={uploading === "layer"}
+                  onChange={(e) => e.target.files?.[0] && handleImageLayerUpload(e.target.files[0])} />
+              </label>
+            </div>
+            {uploading && <p className="text-[10px] text-slate-500 mt-1">Uploading…</p>}
+          </div>
+
+          {/* Layer list */}
+          <div className="p-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Layers · {currentPage?.name} ({currentPage?.layers.length ?? 0})</p>
+            <div className="space-y-1">
+              {[...(currentPage?.layers ?? [])].reverse().map((layer) => (
+                <div key={layer.id} onClick={() => setSelectedLayerId(layer.id)}
+                  className={`flex items-center gap-2 p-2 rounded cursor-pointer text-xs ${selectedLayerId === layer.id ? "bg-gold-50 border border-gold-300" : "hover:bg-slate-50 border border-transparent"}`}>
+                  {layer.type === "text" && <Type className="h-3 w-3 text-slate-400" />}
+                  {layer.type === "shape" && <Square className="h-3 w-3 text-slate-400" />}
+                  {layer.type === "qr" && <QrCode className="h-3 w-3 text-slate-400" />}
+                  {layer.type === "image" && <FileImage className="h-3 w-3 text-slate-400" />}
+                  <span className="flex-1 truncate">{layer.name ?? (layer.content ? layer.content.replace(/\{\{(\w+)\}\}/g, "[$1]").slice(0, 22) : layer.type)}</span>
+                  <button onClick={(e) => { e.stopPropagation(); moveLayer(layer.id, "up"); }} title="Bring forward" className="p-1 hover:bg-slate-200 rounded"><ChevronUp className="h-3 w-3" /></button>
+                  <button onClick={(e) => { e.stopPropagation(); moveLayer(layer.id, "down"); }} title="Send backward" className="p-1 hover:bg-slate-200 rounded"><ChevronDown className="h-3 w-3" /></button>
+                  <button onClick={(e) => { e.stopPropagation(); updateLayer(layer.id, { visible: !layer.visible }); }} className="p-1 hover:bg-slate-200 rounded">
+                    {layer.visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); updateLayer(layer.id, { locked: !layer.locked }); }} className="p-1 hover:bg-slate-200 rounded">
+                    {layer.locked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); deleteLayer(layer.id); }} className="p-1 hover:bg-rose-100 rounded text-rose-600"><Trash2 className="h-3 w-3" /></button>
+                </div>
+              ))}
+              {currentPage?.layers.length === 0 && <p className="text-xs text-slate-400 py-4 text-center">No layers yet — add one above</p>}
+            </div>
+          </div>
+        </div>
+
+        {/* Center: canvas */}
+        <div className="flex-1 overflow-auto bg-slate-100 p-8">
+          {previewMode ? (
+            <div className="flex flex-col items-center gap-6 mx-auto" style={{ width: cw * zoom }}>
+              {theme.pages.map((p) => (
+                <div key={p.id}>
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 text-center">{p.name}</p>
+                  <div style={{ transform: `scale(${zoom})`, transformOrigin: "top center" }}>
+                    <RoyalCardPage page={p} data={previewData} width={cw} height={ch} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex justify-center" style={{ minWidth: cw * zoom + 64 }}>
+              <div style={{ transform: `scale(${zoom})`, transformOrigin: "top center", marginBottom: ch * (zoom - 1) }}>
+                <div
+                  ref={canvasRef}
+                  onClick={() => setSelectedLayerId(null)}
+                  className="relative shadow-2xl bg-white"
+                  style={{
+                    width: cw, height: ch,
+                    backgroundColor: currentPage?.background.type === "color" ? currentPage.background.value : undefined,
+                    backgroundImage: currentPage?.background.type === "image" ? `url(${currentPage.background.value})` : undefined,
+                    backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
+                  }}
+                >
+                  {currentPage?.background.overlay && <div style={{ position: "absolute", inset: 0, background: currentPage.background.overlay, pointerEvents: "none" }} />}
+                  {currentPage?.layers.map(renderInteractiveLayer)}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right: properties */}
+        {selectedLayer && !previewMode && (
+          <div className="w-72 bg-white border-l border-slate-200 overflow-y-auto flex-shrink-0">
+            <div className="p-4 border-b border-slate-200">
+              <div className="flex items-center justify-between mb-2">
+                <input value={selectedLayer.name ?? ""} placeholder="Layer name"
+                  onChange={(e) => updateLayer(selectedLayer.id, { name: e.target.value })}
+                  className="text-sm font-semibold text-slate-900 bg-transparent border-none outline-none w-40" />
+                <Badge label={selectedLayer.type} variant="blue" />
+              </div>
+              <p className="text-xs text-slate-500">ID: {selectedLayer.id.slice(-8)}</p>
+            </div>
+
+            {/* ---- text props ---- */}
+            {selectedLayer.type === "text" && (
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Content (double-click layer to edit inline)</label>
+                  <textarea value={selectedLayer.content ?? ""} rows={4}
+                    onChange={(e) => updateLayer(selectedLayer.id, { content: e.target.value })}
+                    className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+                  <button onClick={() => setShowVariablePicker(true)}
+                    className="mt-1 text-xs text-gold-700 hover:underline flex items-center gap-1">
+                    <Variable className="h-3 w-3" /> Insert variable
+                  </button>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600">Text Shape</label>
+                  <select value={selectedLayer.curve ?? "none"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { curve: e.target.value as any })}
+                    className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                    <option value="none">Straight</option>
+                    <option value="arc-up">Arc Up</option>
+                    <option value="arc-down">Arc Down</option>
+                    <option value="circle">Circle</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-600">Font Size</label>
+                    <input type="number" value={selectedLayer.fontSize ?? 18}
+                      onChange={(e) => updateLayer(selectedLayer.id, { fontSize: parseInt(e.target.value) })}
+                      className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600">Color</label>
+                    <div className="flex items-center gap-1 mt-1">
+                      <input type="color" value={selectedLayer.color ?? "#1F3D2B"}
+                        onChange={(e) => updateLayer(selectedLayer.id, { color: e.target.value })}
+                        className="h-7 w-10 rounded border border-slate-300" />
+                      <input type="text" value={selectedLayer.color ?? ""}
+                        onChange={(e) => updateLayer(selectedLayer.id, { color: e.target.value })}
+                        className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600">Font Family</label>
+                  <select value={selectedLayer.fontFamily ?? "DM Sans"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { fontFamily: e.target.value })}
+                    className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                    <option>Playfair Display</option><option>Great Vibes</option><option>DM Sans</option><option>Georgia</option><option>Arial</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-600">Weight</label>
+                    <select value={selectedLayer.fontWeight ?? "400"}
+                      onChange={(e) => updateLayer(selectedLayer.id, { fontWeight: e.target.value })}
+                      className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                      <option value="300">Light</option><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semi-bold</option><option value="700">Bold</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600">Line Height</label>
+                    <input type="number" step={0.1} value={selectedLayer.lineHeight ?? 1.2}
+                      onChange={(e) => updateLayer(selectedLayer.id, { lineHeight: parseFloat(e.target.value) })}
+                      className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600">Alignment</label>
+                  <div className="flex gap-1 mt-1">
+                    {(["left", "center", "right"] as const).map((a) => (
+                      <button key={a} onClick={() => updateLayer(selectedLayer.id, { textAlign: a })}
+                        className={`flex-1 p-1.5 rounded border ${selectedLayer.textAlign === a ? "bg-gold-50 border-gold-300" : "border-slate-300"}`}>
+                        {a === "left" ? <AlignLeft className="h-3 w-3 mx-auto" /> : a === "center" ? <AlignCenter className="h-3 w-3 mx-auto" /> : <AlignRight className="h-3 w-3 mx-auto" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600">Letter Spacing ({selectedLayer.letterSpacing ?? 0}px)</label>
+                  <input type="range" min={0} max={12} value={selectedLayer.letterSpacing ?? 0}
+                    onChange={(e) => updateLayer(selectedLayer.id, { letterSpacing: parseInt(e.target.value) })}
+                    className="w-full mt-1" />
+                </div>
+              </div>
+            )}
+
+            {/* ---- image props ---- */}
+            {selectedLayer.type === "image" && (
+              <div className="p-4 space-y-3">
+                {selectedLayer.src && (
+                  <img src={selectedLayer.src} alt="" className="w-full h-28 object-cover rounded border border-slate-200" />
+                )}
+                <label className="block w-full cursor-pointer rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-center text-xs text-slate-600 hover:border-gold-400 hover:bg-gold-50">
+                  {selectedLayer.src ? "Replace image" : "Upload image"}
+                  <input type="file" accept="image/*" className="sr-only"
+                    onChange={(e) => e.target.files?.[0] && handleImageLayerUpload(e.target.files[0], selectedLayer.id)} />
+                </label>
+                <div>
+                  <label className="text-xs text-slate-600">Fit</label>
+                  <select value={selectedLayer.fit ?? "cover"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { fit: e.target.value as any })}
+                    className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                    <option value="cover">Cover (fill, crop)</option>
+                    <option value="contain">Contain (fit inside)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600">Corner Radius ({selectedLayer.radius ?? 0}px)</label>
+                  <input type="range" min={0} max={300} value={selectedLayer.radius ?? 0}
+                    onChange={(e) => updateLayer(selectedLayer.id, { radius: parseInt(e.target.value) })}
+                    className="w-full mt-1" />
+                </div>
+              </div>
+            )}
+
+            {/* ---- shape props ---- */}
+            {selectedLayer.type === "shape" && (
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="text-xs text-slate-600">Shape Type</label>
+                  <select value={selectedLayer.shapeType ?? "rectangle"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { shapeType: e.target.value as any })}
+                    className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                    <option value="rectangle">Rectangle / Line</option>
+                    <option value="ellipse">Ellipse</option>
+                    <option value="star">Star</option>
+                    <option value="hexagon">Hexagon</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600">Fill Color</label>
+                  <input type="color" value={selectedLayer.shapeColor ?? "#B88952"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { shapeColor: e.target.value })}
+                    className="w-full mt-1 h-8 rounded border border-slate-300" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-600">Border Color</label>
+                    <input type="color" value={selectedLayer.shapeBorder ?? "#000000"}
+                      onChange={(e) => updateLayer(selectedLayer.id, { shapeBorder: e.target.value })}
+                      className="w-full mt-1 h-8 rounded border border-slate-300" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600">Border Width</label>
+                    <input type="number" value={selectedLayer.shapeBorderWidth ?? 0}
+                      onChange={(e) => updateLayer(selectedLayer.id, { shapeBorderWidth: parseInt(e.target.value) })}
+                      className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---- qr props ---- */}
+            {selectedLayer.type === "qr" && (
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="text-xs text-slate-600">QR Payload Variable</label>
+                  <select value={selectedLayer.qrVariable ?? "QR_CODE"}
+                    onChange={(e) => updateLayer(selectedLayer.id, { qrVariable: e.target.value })}
+                    className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                    {CARD_VARIABLES.filter((v) => v.category === "System" || v.key === "QR_CODE").map((v) => (
+                      <option key={v.key} value={v.key}>{v.label} ({"{{" + v.key + "}})"}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-1">Resolved per-guest from the invitation record at render time.</p>
+                </div>
+              </div>
+            )}
+
+            {/* ---- common props ---- */}
+            <div className="p-4 border-t border-slate-200 space-y-3">
+              <p className="text-xs font-semibold text-slate-600">Position & Size (% of page)</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["x", "y", "w", "h"] as const).map((k) => (
+                  <div key={k}>
+                    <label className="text-xs text-slate-600 uppercase">{k}</label>
+                    <input type="number" step={0.5} value={selectedLayer[k]}
+                      onChange={(e) => updateLayer(selectedLayer.id, { [k]: parseFloat(e.target.value) })}
+                      className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+                  </div>
+                ))}
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Rotation ({selectedLayer.rotation}°)</label>
+                <input type="range" min={-180} max={180} value={selectedLayer.rotation}
+                  onChange={(e) => updateLayer(selectedLayer.id, { rotation: parseInt(e.target.value) })}
+                  className="w-full mt-1" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Opacity ({selectedLayer.opacity}%)</label>
+                <input type="range" min={0} max={100} value={selectedLayer.opacity}
+                  onChange={(e) => updateLayer(selectedLayer.id, { opacity: parseInt(e.target.value) })}
+                  className="w-full mt-1" />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={() => duplicateLayer(selectedLayer.id)} className="flex-1">
+                  <Copy className="h-3 w-3 mr-1" /> Duplicate
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => deleteLayer(selectedLayer.id)} className="flex-1">
+                  <Trash2 className="h-3 w-3 mr-1" /> Delete
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Right: page properties when nothing selected */}
+        {!selectedLayer && !previewMode && (
+          <div className="w-72 bg-white border-l border-slate-200 overflow-y-auto flex-shrink-0">
+            <div className="p-4 border-b border-slate-200">
+              <p className="text-sm font-semibold text-slate-900">Page Settings</p>
+              <p className="text-xs text-slate-500 mt-0.5">{currentPage?.name}</p>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="text-xs text-slate-600">Page name</label>
+                <input value={currentPage?.name ?? ""}
+                  onChange={(e) => updatePage(currentPage.id, { name: e.target.value })}
+                  className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Background</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input type="color" value={currentPage?.background.type === "color" ? currentPage.background.value : "#FBF6EA"}
+                    onChange={(e) => updatePage(currentPage.id, { background: { type: "color", value: e.target.value } })}
+                    className="h-8 w-12 rounded border border-slate-300" />
+                  <span className="text-xs text-slate-500 flex-1">
+                    {currentPage?.background.type === "image" ? "Image background" : "Solid color"}
+                  </span>
+                  {currentPage?.background.type === "image" && (
+                    <button onClick={() => updatePage(currentPage.id, { background: { type: "color", value: "#FBF6EA" } })}
+                      className="text-xs text-rose-600 hover:underline">Remove</button>
+                  )}
+                </div>
+              </div>
+              <label className="block w-full cursor-pointer rounded border border-dashed border-slate-300 bg-slate-50 p-3 text-center text-xs text-slate-600 hover:border-gold-400 hover:bg-gold-50">
+                {uploading === "background" ? "Uploading…" : "Upload background image"}
+                <input type="file" accept="image/*" className="sr-only"
+                  onChange={(e) => e.target.files?.[0] && handleBackgroundUpload(e.target.files[0])} />
+              </label>
+              <div>
+                <label className="text-xs text-slate-600">Description</label>
+                <textarea value={theme.description} rows={2}
+                  onChange={(e) => setTheme({ ...theme, description: e.target.value })}
+                  className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Category</label>
+                <select value={theme.category}
+                  onChange={(e) => setTheme({ ...theme, category: e.target.value as any })}
+                  className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs">
+                  <option value="wedding">Wedding</option><option value="graduation">Graduation</option>
+                  <option value="corporate">Corporate</option><option value="birthday">Birthday</option><option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Variable picker */}
+      <Modal isOpen={showVariablePicker} onClose={() => setShowVariablePicker(false)} title="Insert Variable" size="md">
+        <div className="space-y-3 max-h-96 overflow-y-auto">
+          {["Guest", "Event", "System"].map((cat) => (
+            <div key={cat}>
+              <p className="text-xs font-semibold text-slate-500 uppercase mb-1">{cat}</p>
               <div className="grid grid-cols-2 gap-1">
-                {VARIABLES.filter((v) => v.category === category).map((v) => (
-                  <button
-                    key={v.key}
-                    onClick={() => insertVariable(v.key)}
-                    className="rounded border border-slate-200 px-2 py-1.5 text-left text-xs hover:border-gold-400 hover:bg-gold-50"
-                  >
-                    <p className="font-mono font-semibold text-gold-700">[{v.key}]</p>
+                {CARD_VARIABLES.filter((v) => v.category === cat).map((v) => (
+                  <button key={v.key} onClick={() => insertVariable(v.key)}
+                    className="p-2 rounded border border-slate-200 hover:border-gold-400 hover:bg-gold-50 text-left">
+                    <p className="text-xs font-mono font-semibold text-gold-700">{"{{" + v.key + "}}"}</p>
                     <p className="text-[10px] text-slate-500">{v.label}</p>
-                    <p className="text-[10px] text-slate-400 italic">{v.example}</p>
                   </button>
                 ))}
               </div>
@@ -1459,235 +862,20 @@ export default function CardTemplatesPage() {
         </div>
       </Modal>
 
-      {/* Preview Data Modal */}
-      <Modal isOpen={showPreviewModal} onClose={() => setShowPreviewModal(false)} title="Preview Variable Values" size="md">
-        <div className="space-y-3">
-          <p className="text-xs text-slate-600">Override variable values to preview how the card will look with different data.</p>
-          <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
-            {VARIABLES.map((v) => (
-              <div key={v.key}>
-                <label className="mb-1 block text-[10px] font-semibold text-slate-600">{v.label}</label>
-                <input
-                  type="text"
-                  value={previewOverrides[v.key] || v.example}
-                  onChange={(e) => setPreviewOverrides((prev) => ({ ...prev, [v.key]: e.target.value }))}
-                  className="w-full rounded border border-slate-200 px-2 py-1 text-xs"
-                />
-              </div>
-            ))}
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => setPreviewOverrides({})}>Reset to defaults</Button>
-        </div>
-      </Modal>
-
-      {/* Edit Custom Text Modal (for larger editing) */}
-      <Modal isOpen={!!editingCustomId} onClose={() => setEditingCustomId(null)} title="Edit Text Box" size="md">
-        {(() => {
-          const ct = customTexts.find((t) => t.id === editingCustomId);
-          if (!ct) return null;
-          return (
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-700">Content</label>
-                <textarea
-                  value={ct.content}
-                  onChange={(e) => updateCustomText(ct.id, { content: e.target.value })}
-                  rows={4}
-                  className="w-full rounded border border-slate-200 px-2 py-1 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => { setVariableTargetId(ct.id); setVariableTargetLayer(null); setShowVariableMenu(true); setEditingCustomId(null); }}
-                  className="mt-1 text-xs font-semibold text-gold-700 hover:underline"
-                >
-                  + Insert database variable
-                </button>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setEditingCustomId(null)}>Close</Button>
-              </div>
+      {/* Preview data */}
+      <Modal isOpen={showPreviewData} onClose={() => setShowPreviewData(false)} title="Preview Variable Values" size="md">
+        <div className="space-y-3 max-h-96 overflow-y-auto">
+          <p className="text-xs text-slate-600">Sample values used in the editor preview and in Preview mode.</p>
+          {CARD_VARIABLES.map((v) => (
+            <div key={v.key}>
+              <label className="text-xs font-medium text-slate-700">{v.label} <span className="text-slate-400 font-mono">{"{{" + v.key + "}}"}</span></label>
+              <input type="text" value={previewData[v.key] ?? ""} placeholder={v.label}
+                onChange={(e) => setPreviewData({ ...previewData, [v.key]: e.target.value })}
+                className="w-full mt-1 rounded border border-slate-300 px-2 py-1 text-xs" />
             </div>
-          );
-        })()}
+          ))}
+        </div>
       </Modal>
     </div>
-  );
-}
-
-// ============================================================================
-// SUB-COMPONENTS
-// ============================================================================
-
-// Fixed text layer (existing)
-function LayerText({ layer, value, position, active, onSelect, onDragStart, config }: {
-  layer: string; value: string; position: { x: number; y: number }; active: boolean;
-  onSelect: (layer: any) => void; onDragStart: (layer: any) => void; config: TextLayerConfig;
-}) {
-  const alignmentClass = config.textAlign === "left" ? "text-left" : config.textAlign === "right" ? "text-right" : "text-center";
-  const customColor = config.color || "inherit";
-  return (
-    <button
-      type="button"
-      onPointerDown={(event) => { event.stopPropagation(); onSelect(layer); onDragStart(layer); }}
-      onClick={(event) => { event.stopPropagation(); onSelect(layer); }}
-      className={`absolute cursor-grab whitespace-nowrap px-2 py-1 transition active:cursor-grabbing ${active ? "ring-2 ring-gold-300 ring-offset-2" : "hover:ring-1 hover:ring-gold-200"} ${alignmentClass}`}
-      style={{
-        left: `${position.x}%`, top: `${position.y}%`,
-        color: customColor, fontSize: `${config.fontSize}px`,
-        fontFamily: config.fontFamily, fontWeight: config.fontWeight,
-        letterSpacing: `${config.letterSpacing}px`, lineHeight: config.lineHeight,
-        transform: "translate(-50%, -50%)",
-      }}
-    >
-      {value}
-    </button>
-  );
-}
-
-// Custom text layer with shape support
-function CustomTextLayerView({ layer, active, previewData, defaultColor, onSelect, onDragStart, onEdit, onDelete }: {
-  layer: CustomTextLayer; active: boolean; previewData: Record<string, string>; defaultColor: string;
-  onSelect: () => void; onDragStart: () => void; onEdit: () => void; onDelete: () => void;
-}) {
-  const processedContent = replaceVariables(layer.content, previewData);
-  const color = layer.color || defaultColor;
-
-  if (layer.shape === "arc-up" || layer.shape === "arc-down" || layer.shape === "circle") {
-    // SVG-based curved text rendering
-    const radius = layer.arcRadius * 0.5;
-    const svgSize = radius * 2 + layer.fontSize * 2;
-    const centerX = svgSize / 2;
-    const centerY = svgSize / 2;
-
-    let pathId = `path-${layer.id}`;
-    let pathD: string;
-    if (layer.shape === "arc-up") {
-      pathD = `M ${centerX - radius} ${centerY} A ${radius} ${radius} 0 0 1 ${centerX + radius} ${centerY}`;
-    } else if (layer.shape === "arc-down") {
-      pathD = `M ${centerX - radius} ${centerY} A ${radius} ${radius} 0 0 0 ${centerX + radius} ${centerY}`;
-    } else {
-      pathD = `M ${centerX} ${centerY - radius} A ${radius} ${radius} 0 1 1 ${centerX - 0.01} ${centerY - radius}`;
-    }
-
-    return (
-      <div
-        className={`absolute cursor-grab ${active ? "ring-2 ring-gold-300 ring-offset-2" : "hover:ring-1 hover:ring-gold-200"}`}
-        style={{
-          left: `${layer.x}%`, top: `${layer.y}%`,
-          transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
-          width: `${svgSize}px`, height: `${svgSize}px`,
-        }}
-        onPointerDown={(e) => { e.stopPropagation(); onSelect(); onDragStart(); }}
-        onClick={(e) => { e.stopPropagation(); onSelect(); }}
-      >
-        <svg width={svgSize} height={svgSize} className="overflow-visible">
-          <defs>
-            <path id={pathId} d={pathD} fill="none" />
-          </defs>
-          <text
-            fill={color}
-            style={{
-              fontSize: `${layer.fontSize}px`,
-              fontFamily: layer.fontFamily,
-              fontWeight: layer.fontWeight,
-              letterSpacing: `${layer.letterSpacing}px`,
-            }}
-            textAnchor="middle"
-          >
-            <textPath href={`#${pathId}`} startOffset="50%">
-              {processedContent}
-            </textPath>
-          </text>
-        </svg>
-        {active && (
-          <>
-            <button className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white text-xs hover:bg-red-600 z-10" onClick={(e) => { e.stopPropagation(); onDelete(); }}>×</button>
-            <button className="absolute -top-2 -left-2 h-5 w-5 rounded-full bg-gold-500 text-white text-xs hover:bg-gold-600 z-10" onClick={(e) => { e.stopPropagation(); onEdit(); }}>✎</button>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  // Straight text
-  return (
-    <div
-      className={`absolute cursor-grab ${active ? "ring-2 ring-gold-300 ring-offset-2" : "hover:ring-1 hover:ring-gold-200"}`}
-      style={{
-        left: `${layer.x}%`, top: `${layer.y}%`,
-        transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
-        maxWidth: `${layer.maxWidth}%`,
-        color, fontSize: `${layer.fontSize}px`,
-        fontFamily: layer.fontFamily, fontWeight: layer.fontWeight,
-        letterSpacing: `${layer.letterSpacing}px`, lineHeight: layer.lineHeight,
-        textAlign: layer.textAlign,
-        wordWrap: "break-word",
-        whiteSpace: "pre-wrap",
-      }}
-      onPointerDown={(e) => { e.stopPropagation(); onSelect(); onDragStart(); }}
-      onClick={(e) => { e.stopPropagation(); onSelect(); }}
-      onDoubleClick={(e) => { e.stopPropagation(); onEdit(); }}
-    >
-      {processedContent}
-      {active && (
-        <>
-          <button className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white text-xs hover:bg-red-600 z-10" onClick={(e) => { e.stopPropagation(); onDelete(); }}>×</button>
-          <button className="absolute -top-2 -left-2 h-5 w-5 rounded-full bg-gold-500 text-white text-xs hover:bg-gold-600 z-10" onClick={(e) => { e.stopPropagation(); onEdit(); }}>✎</button>
-        </>
-      )}
-    </div>
-  );
-}
-
-// Shared text config editor
-function TextConfigEditor({ config, onChange, designInk, designFont }: {
-  config: TextLayerConfig; onChange: (updates: Partial<TextLayerConfig>) => void;
-  designInk: string; designFont: string;
-}) {
-  return (
-    <>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="mb-1 block text-[10px] text-slate-500">Size</label>
-          <input type="number" value={config.fontSize} onChange={(e) => onChange({ fontSize: parseInt(e.target.value) })} className="w-full rounded border border-slate-200 px-2 py-1 text-sm" />
-        </div>
-        <div>
-          <label className="mb-1 block text-[10px] text-slate-500">Color</label>
-          <input type="color" value={config.color || designInk} onChange={(e) => onChange({ color: e.target.value })} className="w-full h-8 rounded border border-slate-200" />
-        </div>
-      </div>
-      <div>
-        <label className="mb-1 block text-[10px] text-slate-500">Font</label>
-        <Select value={config.fontFamily || designFont} onChange={(e) => onChange({ fontFamily: e.target.value })}>
-          <option>Playfair Display</option>
-          <option>Great Vibes</option>
-          <option>DM Sans</option>
-        </Select>
-      </div>
-      <div>
-        <label className="mb-1 block text-[10px] text-slate-500">Alignment</label>
-        <div className="flex gap-1">
-          <Button variant={config.textAlign === "left" ? "primary" : "outline"} size="sm" onClick={() => onChange({ textAlign: "left" })}><AlignLeft className="h-3 w-3" /></Button>
-          <Button variant={config.textAlign === "center" ? "primary" : "outline"} size="sm" onClick={() => onChange({ textAlign: "center" })}><AlignCenter className="h-3 w-3" /></Button>
-          <Button variant={config.textAlign === "right" ? "primary" : "outline"} size="sm" onClick={() => onChange({ textAlign: "right" })}><AlignRight className="h-3 w-3" /></Button>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="mb-1 block text-[10px] text-slate-500">Weight</label>
-          <Select value={config.fontWeight || "400"} onChange={(e) => onChange({ fontWeight: e.target.value })}>
-            <option value="300">Light</option>
-            <option value="400">Regular</option>
-            <option value="500">Medium</option>
-            <option value="600">Semi-bold</option>
-            <option value="700">Bold</option>
-          </Select>
-        </div>
-        <div>
-          <label className="mb-1 block text-[10px] text-slate-500">Spacing</label>
-          <input type="number" step="0.1" value={config.letterSpacing} onChange={(e) => onChange({ letterSpacing: parseFloat(e.target.value) })} className="w-full rounded border border-slate-200 px-2 py-1 text-sm" />
-        </div>
-      </div>
-    </>
   );
 }

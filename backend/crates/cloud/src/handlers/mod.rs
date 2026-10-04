@@ -5,7 +5,6 @@ pub mod audit;
 pub mod auth;
 pub mod billing;
 pub mod broadcast;
-pub mod card_templates;
 pub mod event;
 pub mod event_assignment;
 pub mod guest;
