@@ -13,8 +13,7 @@ use royalentry_cloud::{
     middleware::audit::audit_middleware,
     routes,
     services::{BillingService, BootstrapService},
-    utils,
-    AppState,
+    utils, AppState,
 };
 
 #[tokio::main]
@@ -50,24 +49,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let billing = billing.clone();
         scheduler
-            .add(tokio_cron_scheduler::Job::new_async("0 0 0 * * *", move |_uuid, _l| {
-                let billing = billing.clone();
-                Box::pin(async move {
-                    if let Err(e) = billing.generate_recurring_invoices().await {
-                        tracing::error!(error = %e, "Failed to generate recurring invoices");
-                    }
-                    if let Err(e) = billing.convert_trials().await {
-                        tracing::error!(error = %e, "Failed to convert trials");
-                    }
-                    if let Err(e) = billing.handle_grace_periods().await {
-                        tracing::error!(error = %e, "Failed to handle grace periods");
-                    }
-                    if let Err(e) = billing.send_dunning_notices().await {
-                        tracing::error!(error = %e, "Failed to send dunning notices");
-                    }
+            .add(
+                tokio_cron_scheduler::Job::new_async("0 0 0 * * *", move |_uuid, _l| {
+                    let billing = billing.clone();
+                    Box::pin(async move {
+                        if let Err(e) = billing.generate_recurring_invoices().await {
+                            tracing::error!(error = %e, "Failed to generate recurring invoices");
+                        }
+                        if let Err(e) = billing.convert_trials().await {
+                            tracing::error!(error = %e, "Failed to convert trials");
+                        }
+                        if let Err(e) = billing.handle_grace_periods().await {
+                            tracing::error!(error = %e, "Failed to handle grace periods");
+                        }
+                        if let Err(e) = billing.send_dunning_notices().await {
+                            tracing::error!(error = %e, "Failed to send dunning notices");
+                        }
+                    })
                 })
-            })
-            .unwrap())
+                .unwrap(),
+            )
             .await
             .unwrap();
     }
@@ -76,15 +77,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let billing = billing.clone();
         scheduler
-            .add(tokio_cron_scheduler::Job::new_async("0 0 * * * *", move |_uuid, _l| {
-                let billing = billing.clone();
-                Box::pin(async move {
-                    if let Err(e) = billing.process_due_invoices().await {
-                        tracing::error!(error = %e, "Failed to process due invoices");
-                    }
+            .add(
+                tokio_cron_scheduler::Job::new_async("0 0 * * * *", move |_uuid, _l| {
+                    let billing = billing.clone();
+                    Box::pin(async move {
+                        if let Err(e) = billing.process_due_invoices().await {
+                            tracing::error!(error = %e, "Failed to process due invoices");
+                        }
+                    })
                 })
-            })
-            .unwrap())
+                .unwrap(),
+            )
             .await
             .unwrap();
     }
@@ -93,16 +96,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let state = app_state.clone();
         scheduler
-            .add(tokio_cron_scheduler::Job::new_async("0 * * * * *", move |_uuid, _l| {
-                let state = state.clone();
-                Box::pin(async move {
-                    let service = royalentry_cloud::services::WebhookService::new(state);
-                    if let Err(error) = service.process_deliveries().await {
-                        tracing::error!(error = %error, "Webhook delivery processing failed");
-                    }
+            .add(
+                tokio_cron_scheduler::Job::new_async("0 * * * * *", move |_uuid, _l| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        let service = royalentry_cloud::services::WebhookService::new(state);
+                        if let Err(error) = service.process_deliveries().await {
+                            tracing::error!(error = %error, "Webhook delivery processing failed");
+                        }
+                    })
                 })
-            })
-            .unwrap())
+                .unwrap(),
+            )
             .await
             .unwrap();
     }
@@ -111,15 +116,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let billing = billing.clone();
         scheduler
-            .add(tokio_cron_scheduler::Job::new_async("0 0 */6 * * *", move |_uuid, _l| {
-                let billing = billing.clone();
-                Box::pin(async move {
-                    if let Err(e) = billing.retry_failed_payments().await {
-                        tracing::error!(error = %e, "Failed to retry failed payments");
-                    }
+            .add(
+                tokio_cron_scheduler::Job::new_async("0 0 */6 * * *", move |_uuid, _l| {
+                    let billing = billing.clone();
+                    Box::pin(async move {
+                        if let Err(e) = billing.retry_failed_payments().await {
+                            tracing::error!(error = %e, "Failed to retry failed payments");
+                        }
+                    })
                 })
-            })
-            .unwrap())
+                .unwrap(),
+            )
             .await
             .unwrap();
     }
@@ -143,8 +150,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(cors);
 
     let app = routes::create_router(app_state.clone())
-        .layer(axum::middleware::from_fn_with_state(app_state.clone(), audit_middleware))
-        .layer(middleware);
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            audit_middleware,
+        ))
+        .layer(middleware)
+        .layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)); // 20MB limit
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

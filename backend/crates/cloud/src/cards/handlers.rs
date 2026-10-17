@@ -1,14 +1,16 @@
 use crate::{
     cards::{
         model::*,
-        renderer::{parse_theme_config, render_card},
         repository,
     },
     error::{AppError, AppResult},
+    files::storage::Storage,
     models::user::Claims,
-    qr::render::render_qr_png,
     AppState,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use image::{imageops::FilterType, DynamicImage, ImageFormat, Rgba};
+use qrcode::QrCode;
 use sqlx::Row;
 use axum::{
     extract::{Path, State},
@@ -17,7 +19,7 @@ use axum::{
     Extension, Json,
 };
 use serde_json::json;
-use std::sync::Arc;
+use std::{io::Cursor, sync::Arc};
 use uuid::Uuid;
 
 pub async fn list_card_templates(
@@ -133,108 +135,125 @@ pub async fn upload_template_image(
 
 pub async fn render_card_template(
     State(state): State<Arc<AppState>>,
-    Extension(_claims): Extension<Claims>,
+    Extension(claims): Extension<Claims>,
     Json(payload): Json<RenderCardRequest>,
 ) -> AppResult<Response> {
-    let template = sqlx::query_as::<_, CardTemplate>(
-        "SELECT id, org_id, name, description, theme_config, background_file_id, preview_image_url, is_active, created_at, updated_at FROM card_templates WHERE id = $1"
-    ).bind(payload.template_id)
-    .fetch_optional(state.db.pool()).await?
-    .ok_or(AppError::NotFound("Card template not found".to_string()))?;
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let png = render_for_guest(&state, org_id, payload.event_id, payload.guest_id, payload.template_id).await?;
+    let mut response = Response::new(axum::body::Body::from(png));
+    response.headers_mut().insert("content-type", "image/png".parse().map_err(|_| AppError::InternalServerError)?);
+    response.headers_mut().insert("content-disposition", "attachment; filename=\"invitation.png\"".parse().map_err(|_| AppError::InternalServerError)?);
+    *response.status_mut() = StatusCode::OK;
+    Ok(response)
+}
 
-    let theme_config = parse_theme_config(&template.theme_config)?;
+pub async fn render_cards_bulk(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<BulkRenderCardsRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if payload.guest_ids.is_empty() || payload.guest_ids.len() > 250 {
+        return Err(AppError::BadRequest("Bulk rendering requires between 1 and 250 guests".to_string()));
+    }
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let mut cards = Vec::with_capacity(payload.guest_ids.len());
+    for guest_id in payload.guest_ids {
+        let png = render_for_guest(&state, org_id, payload.event_id, guest_id, payload.template_id).await?;
+        cards.push(json!({ "guest_id": guest_id, "png_base64": BASE64.encode(png) }));
+    }
+    Ok(Json(json!({ "success": true, "data": { "cards": cards } })))
+}
 
-    let event = sqlx::query("SELECT title, event_date, event_time, venue_name, venue_address, main_characters FROM events WHERE id = $1")
-        .bind(payload.event_id).fetch_optional(state.db.pool()).await?
-        .ok_or(AppError::EventNotFound)?;
-
-    let event_title: String = event.try_get("title").unwrap_or_default();
-    let event_date: chrono::NaiveDate = event.try_get("event_date").unwrap_or_default();
-    let event_time: Option<String> = event.try_get("event_time").ok();
-    let venue_name: Option<String> = event.try_get("venue_name").ok().flatten();
-    let venue_address: Option<String> = event.try_get("venue_address").ok().flatten();
-    let main_characters: Option<String> = event.try_get("main_characters").ok().flatten();
-
-    let guest = sqlx::query("SELECT full_name, guest_category, table_number FROM guests WHERE id = $1 AND event_id = $2")
-        .bind(payload.guest_id).bind(payload.event_id).fetch_optional(state.db.pool()).await?
-        .ok_or(AppError::GuestNotFound)?;
-
-    let guest_name: String = guest.try_get("full_name").unwrap_or_default();
-    let guest_category: Option<String> = guest.try_get("guest_category").ok().flatten();
-    let table_number: Option<String> = guest.try_get("table_number").ok().flatten();
-
-    let invitation = sqlx::query("SELECT short_link FROM invitations WHERE guest_id = $1")
-        .bind(payload.guest_id)
+async fn render_for_guest(
+    state: &Arc<AppState>,
+    org_id: Uuid,
+    event_id: Uuid,
+    guest_id: Uuid,
+    requested_template_id: Option<Uuid>,
+) -> AppResult<Vec<u8>> {
+    let event = sqlx::query("SELECT organization_id, card_template_id FROM events WHERE id = $1 AND deleted_at IS NULL")
+        .bind(event_id)
         .fetch_optional(state.db.pool())
+        .await?
+        .ok_or(AppError::EventNotFound)?;
+    let event_org_id: Uuid = event.try_get("organization_id")?;
+    if event_org_id != org_id {
+        return Err(AppError::Forbidden);
+    }
+    let template_id = requested_template_id
+        .or(event.try_get::<Option<Uuid>, _>("card_template_id")?)
+        .ok_or_else(|| AppError::BadRequest("Select a card template for this event first".to_string()))?;
+    let template = repository::get_template(state.db.pool(), template_id, org_id).await?;
+    if !template.is_active {
+        return Err(AppError::BadRequest("The selected card template is inactive".to_string()));
+    }
+
+    let guest_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM guests WHERE id = $1 AND event_id = $2)")
+        .bind(guest_id)
+        .bind(event_id)
+        .fetch_one(state.db.pool())
         .await?;
-    let short_link: Option<String> = invitation.and_then(|row| row.try_get("short_link").ok());
+    if !guest_exists {
+        return Err(AppError::GuestNotFound);
+    }
 
-    let qr_url = if let Some(ref link) = short_link {
-        format!("{}/g/{}", state.config.app.frontend_url, link)
-    } else {
-        format!(
-            "{}/events/{}/guest/{}",
-            state.config.app.frontend_url, payload.event_id, payload.guest_id
-        )
+    let short_link: String = sqlx::query_scalar("SELECT short_link FROM invitations WHERE guest_id = $1")
+        .bind(guest_id)
+        .fetch_optional(state.db.pool())
+        .await?
+        .ok_or(AppError::InvitationNotFound)?;
+    let frontend_url = state.config.app.frontend_url.trim_end_matches('/');
+    let qr_url = format!("{frontend_url}/g/{short_link}");
+
+    let config = &template.theme_config;
+    let file_id = config
+        .get("front_file_id")
+        .and_then(serde_json::Value::as_str)
+        .or(template.background_file_id.as_deref())
+        .ok_or_else(|| AppError::BadRequest("Template has no front_file_id".to_string()))?;
+    if file_id.contains('/') || file_id.contains('\\') || file_id.contains("..") || !file_id.ends_with(".png") {
+        return Err(AppError::Forbidden);
+    }
+    let storage = crate::files::storage::LocalStorage::new("uploads/cards");
+    let storage_path = format!("{org_id}/{file_id}");
+    let front_bytes = storage.download(&storage_path).await.map_err(|_| AppError::FileNotFound)?;
+    let mut front = image::load_from_memory(&front_bytes)
+        .map_err(|_| AppError::BadRequest("Template background is not a supported raster image".to_string()))?
+        .to_rgba8();
+
+    let position = config.get("qr_position").and_then(serde_json::Value::as_object)
+        .ok_or_else(|| AppError::BadRequest("Template qr_position is missing".to_string()))?;
+    let number = |key: &str| -> AppResult<f64> {
+        position.get(key).and_then(serde_json::Value::as_f64)
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| AppError::BadRequest(format!("qr_position.{key} must be a finite number")))
     };
-    let qr_png = render_qr_png(&qr_url).unwrap_or_default();
+    let percent = |value: f64| if value <= 1.0 { value * 100.0 } else { value };
+    let x = percent(number("x")?).clamp(0.0, 100.0);
+    let y = percent(number("y")?).clamp(0.0, 100.0);
+    let w = percent(number("w")?).clamp(0.1, 100.0);
+    let h = percent(number("h")?).clamp(0.1, 100.0);
+    let left = ((x / 100.0) * f64::from(front.width())).round() as u32;
+    let top = ((y / 100.0) * f64::from(front.height())).round() as u32;
+    let width = (((w / 100.0) * f64::from(front.width())).round() as u32).min(front.width().saturating_sub(left));
+    let height = (((h / 100.0) * f64::from(front.height())).round() as u32).min(front.height().saturating_sub(top));
+    if width == 0 || height == 0 {
+        return Err(AppError::BadRequest("QR position falls outside the card bounds".to_string()));
+    }
 
-    let mut render_data = std::collections::HashMap::new();
-    render_data.insert("EVENT_TITLE".to_string(), event_title);
-    render_data.insert(
-        "EVENT_DATE".to_string(),
-        event_date.format("%A, %d %B %Y").to_string(),
-    );
-    render_data.insert(
-        "EVENT_START_TIME".to_string(),
-        event_time.unwrap_or_default(),
-    );
-    render_data.insert("EVENT_VENUE".to_string(), venue_name.unwrap_or_default());
-    render_data.insert(
-        "EVENT_ADDRESS".to_string(),
-        venue_address.unwrap_or_default(),
-    );
-    render_data.insert(
-        "EVENT_CHARACTERS".to_string(),
-        main_characters.unwrap_or_default(),
-    );
-    render_data.insert("GUEST_NAME".to_string(), guest_name.clone());
-    render_data.insert(
-        "GUEST_CATEGORY".to_string(),
-        guest_category.unwrap_or_default(),
-    );
+    let qr_code = QrCode::new(qr_url.as_bytes()).map_err(|error| AppError::QrGenerationError(error.to_string()))?;
+    let qr = qr_code
+        .render::<Rgba<u8>>()
+        .min_dimensions(width.max(1), height.max(1))
+        .dark_color(Rgba([0, 0, 0, 255]))
+        .light_color(Rgba([0, 0, 0, 0]))
+        .build();
+    let qr = image::imageops::resize(&qr, width, height, FilterType::Nearest);
+    image::imageops::overlay(&mut front, &qr, i64::from(left), i64::from(top));
 
-    let table_val = table_number.clone().unwrap_or_default();
-    render_data.insert("GUEST_TABLE".to_string(), table_val.clone());
-    render_data.insert("GUEST_SEATNO".to_string(), table_val);
-    render_data.insert("QR_CODE".to_string(), qr_url);
-
-    let background_bytes = if let Some(ref file_id) = template.background_file_id {
-        sqlx::query("SELECT path FROM files WHERE id = $1")
-            .bind(file_id)
-            .fetch_optional(state.db.pool())
-            .await?
-            .and_then(|row| row.try_get::<String, _>("path").ok())
-            .and_then(|path| std::fs::read(path).ok())
-    } else {
-        None
-    };
-
-    let card_png = render_card(
-        &theme_config,
-        background_bytes.as_deref(),
-        &qr_png,
-        &render_data,
-    )?;
-
-    let filename = format!("invitation_{}.png", guest_name.replace(' ', "_"));
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "image/png")
-        .header(
-            "Content-Disposition",
-            format!("attachment; filename=\"{}\"", filename),
-        )
-        .body(axum::body::Body::from(card_png))
-        .unwrap())
+    let mut output = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(front)
+        .write_to(&mut output, ImageFormat::Png)
+        .map_err(|_| AppError::InternalServerError)?;
+    Ok(output.into_inner())
 }

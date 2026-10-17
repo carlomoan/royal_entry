@@ -117,29 +117,41 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "cards:write",
         )));
 
+    let file_read_routes = Router::new()
+        .route("/api/v1/files/{file_id}", get(files::download_file))
+        .layer(middleware::from_fn(require_permission_middleware(
+            "cards:read",
+        )));
+
     // ── Card template routes ────────────────────────────────────────────────────
     let card_routes = Router::new()
+        .route("/api/v1/cards/templates", get(crate::cards::handlers::list_card_templates))
+        .route("/api/v1/cards/templates/{id}", get(crate::cards::handlers::get_card_template))
         .route(
-            "/api/v1/cards/templates",
-            get(crate::cards::handlers::list_card_templates)
-                .post(crate::cards::handlers::create_card_template),
+            "/api/v1/cards/render",
+            post(crate::cards::handlers::render_card_template),
         )
         .route(
+            "/api/v1/cards/render/bulk",
+            post(crate::cards::handlers::render_cards_bulk),
+        )
+        .layer(middleware::from_fn(require_permission_middleware(
+            "cards:read",
+        )));
+
+    let card_write_routes = Router::new()
+        .route("/api/v1/cards/templates", post(crate::cards::handlers::create_card_template))
+        .route(
             "/api/v1/cards/templates/{id}",
-            get(crate::cards::handlers::get_card_template)
-                .put(crate::cards::handlers::update_card_template)
+            put(crate::cards::handlers::update_card_template)
                 .delete(crate::cards::handlers::delete_card_template),
         )
         .route(
             "/api/v1/cards/templates/{id}/upload",
             post(crate::cards::handlers::upload_template_image),
         )
-        .route(
-            "/api/v1/cards/render",
-            post(crate::cards::handlers::render_card_template),
-        )
         .layer(middleware::from_fn(require_permission_middleware(
-            "cards:read",
+            "cards:write",
         )));
 
     // ── Message template routes ────────────────────────────────────────────────
@@ -502,7 +514,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let protected = auth_routes
         .merge(event_routes)
         .merge(card_routes)
+        .merge(card_write_routes)
         .merge(file_routes)
+        .merge(file_read_routes)
         .merge(message_template_routes)
         .merge(log_routes)
         .merge(staff_read_routes)

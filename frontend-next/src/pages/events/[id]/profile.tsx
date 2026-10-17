@@ -2,47 +2,52 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowLeft, CalendarDays, MapPin, Users, UserCheck, Clock,
+  ArrowLeft, CalendarDays, MapPin, Users, UserCheck, Clock, ScanLine,
   Banknote, CreditCard, Radio, ShieldCheck, Activity, Palette,
 } from "lucide-react";
 import { useRouter } from "next/router";
+import Link from "next/link";
 import api from "@/lib/api";
-import { Card, Badge, StatCard } from "@/components/ui";
+import { Card, Badge, StatCard, Button } from "@/components/ui";
 import { formatDate, formatTZS } from "@/lib/utils";
 
 export default function EventProfilePage() {
   const router = useRouter();
   const { id } = router.query as { id: string };
 
-  const { data: summary, isLoading } = useQuery({
+  const { data: summary, isLoading, isError, refetch } = useQuery({
     queryKey: ["event-summary", id],
     queryFn: async () => (await api.get(`/events/${id}/summary`)).data.data,
+    enabled: !!id,
   });
 
-  const { data: guests = [] } = useQuery({
+  const { data: guests = [], isLoading: guestsLoading } = useQuery({
     queryKey: ["guests", id],
     queryFn: async () => (await api.get(`/events/${id}/guests`)).data.data,
+    enabled: !!id,
   });
   const { data: cardTemplates = [] } = useQuery({
     queryKey: ["card-templates"],
     queryFn: async () => (await api.get("/cards/templates")).data.data ?? [],
   });
 
-  if (isLoading || !summary) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (isLoading) return <div className="space-y-4"><div className="h-24 animate-pulse rounded-lg bg-slate-100" /><div className="h-64 animate-pulse rounded-lg bg-slate-100" /></div>;
+  if (isError || !summary) return <Card><div className="space-y-3 py-8 text-center"><p className="text-sm text-rose-700">Event profile could not be loaded.</p><button onClick={() => refetch()} className="text-sm font-semibold text-gold-700">Retry</button></div></Card>;
 
   const { event, summary: stats } = summary;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <button onClick={() => router.back()} className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white transition hover:bg-slate-50">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{event.title}</h1>
-          <p className="text-sm text-slate-500">Event Profile</p>
+          <p className="text-sm text-slate-500">Event profile · {formatDate(event.event_date)} · {event.venue_name ?? "Venue not set"}</p>
         </div>
+        <div className="ml-auto flex gap-2"><Badge label={event.status} /><Link href={`/events/${id}`}><Button size="sm" variant="outline">Open operations</Button></Link><Link href={`/events/${id}/scanner`}><Button size="sm"><ScanLine className="h-4 w-4" /> Scanner</Button></Link></div>
       </div>
 
       {/* Stats */}
@@ -71,11 +76,11 @@ export default function EventProfilePage() {
 
         {/* Guest list */}
         <Card title={`Guest List (${guests.length})`}>
-          {!guests.length ? (
+          {guestsLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading guests…</p> : !guests.length ? (
             <p className="py-8 text-center text-sm text-slate-400">No guests registered</p>
           ) : (
             <div className="max-h-[400px] space-y-2 overflow-y-auto">
-              {guests.map((g: any) => (
+              {guests.slice(0, 12).map((g: any) => (
                 <div key={g.id} className="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
                   <div className="flex h-8 w-8 items-center justify-center rounded-full bg-navy-950 text-xs font-bold text-gold-400">
                     {g.full_name?.[0]?.toUpperCase() ?? "G"}

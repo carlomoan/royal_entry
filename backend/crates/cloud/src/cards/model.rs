@@ -70,7 +70,14 @@ pub struct UpdateCardTemplateRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct RenderCardRequest {
-    pub template_id: Uuid,
+    pub template_id: Option<Uuid>,
     pub event_id: Uuid,
     pub guest_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BulkRenderCardsRequest {
+    pub event_id: Uuid,
+    pub guest_ids: Vec<Uuid>,
+    pub template_id: Option<Uuid>,
 }

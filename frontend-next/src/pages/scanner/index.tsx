@@ -3,7 +3,7 @@ import { useState, useMemo } from "react";
 import { useRouter } from "next/router";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ScanLine, Search, MapPin, CalendarDays, ArrowRight, Zap, Hash, QrCode,
+  ScanLine, Search, MapPin, CalendarDays, ArrowRight, Zap, Hash, QrCode, Users,
 } from "lucide-react";
 import api from "@/lib/api";
 import { cn, formatDate } from "@/lib/utils";
@@ -13,7 +13,7 @@ export default function ScannerHub() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "upcoming">("all");
 
-  const { data: events = [], isLoading } = useQuery({
+  const { data: events = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["events-scanner-hub"],
     queryFn: async () => (await api.get("/events?per_page=100")).data.data,
   });
@@ -31,6 +31,13 @@ export default function ScannerHub() {
   }, [events, search, filter]);
 
   const activeEvents = (events as any[]).filter((e) => e.status === "active");
+  const primaryLiveEvent = activeEvents[0];
+  const { data: liveScanStats } = useQuery({
+    queryKey: ["scanner-hub-live-stats", primaryLiveEvent?.id],
+    queryFn: async () => (await api.get(`/events/${primaryLiveEvent.id}/scan-stats`)).data.data,
+    enabled: !!primaryLiveEvent,
+    refetchInterval: 10_000,
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24 md:pb-6">
@@ -84,6 +91,10 @@ export default function ScannerHub() {
         </div>
       </div>
 
+      {isError && <div className="mx-4 mt-4 flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 md:mx-6"><span>Events could not be loaded.</span><button onClick={() => refetch()} className="font-semibold underline">Retry</button></div>}
+
+      {primaryLiveEvent && <div className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-navy-950 p-4 text-white md:mx-6"><div><p className="text-xs font-semibold uppercase text-emerald-300">Live check-ins</p><p className="text-sm font-semibold">{primaryLiveEvent.title}</p></div><div className="text-right"><p className="text-2xl font-bold text-gold-400">{liveScanStats?.arrived ?? "—"}</p><p className="text-xs text-slate-300">of {liveScanStats?.total_guests ?? primaryLiveEvent.guest_count_expected ?? "—"} guests</p></div></div>}
+
       {/* Event Grid */}
       <div className="px-4 py-4 md:px-6 md:py-6">
         {isLoading ? (
@@ -103,9 +114,6 @@ export default function ScannerHub() {
         ) : (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((event: any) => {
-              const scanned = event.guests_arrived || 0;
-              const total = event.guest_count_expected || 0;
-              const progress = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
               const isActive = event.status === "active";
 
               return (
@@ -136,25 +144,7 @@ export default function ScannerHub() {
                     )}
                   </div>
 
-                  {total > 0 && (
-                    <div className="mt-auto">
-                      <div className="mb-1.5 flex items-center justify-between text-xs">
-                        <span className="font-medium text-slate-600">
-                          <span className="font-bold text-slate-900">{scanned}</span> / {total} guests
-                        </span>
-                        <span className="font-bold text-gold-600">{progress}%</span>
-                      </div>
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className={cn(
-                            "h-full rounded-full transition-all duration-500",
-                            progress === 100 ? "bg-emerald-500" : "bg-gradient-to-r from-gold-400 to-gold-600"
-                          )}
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
+                  <div className="mt-auto flex items-center gap-2 text-xs text-slate-500"><Users className="h-3.5 w-3.5" />{event.guest_count_expected ? `${event.guest_count_expected} expected guests` : "Guest count not set"}</div>
 
                   <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
                     <span className="text-xs font-medium text-slate-400 group-hover:text-gold-600 transition">Open Scanner</span>

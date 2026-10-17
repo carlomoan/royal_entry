@@ -17,11 +17,15 @@ export default function ProfilePage() {
 
   const { data: me, isLoading } = useQuery({
     queryKey: ["profile-me"],
-    queryFn: async () => (await api.get("/auth/me")).data.data ?? (await api.get("/auth/me")).data,
+    queryFn: async () => {
+      const response = await api.get("/auth/me");
+      return response.data.data ?? response.data;
+    },
     retry: 1,
   });
 
   const user = me ?? authUser;
+  if (isLoading && !user) return <div className="space-y-4"><div className="h-28 animate-pulse rounded-xl bg-slate-100" /><div className="h-48 animate-pulse rounded-xl bg-slate-100" /></div>;
   if (!user) return null;
 
   const platform = isPlatformAdmin(user.role);
@@ -76,7 +80,7 @@ export default function ProfilePage() {
               <h2 className="text-xl font-bold text-slate-900">{user.full_name}</h2>
               <p className="text-sm text-slate-500">{user.email}</p>
               <div className="mt-2 flex items-center gap-2">
-                <Badge label={platform ? "Platform Admin" : "Account Staff"} variant={platform ? "gold" : "blue"} />
+                <Badge label={roleLabel(user.role)} variant={platform ? "gold" : "blue"} />
                 <Badge label={user.is_active ? "active" : "inactive"} variant={user.is_active ? "green" : "rose"} />
               </div>
             </div>
@@ -101,6 +105,12 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+
+      <Card title="Workspace shortcuts">
+        <div className="flex flex-wrap gap-2">
+          {platform ? <><Link href="/platform"><Button variant="outline" size="sm">Platform overview</Button></Link><Link href="/platform/accounts"><Button variant="outline" size="sm">Customer accounts</Button></Link></> : <><Link href="/events"><Button variant="outline" size="sm">Events</Button></Link><Link href="/reports"><Button variant="outline" size="sm">Reports</Button></Link>{user.organization_id && <Link href="/usage"><Button variant="outline" size="sm">Plan and usage</Button></Link>}{user.role === "scanner_attendant" && <Link href="/scanner"><Button variant="outline" size="sm">Scanner</Button></Link>}</>}
+        </div>
+      </Card>
 
       {/* Security section */}
       <Card title="Security">

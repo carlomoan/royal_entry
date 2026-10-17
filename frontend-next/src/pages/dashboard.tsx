@@ -13,14 +13,40 @@ import {
 import Link from "next/link";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { isPlatformAdmin } from "@/lib/roles";
+import { isPlatformAdmin, roleLabel } from "@/lib/roles";
 import { formatDate, formatTZS, cn } from "@/lib/utils";
 import { StatCard, Card, Badge } from "@/components/ui";
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const platform = isPlatformAdmin(user?.role);
-  return platform ? <PlatformDashboard /> : <AccountDashboard />;
+  return platform ? <PlatformDashboardWithFallback /> : <AccountDashboard />;
+}
+
+function PlatformDashboardWithFallback() {
+  const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
+    queryKey: ["platform-summary"],
+    queryFn: async () => {
+      try {
+        const res = await api.get("/platform/summary");
+        return res.data.data;
+      } catch (error: any) {
+        if (error.response?.status === 403) {
+          console.warn('Platform access denied, falling back to account dashboard');
+          return null;
+        }
+        throw error;
+      }
+    },
+    retry: false,
+  });
+
+  // If platform query fails with 403, fallback to account dashboard
+  if (summaryError || summary === null) {
+    return <AccountDashboard />;
+  }
+
+  return <PlatformDashboard />;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -28,14 +54,38 @@ export default function DashboardPage() {
    ══════════════════════════════════════════════════════════════════════ */
 
 function PlatformDashboard() {
-  const { data: summary } = useQuery({
+  const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ["platform-summary"],
-    queryFn: async () => (await api.get("/platform/summary")).data.data,
+    queryFn: async () => {
+      try {
+        const res = await api.get("/platform/summary");
+        return res.data.data;
+      } catch (error: any) {
+        console.error('Platform summary error:', error);
+        if (error.response?.status === 403) {
+          throw new Error('You do not have platform admin permissions');
+        }
+        throw error;
+      }
+    },
+    retry: false,
   });
 
-  const { data: customers = [] } = useQuery({
+  const { data: customers = [], isLoading: customersLoading, isError: customersError } = useQuery({
     queryKey: ["platform-customers"],
-    queryFn: async () => (await api.get("/platform/customers")).data.data,
+    queryFn: async () => {
+      try {
+        const res = await api.get("/platform/customers");
+        return res.data.data;
+      } catch (error: any) {
+        console.error('Platform customers error:', error);
+        if (error.response?.status === 403) {
+          throw new Error('You do not have platform admin permissions');
+        }
+        throw error;
+      }
+    },
+    retry: false,
   });
 
   const chartData = useMemo(
@@ -73,11 +123,13 @@ function PlatformDashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Total Revenue" value={formatTZS(summary?.total_revenue_tsh ?? 0)} icon={Receipt} color="gold" growth="+12.5%" subtitle={`${summary?.pending_payments ?? 0} pending`} />
+        <StatCard title="Total Revenue" value={summaryLoading ? "—" : formatTZS(summary?.total_revenue_tsh ?? 0)} icon={Receipt} color="gold" subtitle={`${summary?.pending_payments ?? 0} pending`} />
         <StatCard title="Customers" value={summary?.total_customers ?? 0} icon={Building2} color="blue" subtitle={`${summary?.active_customers ?? 0} active · ${summary?.suspended_customers ?? 0} suspended`} />
         <StatCard title="MRR" value={formatTZS(summary?.monthly_recurring_revenue_tsh ?? 0)} icon={TrendingUp} color="green" subtitle={`${summary?.active_subscriptions ?? 0} active subs`} />
         <StatCard title="Active Events" value={summary?.active_events ?? 0} icon={CalendarDays} color="purple" subtitle={`${summary?.total_users ?? 0} total users`} />
       </div>
+
+      {(summaryError || customersError) && <Card><p className="text-sm text-rose-700">Some platform metrics could not be loaded. Check your connection or refresh the dashboard.</p></Card>}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -85,7 +137,7 @@ function PlatformDashboard() {
         <Card title="Revenue by Account" className="lg:col-span-2" action={
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">Top 6</span>
         }>
-          {chartData.length === 0 ? (
+          {customersLoading ? <div className="h-[280px] animate-pulse rounded bg-slate-100" /> : chartData.length === 0 ? (
             <p className="py-16 text-center text-sm text-slate-400">No data yet</p>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
@@ -108,7 +160,7 @@ function PlatformDashboard() {
 
         {/* Accounts needing attention */}
         <Card title="Needs Attention">
-          {attention.length === 0 ? (
+          {customersLoading ? <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-14 animate-pulse rounded bg-slate-100" />)}</div> : attention.length === 0 ? (
             <div className="flex flex-col items-center py-14">
               <UserCheck className="mb-2 h-8 w-8 text-emerald-300" />
               <p className="text-sm text-slate-400">All accounts healthy</p>
@@ -116,7 +168,7 @@ function PlatformDashboard() {
           ) : (
             <div className="space-y-3">
               {attention.slice(0, 5).map((c: any) => (
-                <Link key={c.organization_id} href="/platform/accounts"
+                <Link key={c.organization_id} href={`/platform/accounts/${c.organization_id}`}
                   className="flex items-center gap-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3 transition hover:border-amber-300"
                 >
                   <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-500" />
@@ -134,7 +186,7 @@ function PlatformDashboard() {
 
       {/* Customer table */}
       <Card title="Customer Accounts">
-        <DataTable customers={customers} />
+        {customersLoading ? <p className="py-6 text-sm text-slate-500">Loading accounts…</p> : <DataTable customers={customers} />}
       </Card>
     </div>
   );
@@ -145,7 +197,8 @@ function PlatformDashboard() {
    ══════════════════════════════════════════════════════════════════════ */
 
 function AccountDashboard() {
-  const { data: eventsData } = useQuery({
+  const { user } = useAuth();
+  const { data: eventsData, isLoading: eventsLoading, isError: eventsError } = useQuery({
     queryKey: ["events"],
     queryFn: async () => (await api.get("/events?page=1&per_page=50")).data,
   });
@@ -154,19 +207,19 @@ function AccountDashboard() {
   const upcoming = events.filter((e: any) => e.status === "approved" || e.status === "draft");
   const activeEvent = active[0];
 
-  const { data: reportSummary } = useQuery({
+  const { data: reportSummary, isLoading: reportLoading, isError: reportError } = useQuery({
     queryKey: ["reports-summary"],
     queryFn: async () => (await api.get("/reports/summary")).data.data,
   });
 
-  const { data: scanStats } = useQuery({
+  const { data: scanStats, isError: scanError } = useQuery({
     queryKey: ["scan-stats", activeEvent?.id],
     queryFn: async () => (await api.get(`/events/${activeEvent.id}/scan-stats`)).data.data,
     enabled: !!activeEvent,
     refetchInterval: 10_000,
   });
 
-  const { data: eventSummary } = useQuery({
+  const { data: eventSummary, isError: eventSummaryError } = useQuery({
     queryKey: ["event-summary", activeEvent?.id],
     queryFn: async () => (await api.get(`/events/${activeEvent.id}/summary`)).data.data,
     enabled: !!activeEvent,
@@ -181,18 +234,31 @@ function AccountDashboard() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500">Live overview of your workspace</p>
+        <p className="text-sm text-slate-500">Live operations overview · {roleLabel(user?.role)}</p>
       </div>
 
+      {(eventsError || reportError || eventSummaryError || scanError) && <Card><p className="text-sm text-rose-700">Some workspace data is unavailable. Use the links below to open the relevant event or report.</p></Card>}
+
       {/* Stats */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      {reportLoading ? <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="h-24 animate-pulse rounded-lg bg-slate-100" />)}</div> : <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard title="Events" value={reportSummary?.total_events ?? 0} icon={CalendarDays} color="blue" />
         <StatCard title="Guests" value={reportSummary?.total_guests ?? 0} icon={Users} color="purple" />
         <StatCard title="Arrivals" value={reportSummary?.total_arrivals ?? 0} icon={UserCheck} color="green" />
         <StatCard title="Payments" value={formatTZS(reportSummary?.total_payments_tsh ?? 0)} icon={CreditCard} color="gold" />
         <StatCard title="Michango" value={formatTZS(reportSummary?.total_michango_tsh ?? 0)} icon={Banknote} color="red" />
         <StatCard title="Broadcasts" value={reportSummary?.total_broadcasts ?? 0} icon={Activity} color="blue" />
-      </div>
+      </div>}
+
+      <Card title="Event Pipeline" action={<Link href="/events" className="text-xs font-semibold text-gold-700 hover:underline">View events</Link>}>
+        {eventsLoading ? <p className="text-sm text-slate-500">Loading events…</p> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { label: "Live", count: active.length, className: "bg-emerald-50 text-emerald-800" },
+            { label: "Approved", count: events.filter((event: any) => event.status === "approved").length, className: "bg-sky-50 text-sky-800" },
+            { label: "Draft", count: events.filter((event: any) => event.status === "draft").length, className: "bg-amber-50 text-amber-800" },
+            { label: "Completed", count: events.filter((event: any) => event.status === "completed").length, className: "bg-slate-100 text-slate-800" },
+          ].map((item) => <div key={item.label} className={`rounded-lg p-4 ${item.className}`}><p className="text-xs font-semibold uppercase">{item.label}</p><p className="mt-1 text-2xl font-bold">{item.count}</p></div>)}
+        </div>}
+      </Card>
 
       {/* Live event banner */}
       {activeEvent ? (

@@ -6,6 +6,7 @@ import {
   AlertTriangle, UserPlus, Crown,
 } from "lucide-react";
 import { useRouter } from "next/router";
+import Link from "next/link";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -24,7 +25,7 @@ export default function AccountProfilePage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignUserId, setAssignUserId] = useState("");
 
-  const { data: detail, isLoading, refetch: refetchDetail } = useQuery({
+  const { data: detail, isLoading, isError, refetch: refetchDetail } = useQuery({
     queryKey: ["account-profile", id],
     queryFn: async () => (await api.get(`/platform/customers/${id}`)).data.data,
     enabled: !!id && canView,
@@ -34,6 +35,16 @@ export default function AccountProfilePage() {
     queryKey: ["platform-users-for-assign"],
     queryFn: async () => (await api.get("/platform/users")).data.data,
     enabled: assignOpen,
+  });
+  const { data: usageReport } = useQuery({
+    queryKey: ["organization-usage", id],
+    queryFn: async () => (await api.get(`/platform/organizations/${id}/usage`)).data.data,
+    enabled: !!id && canView,
+  });
+  const { data: usageLimits } = useQuery({
+    queryKey: ["organization-usage-limits", id],
+    queryFn: async () => (await api.get(`/platform/organizations/${id}/usage/limits`)).data.data,
+    enabled: !!id && canView,
   });
 
   const promoteMutation = useMutation({
@@ -72,7 +83,8 @@ export default function AccountProfilePage() {
     );
   }
 
-  if (isLoading || !detail) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (isLoading) return <div className="space-y-4"><div className="h-24 animate-pulse rounded-lg bg-slate-100" /><div className="h-64 animate-pulse rounded-lg bg-slate-100" /></div>;
+  if (isError || !detail) return <Card><div className="space-y-3 py-8 text-center"><p className="text-sm text-rose-700">Organization profile could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetchDetail()}>Retry</Button></div></Card>;
 
   const c = detail.customer;
   // ✅ Safely map all members related to this specific organization
@@ -117,6 +129,22 @@ export default function AccountProfilePage() {
         <StatCard title="Revenue" value={formatTZS(c.total_revenue_tsh)} icon={CreditCard} color="gold" />
         <StatCard title="Payments" value={`${c.completed_payments_count}/${c.total_payments_count}`} icon={Activity} color="purple" />
       </div>
+
+      <Card title="30-day Usage" action={<Link href="/platform/users" className="text-xs font-semibold text-gold-700 hover:underline">Manage platform users</Link>}>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["Events created", usageReport?.events_count],
+            ["Guests added", usageReport?.guests_count],
+            ["Invitations sent", usageReport?.invitations_sent],
+            ["Card/scanner visits", usageReport?.scans_count],
+            ["Payments", usageReport?.payments_count],
+            ["Broadcasts", usageReport?.broadcasts_sent],
+            ["Storage", `${usageReport?.storage_mb ?? 0} MB`],
+            ["API calls", usageReport?.api_calls],
+          ].map(([label, value]) => <div key={String(label)} className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-semibold text-slate-900">{value ?? "—"}</p></div>)}
+        </div>
+        {usageLimits?.metrics?.length > 0 && <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">{usageLimits.metrics.map((metric: any) => <div key={metric.metric_name}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-600">{metric.metric_name}</span><span className="font-semibold text-slate-700">{metric.value}{metric.limit != null ? ` / ${metric.limit}` : ""}</span></div><div className="h-1.5 overflow-hidden rounded bg-slate-100"><div className={`h-full ${metric.percentage >= 90 ? "bg-rose-500" : metric.percentage >= 70 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(metric.percentage ?? 0, 100)}%` }} /></div></div>)}</div>}
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Organization Details">

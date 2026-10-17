@@ -7,11 +7,14 @@ import api from "@/lib/api";
 import { Card, Badge, Button } from "@/components/ui";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatDate } from "@/lib/utils";
+import { useState } from "react";
 
 export default function AuditPage() {
+  const [actionFilter, setActionFilter] = useState("");
+  const [page, setPage] = useState(1);
   const exportAudit = async () => {
     try {
-      const response = await api.get("/audit/export");
+      const response = await api.get("/audit/export", { params: { action: actionFilter || undefined } });
       const { filename, content } = response.data.data;
       const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
       const anchor = document.createElement("a");
@@ -21,9 +24,9 @@ export default function AuditPage() {
       URL.revokeObjectURL(url);
     } catch { toast.error("Audit export failed"); }
   };
-  const { data: response, isLoading } = useQuery({
-    queryKey: ["audit"],
-    queryFn: async () => (await api.get("/audit/logs")).data,
+  const { data: response, isLoading, isError, refetch } = useQuery({
+    queryKey: ["audit", actionFilter, page],
+    queryFn: async () => (await api.get("/audit/logs", { params: { page, per_page: 25, action: actionFilter || undefined } })).data,
   });
   const logs = (response?.data ?? []) as any[];
 
@@ -42,14 +45,19 @@ export default function AuditPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
-          <p className="text-sm text-slate-500">Security trail of every authenticated action</p>
+          <p className="text-sm text-slate-500">Security trail · {response?.pagination?.total ?? logs.length} records</p>
         </div>
-        <Button variant="outline" size="sm" onClick={exportAudit}><Download className="h-3.5 w-3.5" /> Export CSV</Button>
+        <div className="flex gap-2">
+          <input aria-label="Filter audit action" value={actionFilter} onChange={(event) => { setActionFilter(event.target.value); setPage(1); }} placeholder="Filter actions" className="h-9 rounded-lg border border-slate-200 px-3 text-sm" />
+          <Button variant="outline" size="sm" onClick={() => refetch()}>Refresh</Button>
+          <Button variant="outline" size="sm" onClick={exportAudit}><Download className="h-3.5 w-3.5" /> Export CSV</Button>
+        </div>
       </div>
 
+      {isError && <Card><p className="text-sm text-rose-700">Audit records could not be loaded. Check access or retry.</p></Card>}
       {isLoading ? (
         <p className="text-sm text-slate-500">Loading…</p>
       ) : logs.length === 0 ? (
@@ -68,6 +76,7 @@ export default function AuditPage() {
           />
         </Card>
       )}
+      {!isLoading && <div className="flex items-center justify-between text-xs text-slate-500"><span>Page {response?.pagination?.page ?? page} of {response?.pagination?.total_pages ?? 1}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button><Button size="sm" variant="outline" disabled={page >= (response?.pagination?.total_pages ?? 1)} onClick={() => setPage((current) => current + 1)}>Next</Button></div></div>}
     </div>
   );
 }

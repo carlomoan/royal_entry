@@ -4,10 +4,7 @@
 // Role-Based Access Control helpers — single source of truth for permissions.
 // Mirrors the frontend `src/utils/roles.ts` ROLE_PERMISSIONS matrix.
 
-use crate::{
-    error::AppError,
-    models::user::Claims,
-};
+use crate::{error::AppError, models::user::Claims};
 use uuid::Uuid;
 
 // ── Role categories ───────────────────────────────────────────────────────────
@@ -25,23 +22,66 @@ pub const ACCOUNT_ROLES: &[&str] = &[
 // ── Permission catalog ────────────────────────────────────────────────────────
 // All available permissions across every object in the system.
 pub const ALL_PERMISSIONS: &[&str] = &[
-    "events:read", "events:write", "events:delete", "events:activate", "events:approve", "events:reject", "events:complete",
-    "guests:read", "guests:write", "guests:delete", "guests:import", "guests:csv",
-    "invitations:read", "invitations:write", "invitations:generate", "invitations:send",
-    "scanner:read", "scanner:write", "scanner:otp",
-    "michango:read", "michango:write", "michango:payment", "michango:remind",
-    "broadcast:read", "broadcast:write", "broadcast:sms", "broadcast:whatsapp", "broadcast:email", "broadcast:telegram",
-    "payments:read", "payments:write", "payments:receipt", "payments:invoice",
-    "reports:read", "reports:export",
-    "audit:read", "audit:export",
-    "team:read", "team:write",
-    "settings:read", "settings:write",
-    "platform:read", "platform:write", "platform:manage_users", "platform:manage_plans", "platform:manage_templates", "platform:manage_global_variables",
-    "webhooks:read", "webhooks:write",
-    "cards:read", "cards:write", "cards:design", "cards:checkin",
-    "otp:send", "otp:verify",
-    "roles:read", "roles:write", "roles:assign",
-    "invoices:read", "invoices:write",
+    "events:read",
+    "events:write",
+    "events:delete",
+    "events:activate",
+    "events:approve",
+    "events:reject",
+    "events:complete",
+    "guests:read",
+    "guests:write",
+    "guests:delete",
+    "guests:import",
+    "guests:csv",
+    "invitations:read",
+    "invitations:write",
+    "invitations:generate",
+    "invitations:send",
+    "scanner:read",
+    "scanner:write",
+    "scanner:otp",
+    "michango:read",
+    "michango:write",
+    "michango:payment",
+    "michango:remind",
+    "broadcast:read",
+    "broadcast:write",
+    "broadcast:sms",
+    "broadcast:whatsapp",
+    "broadcast:email",
+    "broadcast:telegram",
+    "payments:read",
+    "payments:write",
+    "payments:receipt",
+    "payments:invoice",
+    "reports:read",
+    "reports:export",
+    "audit:read",
+    "audit:export",
+    "team:read",
+    "team:write",
+    "settings:read",
+    "settings:write",
+    "platform:read",
+    "platform:write",
+    "platform:manage_users",
+    "platform:manage_plans",
+    "platform:manage_templates",
+    "platform:manage_global_variables",
+    "webhooks:read",
+    "webhooks:write",
+    "cards:read",
+    "cards:write",
+    "cards:design",
+    "cards:checkin",
+    "otp:send",
+    "otp:verify",
+    "roles:read",
+    "roles:write",
+    "roles:assign",
+    "invoices:read",
+    "invoices:write",
 ];
 
 pub const PLATFORM_ROLES_ALL: &[&str] = ALL_PERMISSIONS;
@@ -58,27 +98,45 @@ pub const PLATFORM_ROLES_ALL: &[&str] = ALL_PERMISSIONS;
 //
 // Mirrors the frontend `src/utils/roles.ts` ROLE_PERMISSIONS matrix.
 pub const ROLE_PERMISSIONS: &[(&str, &[&str])] = &[
-    ("account_admin", &[
-        "events:*", "guests:*", "invitations:*", "scanner:*",
-        "michango:*", "broadcast:*", "payments:*", "reports:*",
-        "audit:*", "team:*", "settings:*", "cards:*",
-    ]),
-    ("event_manager", &[
-        "events:read", "events:write",
-        "guests:*", "invitations:*", "scanner:*", "broadcast:*", "cards:read",
-    ]),
-    ("event_accountant", &[
-        "events:read", "michango:*", "payments:*",
-    ]),
-    ("secretary", &[
-        "events:read", "guests:*", "broadcast:read", "invitations:*",
-    ]),
-    ("scanner_attendant", &[
-        "events:read", "scanner:*",
-    ]),
-    ("viewer", &[
-        "events:read", "reports:read",
-    ]),
+    (
+        "account_admin",
+        &[
+            "events:*",
+            "guests:*",
+            "invitations:*",
+            "scanner:*",
+            "michango:*",
+            "broadcast:*",
+            "payments:*",
+            "reports:*",
+            "audit:*",
+            "team:*",
+            "settings:*",
+            "cards:*",
+        ],
+    ),
+    (
+        "event_manager",
+        &[
+            "events:read",
+            "events:write",
+            "guests:*",
+            "invitations:*",
+            "scanner:*",
+            "broadcast:*",
+            "cards:*",
+        ],
+    ),
+    (
+        "event_accountant",
+        &["events:read", "michango:*", "payments:*"],
+    ),
+    (
+        "secretary",
+        &["events:read", "guests:*", "broadcast:read", "invitations:*"],
+    ),
+    ("scanner_attendant", &["events:read", "scanner:*"]),
+    ("viewer", &["events:read", "reports:read"]),
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -103,9 +161,9 @@ pub fn can(role: &str, permission: &str) -> bool {
 
     let (resource, _action) = permission.split_once(':').unwrap_or((permission, ""));
 
-    allowed.iter().any(|p| {
-        *p == permission || *p == &format!("{}:*", resource)
-    })
+    allowed
+        .iter()
+        .any(|p| *p == permission || *p == &format!("{}:*", resource))
 }
 
 // ── Guard functions (used inside handlers) ────────────────────────────────────

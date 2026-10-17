@@ -26,19 +26,10 @@ export default function EventDetailPage() {
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState("overview");
 
-  // Early return guard to prevent "undefined" API calls on initial render
-  if (!id || id === "undefined") {
-    return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <p className="text-sm text-slate-500">Loading event details...</p>
-      </div>
-    );
-  }
-
   const { data: summary, isLoading } = useQuery({
     queryKey: ["event-summary", id],
     queryFn: async () => (await api.get(`/events/${id}/summary`)).data.data,
-    enabled: !!id, // ✅ Add this to prevent API calls when id is undefined
+    enabled: !!id && id !== "undefined",
   });
 
   const genMutation = useMutation({
@@ -87,16 +78,8 @@ export default function EventDetailPage() {
       toast.success("Report downloaded");
     }).catch(() => toast.error("Failed to download report"));
   };
-  if (!id || id === "undefined") {
-    return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <p className="text-sm text-slate-500">Loading event details...</p>
-      </div>
-    );
-  }
-
-
-  if (isLoading || !summary) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (!id || id === "undefined" || isLoading) return <p className="text-sm text-slate-500">Loading event details…</p>;
+  if (!summary) return <p className="text-sm text-rose-700">Event details could not be loaded.</p>;
 
   const { event, summary: stats } = summary;
 
