@@ -24,7 +24,8 @@ export default function DashboardPage() {
 }
 
 function PlatformDashboardWithFallback() {
-  const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
+  const { logout } = useAuth();
+  const { data: summary, isLoading, isError } = useQuery({
     queryKey: ["platform-summary"],
     queryFn: async () => {
       try {
@@ -32,7 +33,6 @@ function PlatformDashboardWithFallback() {
         return res.data.data;
       } catch (error: any) {
         if (error.response?.status === 403) {
-          console.warn('Platform access denied, falling back to account dashboard');
           return null;
         }
         throw error;
@@ -41,50 +41,23 @@ function PlatformDashboardWithFallback() {
     retry: false,
   });
 
-  // If platform query fails with 403, fallback to account dashboard
-  if (summaryError || summary === null) {
-    return <AccountDashboard />;
+  if (isLoading) return <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-lg bg-slate-100" />)}</div>;
+  if (summary === null) {
+    return <Card><div className="space-y-3 py-8 text-center"><h1 className="text-lg font-semibold text-slate-900">Platform access needs a fresh session</h1><p className="text-sm text-slate-500">Your profile is recognized as a platform administrator, but this access token is not authorized. Sign out and sign in again to refresh your role.</p><button onClick={logout} className="rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-navy-950">Sign out</button></div></Card>;
   }
+  if (isError || !summary) return <Card><p className="py-8 text-center text-sm text-rose-700">Platform overview could not be loaded. Retry the page or check the backend.</p></Card>;
 
-  return <PlatformDashboard />;
+  return <PlatformDashboard summary={summary} />;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
    Platform (SaaS) dashboard — DashCode analytics style
    ══════════════════════════════════════════════════════════════════════ */
 
-function PlatformDashboard() {
-  const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
-    queryKey: ["platform-summary"],
-    queryFn: async () => {
-      try {
-        const res = await api.get("/platform/summary");
-        return res.data.data;
-      } catch (error: any) {
-        console.error('Platform summary error:', error);
-        if (error.response?.status === 403) {
-          throw new Error('You do not have platform admin permissions');
-        }
-        throw error;
-      }
-    },
-    retry: false,
-  });
-
+function PlatformDashboard({ summary }: { summary: any }) {
   const { data: customers = [], isLoading: customersLoading, isError: customersError } = useQuery({
     queryKey: ["platform-customers"],
-    queryFn: async () => {
-      try {
-        const res = await api.get("/platform/customers");
-        return res.data.data;
-      } catch (error: any) {
-        console.error('Platform customers error:', error);
-        if (error.response?.status === 403) {
-          throw new Error('You do not have platform admin permissions');
-        }
-        throw error;
-      }
-    },
+    queryFn: async () => (await api.get("/platform/customers")).data.data,
     retry: false,
   });
 
@@ -123,13 +96,13 @@ function PlatformDashboard() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Total Revenue" value={summaryLoading ? "—" : formatTZS(summary?.total_revenue_tsh ?? 0)} icon={Receipt} color="gold" subtitle={`${summary?.pending_payments ?? 0} pending`} />
+        <StatCard title="Total Revenue" value={formatTZS(summary?.total_revenue_tsh ?? 0)} icon={Receipt} color="gold" subtitle={`${summary?.pending_payments ?? 0} pending`} />
         <StatCard title="Customers" value={summary?.total_customers ?? 0} icon={Building2} color="blue" subtitle={`${summary?.active_customers ?? 0} active · ${summary?.suspended_customers ?? 0} suspended`} />
         <StatCard title="MRR" value={formatTZS(summary?.monthly_recurring_revenue_tsh ?? 0)} icon={TrendingUp} color="green" subtitle={`${summary?.active_subscriptions ?? 0} active subs`} />
         <StatCard title="Active Events" value={summary?.active_events ?? 0} icon={CalendarDays} color="purple" subtitle={`${summary?.total_users ?? 0} total users`} />
       </div>
 
-      {(summaryError || customersError) && <Card><p className="text-sm text-rose-700">Some platform metrics could not be loaded. Check your connection or refresh the dashboard.</p></Card>}
+      {customersError && <Card><p className="text-sm text-rose-700">Customer accounts could not be loaded. Check your connection or refresh the dashboard.</p></Card>}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

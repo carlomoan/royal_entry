@@ -187,17 +187,26 @@ pub async fn register(
 
 /// POST /api/v1/auth/refresh
 pub async fn refresh_token(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<RefreshTokenRequest>,
 ) -> AppResult<(StatusCode, Json<TokenRefreshResponse>)> {
     let claims = AuthService::verify_token(&payload.refresh_token)?;
     AuthService::verify_token_type(&claims, "refresh")?;
 
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?;
+    let user = UserRepository::get_by_id(&state.db.pool(), user_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User no longer exists".to_string()))?;
+    if !user.is_active {
+        return Err(AppError::Unauthorized("User account is inactive".to_string()));
+    }
+    let org_id = user.organization_id.unwrap_or_else(Uuid::nil);
+
     let (access_token, refresh_token) = AuthService::generate_tokens(
-        Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?,
-        Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?,
-        claims.email,
-        claims.role,
+        user_id,
+        org_id,
+        user.email,
+        user.role,
     )?;
 
     let expiry_hours = std::env::var("JWT_EXPIRY_HOURS")

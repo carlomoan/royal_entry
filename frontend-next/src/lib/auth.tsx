@@ -15,6 +15,19 @@ export interface User {
   created_at: string;
 }
 
+function tokenRole(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const encoded = token.split(".")[1];
+    if (!encoded) return null;
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(window.atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+    return typeof payload.role === "string" ? payload.role.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
@@ -45,7 +58,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchMe = useCallback(async () => {
     try {
       const res = await api.get("/auth/me");
-      setUser(res.data.data ?? res.data);
+      const currentUser = res.data.data ?? res.data;
+      const [accessToken, refreshToken, impersonationToken] = await Promise.all([
+        credStore.get(CredKeys.ACCESS_TOKEN),
+        credStore.get(CredKeys.REFRESH_TOKEN),
+        credStore.get(CredKeys.IMPERSONATION_ORIGINAL_TOKEN),
+      ]);
+      const accessRole = tokenRole(accessToken);
+
+      if (
+        accessRole &&
+        !impersonationToken &&
+        accessRole !== String(currentUser.role ?? "").trim().toLowerCase() &&
+        refreshToken
+      ) {
+        const refreshed = await api.post("/auth/refresh", { refresh_token: refreshToken });
+        await credStore.set(CredKeys.ACCESS_TOKEN, refreshed.data.access_token);
+        await credStore.set(CredKeys.REFRESH_TOKEN, refreshed.data.refresh_token);
+      }
+
+      setUser(currentUser);
     } catch {
       setUser(null);
     }

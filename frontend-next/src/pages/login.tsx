@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,23 +27,23 @@ export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
 
+  useEffect(() => {
+    if (isAuthenticated) router.replace("/dashboard");
+  }, [isAuthenticated, router]);
+
   const {
     register,
     handleSubmit,
     formState: { errors },
   } = useForm<LoginForm>({ resolver: zodResolver(schema) });
 
-  if (isAuthenticated) {
-    router.replace("/dashboard");
-    return null;
-  }
+  if (isAuthenticated) return null;
 
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
       await login(data.login, data.password);
       toast.success("Welcome back!");
-      router.replace("/dashboard");
     } catch {
       toast.error("Invalid username/email or password");
     } finally {

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
-import { AuthProvider, useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import CommandPalette from "./CommandPalette";
@@ -82,9 +82,5 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  return (
-    <AuthProvider>
-      <Shell>{children}</Shell>
-    </AuthProvider>
-  );
+  return <Shell>{children}</Shell>;
 }

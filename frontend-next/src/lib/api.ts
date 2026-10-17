@@ -11,6 +11,9 @@ const api = axios.create({
 
 /* Attach the access token to every request */
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+    config.headers.delete("Content-Type");
+  }
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("access_token");
     if (token) config.headers.Authorization = `Bearer ${token}`;

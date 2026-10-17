@@ -52,7 +52,13 @@ pub async fn create_card_template(
             "Template name is required".to_string(),
         ));
     }
-    let template = repository::create_template(state.db.pool(), org_id, payload).await?;
+    let template = match repository::create_template(state.db.pool(), org_id, payload).await {
+        Ok(template) => template,
+        Err(error) => {
+            tracing::error!(organization_id = %org_id, error = %error, "Failed to create card template");
+            return Err(error);
+        }
+    };
     Ok((
         StatusCode::CREATED,
         Json(json!({

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Upload, Save, QrCode, Trash2, Eye, Edit3, CheckCircle2,
@@ -41,18 +41,19 @@ export default function CardSetupPage() {
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      return api.post("/files/upload", form);
+      const uploaded = await api.post("/files/upload", form);
+      const fileId = uploaded.data.data?.file_id ?? uploaded.data.data?.id;
+      if (!fileId) throw new Error("Upload response did not include a file ID");
+      return { fileId, previewUrl: URL.createObjectURL(file) };
     },
     onSuccess: (res) => {
-      const fileId = res.data.data?.file_id || res.data.data?.id;
-      const fileUrl = res.data.data?.url || res.data.data?.path || fileId;
-      setFrontFileId(fileId);
-      setFrontImage(fileUrl);
+      setFrontFileId(res.fileId);
+      setFrontImage(res.previewUrl);
       toast.success("Design uploaded successfully!");
       setStep("position");
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.error?.message || "Upload failed");
+      toast.error(err?.response?.data?.error?.message ?? err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? "Upload failed");
     },
   });
 
@@ -65,7 +66,7 @@ export default function CardSetupPage() {
       resetForm();
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.error?.message || "Failed to save template");
+      toast.error(err?.response?.data?.error?.message ?? err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? "Failed to save template");
     },
   });
 
@@ -87,6 +88,10 @@ export default function CardSetupPage() {
     setTemplateDescription("");
     setQrPos({ x: 65, y: 75, w: 20, h: 20 });
   };
+
+  useEffect(() => () => {
+    if (frontImage?.startsWith("blob:")) URL.revokeObjectURL(frontImage);
+  }, [frontImage]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -119,9 +124,9 @@ export default function CardSetupPage() {
     saveMutation.mutate({
       name: templateName,
       description: templateDescription,
+      background_file_id: frontFileId,
       theme_config: {
         front_file_id: frontFileId,
-        front_image_url: frontImage,
         qr_position: qrPos,
       },
       is_active: true,
@@ -209,7 +214,7 @@ export default function CardSetupPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/png,image/jpeg,image/jpg"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.svg"
                   onChange={handleFileSelect}
                   className="hidden"
                 />
@@ -402,17 +407,7 @@ export default function CardSetupPage() {
               {templates.map((t: any) => (
                 <div key={t.id} className="overflow-hidden group hover:shadow-lg transition-shadow rounded-xl border border-slate-200 bg-white">
                   <div className="relative h-48 bg-slate-100">
-                    {t.theme_config?.front_image_url ? (
-                      <img
-                        src={t.theme_config.front_image_url}
-                        alt={t.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <ImageIcon className="h-12 w-12 text-slate-300" />
-                      </div>
-                    )}
+                    <TemplateImage template={t} className="h-full w-full object-cover" />
                     <div className="absolute top-2 right-2">
                       <Badge
                         label={t.is_active ? "Active" : "Draft"}
@@ -480,13 +475,7 @@ export default function CardSetupPage() {
       >
         {previewTemplate && (
           <div className="space-y-4">
-            {previewTemplate.theme_config?.front_image_url && (
-              <img
-                src={previewTemplate.theme_config.front_image_url}
-                alt={previewTemplate.name}
-                className="w-full rounded-lg border border-slate-200"
-              />
-            )}
+            <TemplateImage template={previewTemplate} className="max-h-[65vh] w-full rounded-lg border border-slate-200 object-contain" />
             <div className="bg-slate-50 rounded-lg p-4 space-y-2">
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Name</p>
@@ -513,4 +502,34 @@ export default function CardSetupPage() {
       </Modal>
     </div>
   );
+}
+
+function TemplateImage({ template, className }: { template: any; className: string }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const fileId = template.theme_config?.front_file_id ?? template.background_file_id;
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setImageUrl(null);
+    setFailed(false);
+    if (!fileId) return;
+
+    api.get(`/files/${encodeURIComponent(fileId)}`, { responseType: "blob" })
+      .then((response) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(response.data);
+        setImageUrl(objectUrl);
+      })
+      .catch(() => { if (!cancelled) setFailed(true); });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fileId]);
+
+  if (imageUrl) return <img src={imageUrl} alt={template.name} className={className} />;
+  return <div className={`${className} flex items-center justify-center bg-slate-100`}><ImageIcon className="h-12 w-12 text-slate-300" aria-label={failed ? "Background preview unavailable" : "Loading preview"} /></div>;
 }
