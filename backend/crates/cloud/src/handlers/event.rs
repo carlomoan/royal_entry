@@ -138,7 +138,7 @@ pub async fn get_event_summary(
             COUNT(DISTINCT CASE WHEN r.response = 'confirmed' THEN g.id END) as rsvp_confirmed,
             COUNT(DISTINCT CASE WHEN r.response = 'declined' THEN g.id END) as rsvp_declined,
             COUNT(DISTINCT CASE WHEN i.status = 'sent' THEN g.id END) as invitations_sent,
-            (SELECT COALESCE(SUM(amount_paid), 0) FROM pledge_tracker WHERE event_id = e.id) as michango_collected
+            (SELECT COALESCE(SUM(amount_paid), 0) FROM pledge_tracker WHERE event_id = $1) as michango_collected
         FROM events e
         LEFT JOIN guests g ON e.id = g.event_id
         LEFT JOIN invitations i ON g.id = i.guest_id
