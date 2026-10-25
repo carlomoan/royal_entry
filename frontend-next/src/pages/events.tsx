@@ -119,7 +119,17 @@ export default function EventsPage() {
           <Input label="Expected Guests" name="guest_count_expected" type="number" />
           <Select label="Invitation Card Design" name="card_template_id" defaultValue="">
             <option value="">Use event default</option>
-            {cardTemplates.map((template: any) => <option key={template.id} value={template.id}>{template.name}</option>)}
+            {cardTemplates
+              .filter((template: any) =>
+                template.is_active &&
+                // Only offer templates that have a real design background
+                (template.theme_config?.front_file_id || template.background_file_id)
+              )
+              .map((template: any) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}{template.is_owned === false ? " (Shared)" : ""}
+                </option>
+              ))}
           </Select>
           <label className="flex items-center gap-3">
             <input type="checkbox" name="send_save_the_date" defaultChecked className="h-4 w-4 rounded accent-gold-500" />

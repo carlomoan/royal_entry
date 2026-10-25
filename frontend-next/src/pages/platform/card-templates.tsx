@@ -119,6 +119,7 @@ export default function CardTemplatesPage() {
             name: (f.elements.namedItem("name") as HTMLInputElement).value,
             description: (f.elements.namedItem("description") as HTMLInputElement).value || undefined,
             theme_config: presetTheme((f.elements.namedItem("theme_preset") as HTMLSelectElement).value),
+            is_active: (f.elements.namedItem("is_active") as HTMLInputElement)?.checked ?? true,
           });
         }} className="space-y-4">
           <Input label="Template Name *" name="name" required />
@@ -147,6 +148,7 @@ export default function CardTemplatesPage() {
                 name: (f.elements.namedItem("name") as HTMLInputElement).value,
                 description: (f.elements.namedItem("description") as HTMLInputElement).value || undefined,
                 theme_config: presetTheme((f.elements.namedItem("theme_preset") as HTMLSelectElement).value),
+                is_active: (f.elements.namedItem("is_active") as HTMLInputElement)?.checked ?? editTemplate.is_active,
               },
             });
           }} className="space-y-4">

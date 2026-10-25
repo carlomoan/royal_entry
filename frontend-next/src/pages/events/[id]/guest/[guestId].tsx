@@ -1,19 +1,21 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Download, Share2, ArrowLeft, Loader2, AlertCircle,
   Calendar, MapPin, Clock, User, CreditCard, CheckCircle2,
-  QrCode, Smartphone, Mail
+  QrCode, Smartphone, Mail, Save, RotateCcw, Move
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Button, Card, Badge } from "@/components/ui";
 import { RoyalCard } from "@/components/cards/RoyalCard";
+import { QrPosition, clampQrPosition } from "@/types/cardTheme";
 
 export default function GuestCardPage() {
   const router = useRouter();
+  const qc = useQueryClient();
   const { id: eventId, guestId } = router.query;
   const [downloading, setDownloading] = useState(false);
 
@@ -66,7 +68,46 @@ export default function GuestCardPage() {
     },
   });
 
-  const activeTemplate = templates.find((t: any) => t.is_active);
+  // Resolve the card template assigned to this event. The backend only renders
+  // with the event's own `card_template_id`, so the preview must match that
+  // exactly — no fallback to an unrelated active template.
+  const assignedTemplate =
+    event?.card_template_id && templates.find((t: any) => t.id === event.card_template_id);
+
+  const templateHasBackground = !!assignedTemplate &&
+    (!!assignedTemplate.theme_config?.front_file_id || !!assignedTemplate.background_file_id);
+
+  // ── QR placement fine-tuning (drag + resize directly on the rendered card) ──
+  const [qrPos, setQrPos] = useState<QrPosition | null>(null);
+  const [savedPos, setSavedPos] = useState<QrPosition | null>(null);
+
+  // Re-derive placement whenever the assigned template changes.
+  useEffect(() => {
+    setQrPos(null);
+    setSavedPos(null);
+  }, [assignedTemplate?.id]);
+
+  const effectiveQrPos = qrPos ?? clampQrPosition(assignedTemplate?.theme_config?.qr_position);
+  // Only the template owner (creating org) may persist a new placement.
+  const canAdjustQr = !!assignedTemplate?.is_owned;
+  const storedPos = clampQrPosition(assignedTemplate?.theme_config?.qr_position);
+  const isDirty = !!qrPos && JSON.stringify(qrPos) !== JSON.stringify(savedPos ?? storedPos);
+
+  const savePlacementMutation = useMutation({
+    mutationFn: () =>
+      api.put(`/cards/templates/${assignedTemplate?.id}`, {
+        theme_config: {
+          ...(assignedTemplate?.theme_config ?? {}),
+          qr_position: effectiveQrPos,
+        },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["card-templates"] });
+      setSavedPos(effectiveQrPos);
+      toast.success("QR placement saved to the card template");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to save QR placement"),
+  });
   const invitation = invitations.find((i: any) => i.guest_id === guestId);
   const pledge = pledges.find((p: any) => p.guest_id === guestId);
 
@@ -81,6 +122,14 @@ export default function GuestCardPage() {
   // Download handler
   const handleDownload = async () => {
     if (!eventId || !guestId) return;
+    if (!assignedTemplate) {
+      toast.error("This event has no card template assigned — assign one from the event page first");
+      return;
+    }
+    if (!templateHasBackground) {
+      toast.error(`Template "${assignedTemplate.name}" has no background image — set it up in the Card Studio first`);
+      return;
+    }
     setDownloading(true);
     try {
       const res = await api.post("/cards/render", {
@@ -186,7 +235,7 @@ export default function GuestCardPage() {
             <Button variant="outline" size="sm" onClick={handleShare}>
               <Share2 className="h-4 w-4 mr-1" /> Share
             </Button>
-            <Button size="sm" onClick={handleDownload} isLoading={downloading}>
+            <Button size="sm" onClick={handleDownload} isLoading={downloading} disabled={!assignedTemplate || !templateHasBackground}>
               <Download className="h-4 w-4 mr-1" /> Download PNG
             </Button>
           </div>
@@ -201,18 +250,78 @@ export default function GuestCardPage() {
                 <Badge label={isPaid ? "Paid" : paymentStatus} variant={isPaid ? "green" : "amber"} />
               </div>
 
-              {activeTemplate ? (
-                <RoyalCard
-                  template={activeTemplate}
-                  qrPayload={qrPayload}
-                  width={600}
-                />
+              {assignedTemplate ? (
+                <>
+                  {!templateHasBackground && (
+                    <div className="mb-4 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                      <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="font-semibold">This template can't be rendered yet</p>
+                        <p className="text-rose-700">
+                          "{assignedTemplate.name}" has no background image. Open the Card Studio, add a design for this template, then save.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <RoyalCard
+                    template={assignedTemplate}
+                    qrPayload={qrPayload}
+                    width={600}
+                    qrPosition={effectiveQrPos}
+                    onPositionChange={canAdjustQr ? setQrPos : undefined}
+                    editable={canAdjustQr}
+                  />
+
+                  {canAdjustQr && (
+                    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-start gap-2">
+                        <Move className="h-4 w-4 mt-0.5 text-gold-600 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-800">QR placement</p>
+                          <p className="text-xs text-slate-500">
+                            Drag the gold box to reposition the QR, drag its edges to resize. Changes apply to every guest card using this template.
+                          </p>
+                          <div className="mt-2 grid grid-cols-4 gap-2 text-xs font-mono">
+                            <span className="text-slate-500">X <span className="font-semibold text-slate-800">{effectiveQrPos.x.toFixed(1)}%</span></span>
+                            <span className="text-slate-500">Y <span className="font-semibold text-slate-800">{effectiveQrPos.y.toFixed(1)}%</span></span>
+                            <span className="text-slate-500">W <span className="font-semibold text-slate-800">{effectiveQrPos.w.toFixed(1)}%</span></span>
+                            <span className="text-slate-500">H <span className="font-semibold text-slate-800">{effectiveQrPos.h.toFixed(1)}%</span></span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {isDirty && (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                            Unsaved changes
+                          </span>
+                        )}
+                        <div className="flex-1" />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setQrPos(null); setSavedPos(null); }}
+                          disabled={!isDirty}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => savePlacementMutation.mutate()}
+                          isLoading={savePlacementMutation.isPending}
+                          disabled={!isDirty || !assignedTemplate}
+                        >
+                          <Save className="h-3.5 w-3.5 mr-1" /> Save placement
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="aspect-[3/4] bg-slate-100 rounded-lg flex items-center justify-center">
-                  <div className="text-center">
+                  <div className="text-center px-6">
                     <QrCode className="h-16 w-16 text-slate-300 mx-auto mb-3" />
-                    <p className="text-sm text-slate-500">No card template configured</p>
-                    <p className="text-xs text-slate-400 mt-1">Please set up a template in the Card Studio</p>
+                    <p className="text-sm text-slate-500">No card template assigned to this event</p>
+                    <p className="text-xs text-slate-400 mt-1">Open the event and choose an invitation card design</p>
                   </div>
                 </div>
               )}

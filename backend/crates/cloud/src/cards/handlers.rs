@@ -6,12 +6,13 @@ use crate::{
     error::{AppError, AppResult},
     files::storage::Storage,
     models::user::Claims,
+    utils::rbac::is_platform_role,
     AppState,
 };
+use sqlx::Row;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::{imageops::FilterType, DynamicImage, ImageFormat, Rgba};
 use qrcode::QrCode;
-use sqlx::Row;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -52,6 +53,12 @@ pub async fn create_card_template(
             "Template name is required".to_string(),
         ));
     }
+    // Only platform roles may publish templates to the shared SaaS catalog;
+    // for them sharing is the default. Account roles always create private templates.
+    let payload = CreateCardTemplateRequest {
+        is_global: Some(payload.is_global.unwrap_or(true) && is_platform_role(&claims.role)),
+        ..payload
+    };
     let template = match repository::create_template(state.db.pool(), org_id, payload).await {
         Ok(template) => template,
         Err(error) => {
@@ -74,6 +81,15 @@ pub async fn update_card_template(
     Json(payload): Json<UpdateCardTemplateRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    // Only platform roles may toggle sharing to the SaaS catalog.
+    let payload = UpdateCardTemplateRequest {
+        is_global: if is_platform_role(&claims.role) {
+            payload.is_global
+        } else {
+            None // keep existing value (always private for account templates)
+        },
+        ..payload
+    };
     let template = repository::update_template(state.db.pool(), id, org_id, payload).await?;
     Ok(Json(
         json!({ "success": true, "message": "Card template updated", "data": template }),
@@ -99,7 +115,7 @@ pub async fn upload_template_image(
     mut multipart: axum::extract::Multipart,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
-    let _ = repository::get_template(state.db.pool(), id, org_id).await?; // Verify ownership
+    let _ = repository::get_owned_template(state.db.pool(), id, org_id).await?; // Verify ownership
 
     while let Some(field) = multipart
         .next_field()
@@ -221,7 +237,9 @@ async fn render_for_guest(
         return Err(AppError::Forbidden);
     }
     let storage = crate::files::storage::LocalStorage::new("uploads/cards");
-    let storage_path = format!("{org_id}/{file_id}");
+    // Backgrounds live under the template owner's org directory, so shared
+    // platform templates stay renderable for every organization.
+    let storage_path = format!("{}/{}", template.org_id, file_id);
     let front_bytes = storage.download(&storage_path).await.map_err(|_| AppError::FileNotFound)?;
     let mut front = image::load_from_memory(&front_bytes)
         .map_err(|_| AppError::BadRequest("Template background is not a supported raster image".to_string()))?

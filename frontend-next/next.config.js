@@ -2,6 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Minimal production server output: only the runtime files needed to serve
+  // the app are emitted (deployable without shipping node_modules).
+  output: "standalone",
   async rewrites() {
     return [
       {

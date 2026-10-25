@@ -9,6 +9,7 @@ use std::{io::Cursor, sync::Arc};
 use uuid::Uuid;
 
 use crate::{
+    cards::repository as card_repository,
     error::{AppError, AppResult},
     files::storage::{LocalStorage, Storage},
     models::user::Claims,
@@ -77,7 +78,7 @@ pub async fn upload_file(
 }
 
 pub async fn download_file(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     Path(file_id): Path<String>,
 ) -> AppResult<Response> {
@@ -87,8 +88,26 @@ pub async fn download_file(
     }
 
     let storage = LocalStorage::new("uploads/cards");
-    let storage_path = format!("{org_id}/{file_id}");
-    let bytes = storage.download(&storage_path).await.map_err(|_| AppError::FileNotFound)?;
+    let own_path = format!("{org_id}/{file_id}");
+    let bytes = match storage.download(&own_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            // Cross-org read: the file may belong to a shared (global + active)
+            // card template published by a platform admin. Serve it from the
+            // template owner's directory so orgs can preview/assign it.
+            let (template_org_id, is_active, is_global) =
+                card_repository::find_template_by_file(state.db.pool(), &file_id)
+                    .await?
+                    .ok_or(AppError::FileNotFound)?;
+            if !(is_active && is_global) {
+                return Err(AppError::FileNotFound);
+            }
+            storage
+                .download(&format!("{template_org_id}/{file_id}"))
+                .await
+                .map_err(|_| AppError::FileNotFound)?
+        }
+    };
     let mut response = Response::new(axum::body::Body::from(bytes));
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
     response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));

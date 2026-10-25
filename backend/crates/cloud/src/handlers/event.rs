@@ -33,6 +33,11 @@ pub async fn create_event(
             .await?;
     }
 
+    // A referenced card template must be able to render actual guest cards.
+    if let Some(template_id) = payload.card_template_id {
+        crate::cards::repository::ensure_renderable(state.db.pool(), org_id, template_id).await?;
+    }
+
     let event = EventRepository::create(state.db.pool(), org_id, user_id, &payload).await?;
     Ok((StatusCode::CREATED, Json(json!({ "success": true, "data": EventResponse::from(event) }))))
 }
@@ -76,6 +81,12 @@ pub async fn update_event(
     if event.status == "active" || event.status == "completed" {
         return Err(AppError::BadRequest("Cannot update an active or completed event".to_string()));
     }
+
+    // A referenced card template must be able to render actual guest cards.
+    if let Some(template_id) = payload.card_template_id {
+        crate::cards::repository::ensure_renderable(state.db.pool(), org_id, template_id).await?;
+    }
+
     let updated = EventRepository::update(state.db.pool(), event_id, &payload).await?;
     Ok(Json(json!({ "success": true, "data": EventResponse::from(updated) })))
 }
@@ -127,12 +138,11 @@ pub async fn get_event_summary(
             COUNT(DISTINCT CASE WHEN r.response = 'confirmed' THEN g.id END) as rsvp_confirmed,
             COUNT(DISTINCT CASE WHEN r.response = 'declined' THEN g.id END) as rsvp_declined,
             COUNT(DISTINCT CASE WHEN i.status = 'sent' THEN g.id END) as invitations_sent,
-            COALESCE(SUM(CASE WHEN pt.payment_status = 'paid' THEN pt.amount_paid ELSE 0 END), 0) as michango_collected
+            (SELECT COALESCE(SUM(amount_paid), 0) FROM pledge_tracker WHERE event_id = e.id) as michango_collected
         FROM events e
         LEFT JOIN guests g ON e.id = g.event_id
         LEFT JOIN invitations i ON g.id = i.guest_id
         LEFT JOIN rsvp_responses r ON g.id = r.guest_id AND e.id = r.event_id
-        LEFT JOIN pledge_tracker pt ON e.id = pt.event_id AND g.id = pt.guest_id
         LEFT JOIN entry_scans es ON e.id = es.event_id AND g.id = es.guest_id
         WHERE e.id = $1
         "#,

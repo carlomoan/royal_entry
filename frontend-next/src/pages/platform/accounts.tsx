@@ -206,8 +206,8 @@ export default function AccountsPage() {
 
       {/* Summary stats */}
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
-        <StatCard title="Total Accounts" value={summary?.total_organizations ?? 0} icon={Building2} color="blue" />
-        <StatCard title="Active" value={summary?.active_organizations ?? 0} icon={CheckCircle2} color="green" />
+        <StatCard title="Total Accounts" value={summary?.total_customers ?? 0} icon={Building2} color="blue" />
+        <StatCard title="Active" value={summary?.active_customers ?? 0} icon={CheckCircle2} color="green" />
         <StatCard title="Pending Review" value={pending.length} icon={ShieldCheck} color="gold" />
         <StatCard title="Total Revenue" value={formatTZS(summary?.total_revenue_tsh)} icon={Zap} color="purple" />
       </div>

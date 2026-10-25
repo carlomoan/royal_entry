@@ -13,8 +13,15 @@
 db_backups/
 backups/
 
+# Runtime logs
+*.log
+
 # Keep checked-in SQL migrations
 !backend/migrations/*.sql
+
+# User-uploaded files (card backgrounds, logos) — runtime data, never commit
+backend/uploads/
+uploads/
 
 # ==================================================
 # Rust / Cargo / Tauri

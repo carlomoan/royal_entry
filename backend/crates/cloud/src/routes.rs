@@ -510,6 +510,25 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "reports:read",
         )));
 
+    // ── Platform card template routes (SaaS catalog) ──────────────────────────
+    let platform_card_routes = Router::new()
+        .route(
+            "/api/v1/platform/card-templates",
+            get(crate::cards::handlers::list_card_templates)
+                .post(crate::cards::handlers::create_card_template),
+        )
+        .route(
+            "/api/v1/platform/card-templates/{id}",
+            get(crate::cards::handlers::get_card_template)
+                .put(crate::cards::handlers::update_card_template)
+                .delete(crate::cards::handlers::delete_card_template),
+        )
+        .route(
+            "/api/v1/platform/card-templates/{id}/upload",
+            post(crate::cards::handlers::upload_template_image),
+        )
+        .layer(middleware::from_fn(require_platform_admin_middleware));
+
     // ── ✅ Merge ALL protected routes ─────────────────────────────────────────
     let protected = auth_routes
         .merge(event_routes)
@@ -531,6 +550,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(notification_routes)
         .merge(webhook_routes)
         .merge(platform_routes)
+        .merge(platform_card_routes)
         .merge(settings_routes)
         .merge(rbac_routes)
         .merge(audit_routes)
