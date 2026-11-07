@@ -2,10 +2,12 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
     compression::CompressionLayer,
-    cors::CorsLayer,
+    cors::{Any, CorsLayer},
     trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
+
+use axum::http::{header::HeaderValue, Method};
 
 use royalentry_cloud::{
     config::Config,
@@ -40,7 +42,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         config: config.clone(),
         db: db.clone(),
+        channels: royalentry_cloud::services::Channels::from_env(),
     });
+
+    tracing::info!(
+        channels = ?app_state.channels.configured(),
+        "Outbound channels configured"
+    );
 
     let billing = BillingService::new(app_state.clone());
     let scheduler = tokio_cron_scheduler::JobScheduler::new().await.unwrap();
@@ -137,9 +145,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         config: config.clone(),
         db,
+        channels: royalentry_cloud::services::Channels::from_env(),
     });
 
-    let cors = CorsLayer::permissive();
+    // CORS: restrict to the origins listed in CORS_ALLOWED_ORIGINS
+    // (comma-separated). Falls back to permissive when unset/empty for local
+    // development. Set CORS_ALLOWED_ORIGINS=https://royalentry.foctek.co.tz
+    // (plus any API/device origins) in the production .env.
+    let cors = match std::env::var("CORS_ALLOWED_ORIGINS") {
+        Ok(value) if !value.trim().is_empty() => {
+            let origins: Vec<HeaderValue> = value
+                .split(',')
+                .filter_map(|origin| origin.trim().parse::<HeaderValue>().ok())
+                .collect();
+            if origins.is_empty() {
+                CorsLayer::permissive()
+            } else {
+                CorsLayer::new()
+                    .allow_origin(origins)
+                    .allow_methods([
+                        Method::GET,
+                        Method::POST,
+                        Method::PUT,
+                        Method::PATCH,
+                        Method::DELETE,
+                        Method::OPTIONS,
+                    ])
+                    .allow_headers(Any)
+                    .allow_credentials(true)
+            }
+        }
+        _ => CorsLayer::permissive(),
+    };
     let trace_layer = TraceLayer::new_for_http()
         .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
         .on_response(DefaultOnResponse::new().level(Level::INFO));

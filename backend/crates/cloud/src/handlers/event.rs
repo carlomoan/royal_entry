@@ -179,6 +179,19 @@ pub async fn approve_event(
         r#"UPDATE events SET approval_status = 'approved', status = 'approved', approved_by_user_id = $2, approved_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *"#,
     ).bind(event_id).bind(approver_id).fetch_one(state.db.pool()).await?;
 
+    // Notify the event's organization that their event was approved.
+    let body = format!("'{}' was approved and is ready to go live", event.title);
+    let _ = crate::services::NotificationService::create_org(
+        state.db.pool(),
+        event.organization_id,
+        "event.approved",
+        "Event approved",
+        Some(&body),
+        Some(&format!("/events/{event_id}")),
+        None,
+    )
+    .await;
+
     Ok(Json(json!({ "success": true, "data": EventResponse::from(approved), "message": "Event approved successfully" })))
 }
 
@@ -201,6 +214,19 @@ pub async fn reject_event(
     let rejected = sqlx::query_as::<_, crate::models::event::Event>(
         r#"UPDATE events SET approval_status = 'rejected', status = 'cancelled', approved_by_user_id = $2, approved_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *"#,
     ).bind(event_id).bind(approver_id).fetch_one(state.db.pool()).await?;
+
+    // Notify the event's organization that their event was rejected.
+    let body = format!("'{}' was rejected: {}", event.title, rejection_reason);
+    let _ = crate::services::NotificationService::create_org(
+        state.db.pool(),
+        event.organization_id,
+        "event.rejected",
+        "Event rejected",
+        Some(&body),
+        Some(&format!("/events/{event_id}")),
+        None,
+    )
+    .await;
 
     Ok(Json(json!({ "success": true, "data": EventResponse::from(rejected), "message": format!("Event rejected: {}", rejection_reason) })))
 }
@@ -329,6 +355,17 @@ pub async fn submit_event_for_approval(
     .bind(event_id)
     .fetch_one(state.db.pool())
     .await?;
+
+    // Notify platform admins that a tenant event awaits approval.
+    let _ = crate::services::NotificationService::create_platform(
+        state.db.pool(),
+        "event.submitted",
+        "New event submitted for approval",
+        Some(&format!("'{}' is awaiting platform approval", event.title)),
+        Some(&format!("/events/{event_id}")),
+        Some(serde_json::json!({"event_id": event_id, "organization_id": org_id})),
+    )
+    .await;
 
     Ok(Json(json!({
         "success": true,

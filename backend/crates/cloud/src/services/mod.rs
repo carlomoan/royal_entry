@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod bootstrap;
 pub mod billing;
+pub mod channels;
 pub mod csv_import;
 pub mod messaging;
 pub mod mpesa;
@@ -16,6 +17,7 @@ pub mod whatsapp;
 pub use auth::AuthService;
 pub use bootstrap::BootstrapService;
 pub use billing::BillingService;
+pub use channels::Channels;
 pub use csv_import::CsvImportService;
 pub use messaging::MessagingService;
 pub use mpesa::MpesaService;

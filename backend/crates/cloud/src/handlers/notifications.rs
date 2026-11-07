@@ -14,7 +14,7 @@ pub async fn list_notifications(
     Query(q): Query<ListQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
     let svc = NotificationService::new(state.clone());
-    let items: Vec<serde_json::Value> = svc.list_for(&claims, q.limit.unwrap_or(20).min(50)).await?;
+    let items = svc.list_for(&claims, q.limit.unwrap_or(20).min(50)).await?;
     Ok(Json(json!({ "success": true, "data": items })))
 }
 

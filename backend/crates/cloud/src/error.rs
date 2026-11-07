@@ -164,6 +164,9 @@ pub enum AppError {
     #[error("Invalid file type")]
     InvalidFileType,
 
+    #[error("Channel not configured: {0}")]
+    ChannelNotConfigured(String),
+
     // ========================================================================
     // Conflict Errors
     // ========================================================================
@@ -263,6 +266,11 @@ impl IntoResponse for AppError {
                 StatusCode::BAD_REQUEST,
                 "INVALID_FILE_TYPE",
                 "Invalid file type".to_string(),
+            ),
+            AppError::ChannelNotConfigured(msg) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "CHANNEL_NOT_CONFIGURED",
+                msg,
             ),
             AppError::SmsError(msg) => (StatusCode::BAD_REQUEST, "SMS_ERROR", msg),
             AppError::WhatsappError(msg) => (StatusCode::BAD_REQUEST, "WHATSAPP_ERROR", msg),

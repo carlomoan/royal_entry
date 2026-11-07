@@ -40,7 +40,7 @@ pub struct PlatformSummaryResponse {
 pub struct PlatformCustomerResponse {
     pub organization_id: Uuid,
     pub display_name: String,
-    pub admin_email: String,
+    pub admin_email: Option<String>,
     pub account_status: String,
     pub users_count: i64,
     pub events_count: i64,
@@ -496,8 +496,12 @@ pub async fn list_customers(
     Extension(claims): Extension<Claims>,
 ) -> AppResult<Json<serde_json::Value>> {
     require_platform_admin(&claims)?;
+    // Hide the platform's own internal organization (zero-UUID) from the
+    // customer list so it isn't treated as a tenant.
     let customers = sqlx::query_as::<_, PlatformCustomerResponse>(
-        &(CUSTOMER_SELECT.to_string() + " ORDER BY last_activity_at DESC NULLS LAST, display_name ASC"),
+        &(CUSTOMER_SELECT.to_string()
+            + " WHERE o.id <> '00000000-0000-0000-0000-000000000000'"
+            + " ORDER BY last_activity_at DESC NULLS LAST, display_name ASC"),
     )
     .fetch_all(state.db.pool())
     .await?;

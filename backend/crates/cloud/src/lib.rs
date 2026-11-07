@@ -22,9 +22,11 @@ pub use error::{AppError, AppResult};
 
 use config::Config;
 use db::Database;
+use services::channels::Channels;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
     pub db: Database,
+    pub channels: Channels,
 }

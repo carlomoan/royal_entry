@@ -67,6 +67,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/events/{id}", put(event::update_event))
         .route("/api/v1/events/{id}", delete(event::delete_event))
         .route("/api/v1/events/{id}/activate", post(event::activate_event))
+        .route(
+            "/api/v1/events/{id}/submit",
+            post(event::submit_event_for_approval),
+        )
         .route("/api/v1/events/{id}/summary", get(event::get_event_summary))
         .route("/api/v1/events/{id}/approve", post(event::approve_event))
         .route("/api/v1/events/{id}/reject", post(event::reject_event))

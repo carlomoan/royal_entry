@@ -378,6 +378,19 @@ pub async fn send_invitations(
         .execute(state.db.pool())
         .await?;
 
+    // Notify the event's organization about the send result.
+    let notif_body = format!("Sent to {} guest(s), {} failed", sent, failed);
+    let _ = crate::services::NotificationService::create_org(
+        state.db.pool(),
+        event.organization_id,
+        "invitation.sent",
+        "Invitations sent",
+        Some(&notif_body),
+        Some(&format!("/events/{event_id}")),
+        Some(serde_json::json!({"event_id": event_id, "sent": sent, "failed": failed})),
+    )
+    .await;
+
     Ok(Json(json!({
         "success": true,
         "data": { "sent": sent, "failed": failed, "errors": errors }

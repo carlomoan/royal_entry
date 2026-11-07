@@ -279,14 +279,14 @@ pub async fn record_payment(
     Json(payload): Json<RecordPaymentRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
-    assert_event_ownership(&state, event_id, org_id).await?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
 
     if payload.amount_paid <= 0 {
         return Err(AppError::ValidationError("Payment amount must be greater than 0".to_string()));
     }
 
     let row = sqlx::query(
-        r#"SELECT pledged_amount, amount_paid, payment_deadline FROM pledge_tracker WHERE id = $1 AND event_id = $2"#,
+        r#"SELECT pt.pledged_amount, pt.amount_paid, pt.payment_deadline, g.full_name AS guest_name FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.id = $1 AND pt.event_id = $2"#,
     )
     .bind(pledge_id)
     .bind(event_id)
@@ -297,6 +297,7 @@ pub async fn record_payment(
     let pledged_amount: i64 = row.try_get("pledged_amount").unwrap_or(0);
     let current_paid: i64 = row.try_get("amount_paid").unwrap_or(0);
     let payment_deadline: Option<NaiveDate> = row.try_get("payment_deadline").ok();
+    let guest_name: String = row.try_get("guest_name").unwrap_or_else(|_| "Guest".to_string());
 
     let remaining_amount = (pledged_amount - current_paid).max(0);
     if payload.amount_paid > remaining_amount {
@@ -319,10 +320,23 @@ pub async fn record_payment(
     .bind(pledge_id)
     .bind(event_id)
     .bind(new_amount_paid)
-    .bind(status)
+    .bind(&status)
     .bind(notes)
     .execute(state.db.pool())
     .await?;
+
+    // Notify the event's organization about the received pledge payment.
+    let notif_body = format!("TZS {} received from {} ({})", payload.amount_paid, guest_name, status);
+    let _ = crate::services::NotificationService::create_org(
+        state.db.pool(),
+        event.organization_id,
+        "payment.received",
+        "Pledge payment received",
+        Some(&notif_body),
+        Some(&format!("/events/{event_id}")),
+        Some(serde_json::json!({"event_id": event_id, "amount_tsh": payload.amount_paid, "status": status})),
+    )
+    .await;
 
     Ok(Json(json!({ "success": true, "message": "Payment recorded successfully" })))
 }
