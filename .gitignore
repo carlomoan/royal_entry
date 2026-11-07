@@ -16,6 +16,9 @@ backups/
 # Runtime logs
 *.log
 
+# Deployment script logs
+logs/
+
 # Keep checked-in SQL migrations
 !backend/migrations/*.sql
 
