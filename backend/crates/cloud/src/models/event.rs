@@ -119,8 +119,8 @@ pub struct UpdateEventRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ActivateEventRequest {
-    pub entry_start_time: String,
-    pub entry_end_time: String,
+    pub entry_start_time: Option<String>,
+    pub entry_end_time: Option<String>,
     pub send_save_the_date: Option<bool>,
 }
 

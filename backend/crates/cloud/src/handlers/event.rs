@@ -100,10 +100,18 @@ pub async fn activate_event(
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     let event = EventRepository::get_by_id(state.db.pool(), event_id).await?.ok_or(AppError::EventNotFound)?;
     if event.organization_id != org_id { return Err(AppError::Forbidden); }
-    if event.approval_status != "approved" { return Err(AppError::BadRequest("Event must be approved before activation".to_string())); }
     if event.status == "active" { return Err(AppError::Conflict("Event is already active".to_string())); }
+    if event.status == "completed" { return Err(AppError::BadRequest("Completed events cannot be reactivated".to_string())); }
 
-    let activated = EventRepository::activate(state.db.pool(), event_id, payload.entry_start_time, payload.entry_end_time).await?;
+    // The account admin activates the event (approving it to active). Works from
+    // draft, pending_review or approved; the platform approval flow is optional.
+    let activated = EventRepository::activate(
+        state.db.pool(),
+        event_id,
+        payload.entry_start_time.unwrap_or_default(),
+        payload.entry_end_time.unwrap_or_default(),
+    )
+    .await?;
     Ok(Json(json!({ "success": true, "data": EventResponse::from(activated), "message": "Event activated successfully" })))
 }
 

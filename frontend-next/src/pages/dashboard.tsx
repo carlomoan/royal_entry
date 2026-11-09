@@ -1,21 +1,22 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
+import toast from "react-hot-toast";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area,
 } from "recharts";
 import {
   Users, UserCheck, CalendarDays, TrendingUp, Building2, CreditCard,
-  Receipt, Banknote, Activity, ArrowUpRight, AlertTriangle,
+  Receipt, Banknote, Activity, ArrowUpRight, AlertTriangle, Play, ListChecks,
 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { isPlatformAdmin, roleLabel } from "@/lib/roles";
+import { isPlatformAdmin, roleLabel, can } from "@/lib/roles";
 import { formatDate, formatTZS, cn } from "@/lib/utils";
-import { StatCard, Card, Badge } from "@/components/ui";
+import { StatCard, Card, Badge, Button } from "@/components/ui";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -171,6 +172,7 @@ function PlatformDashboard({ summary }: { summary: any }) {
 
 function AccountDashboard() {
   const { user } = useAuth();
+  const qc = useQueryClient();
   const { data: eventsData, isLoading: eventsLoading, isError: eventsError } = useQuery({
     queryKey: ["events"],
     queryFn: async () => (await api.get("/events?page=1&per_page=50")).data,
@@ -179,6 +181,28 @@ function AccountDashboard() {
   const active = events.filter((e: any) => e.status === "active");
   const upcoming = events.filter((e: any) => e.status === "approved" || e.status === "draft");
   const activeEvent = active[0];
+
+  // Account Admin approves an event to active from the dashboard.
+  const canActivate = can(user?.role, "events:activate");
+  const activateMutation = useMutation({
+    // Empty entry times keep the event's existing values (new backend) and also
+    // deserialize on older binaries that required the fields.
+    mutationFn: (id: string) =>
+      api.post(`/events/${id}/activate`, { entry_start_time: "", entry_end_time: "" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["events"] });
+      toast.success("Event activated — it is now live");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to activate event"),
+  });
+
+  const statusVariant = (status: string) => {
+    const map: Record<string, string> = {
+      active: "green", approved: "blue", draft: "amber",
+      pending_review: "pending", completed: "slate", cancelled: "rose",
+    };
+    return map[status] ?? "slate";
+  };
 
   const { data: reportSummary, isLoading: reportLoading, isError: reportError } = useQuery({
     queryKey: ["reports-summary"],
@@ -231,6 +255,54 @@ function AccountDashboard() {
             { label: "Completed", count: events.filter((event: any) => event.status === "completed").length, className: "bg-slate-100 text-slate-800" },
           ].map((item) => <div key={item.label} className={`rounded-lg p-4 ${item.className}`}><p className="text-xs font-semibold uppercase">{item.label}</p><p className="mt-1 text-2xl font-bold">{item.count}</p></div>)}
         </div>}
+      </Card>
+
+      {/* Your Events — full list of this account's events with activate action */}
+      <Card
+        title={`Your Events (${events.length})`}
+        action={<Link href="/events" className="text-xs font-semibold text-gold-700 hover:underline">Manage events</Link>}
+      >
+        {eventsLoading ? (
+          <p className="text-sm text-slate-500">Loading events…</p>
+        ) : events.length === 0 ? (
+          <div className="py-10 text-center">
+            <ListChecks className="mx-auto mb-3 h-10 w-10 text-slate-200" />
+            <p className="text-sm text-slate-500">No events yet — create your first event to get started.</p>
+            <Link href="/events" className="mt-3 inline-block rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-navy-950 transition hover:bg-gold-600">
+              Create Event
+            </Link>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {events.map((event: any) => (
+              <div key={event.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <Link href={`/events/${event.id}`} className="font-semibold text-slate-800 transition hover:text-gold-700">
+                    {event.title}
+                  </Link>
+                  <p className="text-xs text-slate-500">
+                    {formatDate(event.event_date)}
+                    {event.venue_name ? ` · ${event.venue_name}` : ""}
+                    {event.guest_count_expected ? ` · ${event.guest_count_expected} guests expected` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge label={event.status} variant={statusVariant(event.status)} />
+                  {canActivate && ["draft", "pending_review", "approved"].includes(event.status) && (
+                    <Button
+                      size="sm"
+                      onClick={() => activateMutation.mutate(event.id)}
+                      isLoading={activateMutation.isPending}
+                      title="Approve & activate this event"
+                    >
+                      <Play className="h-3.5 w-3.5" /> Activate
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* Live event banner */}

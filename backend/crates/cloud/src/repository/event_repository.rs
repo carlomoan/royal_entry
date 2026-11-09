@@ -207,8 +207,9 @@ impl EventRepository {
             UPDATE events
             SET
                 status = 'active',
-                entry_start_time = $2,
-                entry_end_time = $3,
+                approval_status = 'approved',
+                entry_start_time = COALESCE(NULLIF($2, ''), entry_start_time),
+                entry_end_time = COALESCE(NULLIF($3, ''), entry_end_time),
                 updated_at = $4
             WHERE id = $1
             RETURNING *
