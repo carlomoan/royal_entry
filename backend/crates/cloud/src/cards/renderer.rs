@@ -411,7 +411,22 @@ pub fn stamp_guest_name(
     if name.trim().is_empty() {
         return;
     }
-    let font_size = ((h_percent / 100.0) * canvas_height as f32 * 0.8).clamp(14.0, 160.0);
+    // Start from the box height, then shrink until the full name fits the box
+    // width — the rendered card shows the complete name, never a truncated one.
+    let font = load_font("Playfair Display");
+    let max_width = (w_percent / 100.0) * canvas_width as f32;
+    let mut font_size = ((h_percent / 100.0) * canvas_height as f32 * 0.8).clamp(14.0, 160.0);
+    loop {
+        let scale = Scale::uniform(font_size);
+        let text_width: f32 = name
+            .chars()
+            .map(|c| font.glyph(c).scaled(scale).h_metrics().advance_width)
+            .sum();
+        if text_width <= max_width || font_size <= 14.0 {
+            break;
+        }
+        font_size -= 1.0;
+    }
     let center_x = x_percent + w_percent / 2.0;
     let center_y = y_percent + h_percent / 2.0;
 

@@ -1,6 +1,6 @@
 // src/components/cards/RoyalCard.tsx
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import QRCode from "qrcode";
 import { Rnd } from "react-rnd";
 import api from "@/lib/api";
@@ -120,8 +120,25 @@ export function RoyalCard({
         return () => observer.disconnect();
     }, [bgUrl]);
 
-    // Guest-name font size scales with the box height (matches the backend render).
-    const nameFontSize = containerSize.h > 0 ? Math.max(10, (namePos.h / 100) * containerSize.h * 0.8) : 16;
+    // Guest-name font size: starts from the box height, then shrinks until the
+    // full name fits the box width — no ellipsis, matching the backend render.
+    const nameFontSize = useMemo(() => {
+        if (!guestName || containerSize.w <= 0) return 16;
+        const maxWidth = (namePos.w / 100) * containerSize.w;
+        const maxHeight = (namePos.h / 100) * containerSize.h;
+        let size = Math.max(10, maxHeight * 0.8);
+        if (typeof document !== "undefined") {
+            const ctx = document.createElement("canvas").getContext("2d");
+            if (ctx) {
+                ctx.font = `600 ${size}px sans-serif`;
+                while (size > 10 && ctx.measureText(guestName).width > maxWidth) {
+                    size -= 1;
+                    ctx.font = `600 ${size}px sans-serif`;
+                }
+            }
+        }
+        return size;
+    }, [guestName, namePos, containerSize]);
 
     return (
         <div
@@ -169,7 +186,7 @@ export function RoyalCard({
                         >
                             <div className="w-full h-full flex items-center justify-center pointer-events-none overflow-hidden">
                                 <span
-                                    className="truncate font-semibold text-white"
+                                    className="whitespace-nowrap font-semibold text-white"
                                     style={{
                                         fontSize: nameFontSize,
                                         textShadow: "0 1px 3px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9)",
@@ -191,7 +208,7 @@ export function RoyalCard({
                                 }}
                             >
                                 <span
-                                    className="truncate font-semibold text-white"
+                                    className="whitespace-nowrap font-semibold text-white"
                                     style={{
                                         fontSize: nameFontSize,
                                         textShadow: "0 1px 3px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9)",

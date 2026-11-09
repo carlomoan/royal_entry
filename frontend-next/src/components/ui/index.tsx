@@ -131,7 +131,7 @@ export function StatCard({
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{title}</p>
-          <p className="mt-2 truncate text-[28px] font-extrabold leading-none text-slate-900">{value}</p>
+          <p className="mt-2 break-words text-[28px] font-extrabold leading-tight text-slate-900">{value}</p>
           {subtitle && <p className="mt-1.5 truncate text-xs text-slate-400">{subtitle}</p>}
         </div>
         <div className={cn(
