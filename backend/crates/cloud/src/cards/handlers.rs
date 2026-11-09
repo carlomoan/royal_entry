@@ -265,15 +265,39 @@ async fn render_for_guest(
         return Err(AppError::BadRequest("QR position falls outside the card bounds".to_string()));
     }
 
+    // QR codes are square — use the smaller side so the stamp never stretches.
+    let side = width.min(height);
     let qr_code = QrCode::new(qr_url.as_bytes()).map_err(|error| AppError::QrGenerationError(error.to_string()))?;
     let qr = qr_code
         .render::<Rgba<u8>>()
-        .min_dimensions(width.max(1), height.max(1))
+        .min_dimensions(side.max(1), side.max(1))
         .dark_color(Rgba([0, 0, 0, 255]))
         .light_color(Rgba([0, 0, 0, 0]))
         .build();
-    let qr = image::imageops::resize(&qr, width, height, FilterType::Nearest);
+    let qr = image::imageops::resize(&qr, side, side, FilterType::Nearest);
     image::imageops::overlay(&mut front, &qr, i64::from(left), i64::from(top));
+
+    // Optional guest-name stamp positioned by the template designer.
+    if let Some(name_pos) = config.get("guest_name_position").and_then(serde_json::Value::as_object) {
+        let n = |key: &str| -> f32 {
+            name_pos.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32
+        };
+        let guest_name: String = sqlx::query_scalar("SELECT full_name FROM guests WHERE id = $1")
+            .bind(guest_id)
+            .fetch_one(state.db.pool())
+            .await?;
+        let (card_w, card_h) = (front.width(), front.height());
+        crate::cards::renderer::stamp_guest_name(
+            &mut front,
+            &guest_name,
+            n("x"),
+            n("y"),
+            n("w"),
+            n("h"),
+            card_w,
+            card_h,
+        );
+    }
 
     let mut output = Cursor::new(Vec::new());
     DynamicImage::ImageRgba8(front)

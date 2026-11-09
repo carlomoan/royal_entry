@@ -26,6 +26,7 @@ export interface CardTemplateRecord {
   theme_config: {
     front_file_id?: string;
     qr_position?: QrPosition;
+    guest_name_position?: QrPosition;
     [key: string]: unknown;
   };
   background_file_id: string | null;
@@ -41,16 +42,36 @@ export interface CardTemplateRecord {
 
 export const DEFAULT_QR_POSITION: QrPosition = { x: 65, y: 75, w: 20, h: 20 };
 
-/** Sanitize a stored QR position into a safe, clamped 0–100% rectangle. */
+export const DEFAULT_NAME_POSITION: QrPosition = { x: 15, y: 12, w: 70, h: 8 };
+
+/** Sanitize a stored QR position into a safe, clamped 0–100% SQUARE. */
 export function clampQrPosition(value: Partial<QrPosition> | null | undefined): QrPosition {
   const num = (v: unknown, fallback: number, min: number, max: number) => {
     const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
     return Math.min(max, Math.max(min, n));
   };
+  const side = Math.min(
+    num(value?.w, DEFAULT_QR_POSITION.w, 5, 50),
+    num(value?.h, DEFAULT_QR_POSITION.h, 5, 50)
+  );
   return {
     x: num(value?.x, DEFAULT_QR_POSITION.x, 0, 100),
     y: num(value?.y, DEFAULT_QR_POSITION.y, 0, 100),
-    w: num(value?.w, DEFAULT_QR_POSITION.w, 5, 50),
-    h: num(value?.h, DEFAULT_QR_POSITION.h, 5, 50),
+    w: side,
+    h: side,
+  };
+}
+
+/** Sanitize a stored guest-name box into a safe, clamped 0–100% rectangle. */
+export function clampNamePosition(value: Partial<QrPosition> | null | undefined): QrPosition {
+  const num = (v: unknown, fallback: number, min: number, max: number) => {
+    const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+  return {
+    x: num(value?.x, DEFAULT_NAME_POSITION.x, 0, 100),
+    y: num(value?.y, DEFAULT_NAME_POSITION.y, 0, 100),
+    w: num(value?.w, DEFAULT_NAME_POSITION.w, 10, 90),
+    h: num(value?.h, DEFAULT_NAME_POSITION.h, 3, 30),
   };
 }

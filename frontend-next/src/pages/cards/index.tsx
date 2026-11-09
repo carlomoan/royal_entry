@@ -11,7 +11,11 @@ import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Button, Card, Badge, Modal } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
-import { CardTemplateRecord, QrPosition, clampQrPosition, DEFAULT_QR_POSITION } from "@/types/cardTheme";
+import {
+  CardTemplateRecord, QrPosition,
+  clampQrPosition, clampNamePosition,
+  DEFAULT_QR_POSITION, DEFAULT_NAME_POSITION,
+} from "@/types/cardTheme";
 
 type SetupStep = "upload" | "position" | "review";
 
@@ -36,6 +40,24 @@ function QrOverlayPreview({ payload, className }: { payload: string; className?:
   return <img src={src} alt="QR code preview" className={className} />;
 }
 
+/** Visible corner resize handles for react-rnd boxes. */
+function cornerHandles(color: string) {
+  const handle = {
+    width: 14,
+    height: 14,
+    background: color,
+    borderRadius: 4,
+    border: "2px solid #fff",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+  };
+  return {
+    topLeft: { ...handle, top: -7, left: -7 },
+    topRight: { ...handle, top: -7, right: -7 },
+    bottomLeft: { ...handle, bottom: -7, left: -7 },
+    bottomRight: { ...handle, bottom: -7, right: -7 },
+  };
+}
+
 export default function CardSetupPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -45,6 +67,7 @@ export default function CardSetupPage() {
   const [frontImageLoading, setFrontImageLoading] = useState(false);
   const [frontFileId, setFrontFileId] = useState("");
   const [qrPos, setQrPos] = useState<QrPosition>({ ...DEFAULT_QR_POSITION });
+  const [namePos, setNamePos] = useState<QrPosition>({ ...DEFAULT_NAME_POSITION });
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
   const [isActive, setIsActive] = useState(true);
@@ -135,6 +158,7 @@ export default function CardSetupPage() {
     setTemplateName("");
     setTemplateDescription("");
     setQrPos({ ...DEFAULT_QR_POSITION });
+    setNamePos({ ...DEFAULT_NAME_POSITION });
     setIsActive(true);
     setIsGlobal(false);
     setEditingId(null);
@@ -195,6 +219,7 @@ export default function CardSetupPage() {
     setIsActive(template.is_active);
     setIsGlobal(template.is_global);
     setQrPos(clampQrPosition(config.qr_position));
+    setNamePos(clampNamePosition(config.guest_name_position));
     setFrontFileId(fileId);
     setFrontImage(null);
     setStep(fileId ? "position" : "upload");
@@ -235,6 +260,7 @@ export default function CardSetupPage() {
         theme_config: {
           front_file_id: frontFileId,
           qr_position: qrPos,
+          guest_name_position: namePos,
         },
         is_active: isActive,
         is_global: isGlobal,
@@ -408,61 +434,100 @@ export default function CardSetupPage() {
                     />
 
                     {containerSize.w > 0 && (
-                      <Rnd
-                        size={{ width: `${qrPos.w}%`, height: `${qrPos.h}%` }}
-                        position={{ x: (qrPos.x / 100) * containerSize.w, y: (qrPos.y / 100) * containerSize.h }}
-                        onDragStop={(_, d) => {
-                          const parent = d.node.parentNode as HTMLElement;
-                          if (parent) {
-                            setQrPos((p) => {
-                              const x = Math.max(0, Math.min(100 - p.w, (d.x / parent.offsetWidth) * 100));
-                              const y = Math.max(0, Math.min(100 - p.h, (d.y / parent.offsetHeight) * 100));
-                              return { ...p, x, y };
-                            });
-                          }
-                        }}
-                        onResizeStop={(_, __, ref) => {
-                          const parent = ref.parentNode as HTMLElement;
-                          if (parent) {
-                            setQrPos((p) => {
-                              const w = Math.max(5, Math.min(50, (ref.offsetWidth / parent.offsetWidth) * 100));
-                              const h = Math.max(5, Math.min(50, (ref.offsetHeight / parent.offsetHeight) * 100));
-                              const x = Math.min(p.x, 100 - w);
-                              const y = Math.min(p.y, 100 - h);
-                              return { ...p, x, y, w, h };
-                            });
-                          }
-                        }}
-                        bounds="parent"
-                        className="border-2 border-dashed border-gold-500 flex items-center justify-center cursor-move z-10"
-                        style={{ minWidth: "40px", minHeight: "40px" }}
-                      >
-                        <div className="pointer-events-none w-full h-full p-1.5" title={`QR position — X ${qrPos.x.toFixed(1)}% · Y ${qrPos.y.toFixed(1)}% · ${qrPos.w.toFixed(1)}% × ${qrPos.h.toFixed(1)}%`}>
-                          <QrOverlayPreview payload={qrPreviewPayload} className="w-full h-full" />
-                        </div>
-                      </Rnd>
+                      <>
+                        {/* QR box — always square, resizable from the corners */}
+                        <Rnd
+                          size={{ width: `${qrPos.w}%`, height: `${qrPos.h}%` }}
+                          position={{ x: (qrPos.x / 100) * containerSize.w, y: (qrPos.y / 100) * containerSize.h }}
+                          lockAspectRatio
+                          onDragStop={(_, d) => {
+                            const parent = d.node.parentNode as HTMLElement;
+                            if (parent) {
+                              setQrPos((p) => {
+                                const x = Math.max(0, Math.min(100 - p.w, (d.x / parent.offsetWidth) * 100));
+                                const y = Math.max(0, Math.min(100 - p.h, (d.y / parent.offsetHeight) * 100));
+                                return { ...p, x, y };
+                              });
+                            }
+                          }}
+                          onResizeStop={(_, __, ref) => {
+                            const parent = ref.parentNode as HTMLElement;
+                            if (parent) {
+                              setQrPos((p) => {
+                                const side = Math.max(5, Math.min(50, (ref.offsetWidth / parent.offsetWidth) * 100));
+                                const x = Math.min(p.x, 100 - side);
+                                const y = Math.min(p.y, 100 - side);
+                                return { ...p, x, y, w: side, h: side };
+                              });
+                            }
+                          }}
+                          bounds="parent"
+                          className="border-2 border-dashed border-gold-500 flex items-center justify-center cursor-move z-10"
+                          style={{ minWidth: "40px", minHeight: "40px" }}
+                          resizeHandleStyles={cornerHandles("#c9a84c")}
+                        >
+                          <div className="pointer-events-none w-full h-full p-1.5" title={`QR position — X ${qrPos.x.toFixed(1)}% · Y ${qrPos.y.toFixed(1)}% · ${qrPos.w.toFixed(1)}% × ${qrPos.h.toFixed(1)}%`}>
+                            <QrOverlayPreview payload={qrPreviewPayload} className="w-full h-full" />
+                          </div>
+                        </Rnd>
+
+                        {/* Guest name box — movable + resizable */}
+                        <Rnd
+                          size={{ width: `${namePos.w}%`, height: `${namePos.h}%` }}
+                          position={{ x: (namePos.x / 100) * containerSize.w, y: (namePos.y / 100) * containerSize.h }}
+                          onDragStop={(_, d) => {
+                            const parent = d.node.parentNode as HTMLElement;
+                            if (parent) {
+                              setNamePos((p) => {
+                                const x = Math.max(0, Math.min(100 - p.w, (d.x / parent.offsetWidth) * 100));
+                                const y = Math.max(0, Math.min(100 - p.h, (d.y / parent.offsetHeight) * 100));
+                                return { ...p, x, y };
+                              });
+                            }
+                          }}
+                          onResizeStop={(_, __, ref) => {
+                            const parent = ref.parentNode as HTMLElement;
+                            if (parent) {
+                              setNamePos((p) => {
+                                const w = Math.max(10, Math.min(90, (ref.offsetWidth / parent.offsetWidth) * 100));
+                                const h = Math.max(3, Math.min(30, (ref.offsetHeight / parent.offsetHeight) * 100));
+                                const x = Math.min(p.x, 100 - w);
+                                const y = Math.min(p.y, 100 - h);
+                                return { ...p, x, y, w, h };
+                              });
+                            }
+                          }}
+                          bounds="parent"
+                          className="border-2 border-dashed border-sky-500 bg-sky-500/10 flex items-center justify-center cursor-move z-10"
+                          style={{ minWidth: "80px", minHeight: "24px" }}
+                          resizeHandleStyles={cornerHandles("#0ea5e9")}
+                        >
+                          <div className="pointer-events-none w-full h-full flex items-center justify-center">
+                            <span className="text-sm font-semibold text-sky-700 truncate">Guest Name</span>
+                          </div>
+                        </Rnd>
+                      </>
                     )}
                   </div>
 
-                  {/* QR Position Info */}
-                  <div className="bg-slate-50 rounded-lg p-4 max-w-2xl mx-auto">
-                    <p className="text-xs font-semibold text-slate-600 mb-2">QR Code Position:</p>
-                    <div className="grid grid-cols-4 gap-3 text-sm">
-                      <div>
-                        <span className="text-slate-500">X:</span>
-                        <span className="ml-1 font-mono font-semibold">{qrPos.x.toFixed(1)}%</span>
+                  {/* Position Info */}
+                  <div className="bg-slate-50 rounded-lg p-4 max-w-2xl mx-auto space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-2">QR Code Position (square):</p>
+                      <div className="grid grid-cols-4 gap-3 text-sm">
+                        <div><span className="text-slate-500">X:</span> <span className="ml-1 font-mono font-semibold">{qrPos.x.toFixed(1)}%</span></div>
+                        <div><span className="text-slate-500">Y:</span> <span className="ml-1 font-mono font-semibold">{qrPos.y.toFixed(1)}%</span></div>
+                        <div><span className="text-slate-500">W:</span> <span className="ml-1 font-mono font-semibold">{qrPos.w.toFixed(1)}%</span></div>
+                        <div><span className="text-slate-500">H:</span> <span className="ml-1 font-mono font-semibold">{qrPos.h.toFixed(1)}%</span></div>
                       </div>
-                      <div>
-                        <span className="text-slate-500">Y:</span>
-                        <span className="ml-1 font-mono font-semibold">{qrPos.y.toFixed(1)}%</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">W:</span>
-                        <span className="ml-1 font-mono font-semibold">{qrPos.w.toFixed(1)}%</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">H:</span>
-                        <span className="ml-1 font-mono font-semibold">{qrPos.h.toFixed(1)}%</span>
+                    </div>
+                    <div className="border-t border-slate-200 pt-3">
+                      <p className="text-xs font-semibold text-slate-600 mb-2">Guest Name Position:</p>
+                      <div className="grid grid-cols-4 gap-3 text-sm">
+                        <div><span className="text-slate-500">X:</span> <span className="ml-1 font-mono font-semibold">{namePos.x.toFixed(1)}%</span></div>
+                        <div><span className="text-slate-500">Y:</span> <span className="ml-1 font-mono font-semibold">{namePos.y.toFixed(1)}%</span></div>
+                        <div><span className="text-slate-500">W:</span> <span className="ml-1 font-mono font-semibold">{namePos.w.toFixed(1)}%</span></div>
+                        <div><span className="text-slate-500">H:</span> <span className="ml-1 font-mono font-semibold">{namePos.h.toFixed(1)}%</span></div>
                       </div>
                     </div>
                   </div>
@@ -505,12 +570,21 @@ export default function CardSetupPage() {
                   <img src={frontImage} alt="Preview" className="mt-2 rounded-lg border border-slate-200 max-h-64 w-auto" />
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase">QR Position</p>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">QR Position (square)</p>
                   <div className="mt-2 grid grid-cols-4 gap-3 text-sm">
                     <div><span className="text-slate-500">X:</span> <span className="font-mono font-semibold">{qrPos.x.toFixed(1)}%</span></div>
                     <div><span className="text-slate-500">Y:</span> <span className="font-mono font-semibold">{qrPos.y.toFixed(1)}%</span></div>
                     <div><span className="text-slate-500">W:</span> <span className="font-mono font-semibold">{qrPos.w.toFixed(1)}%</span></div>
                     <div><span className="text-slate-500">H:</span> <span className="font-mono font-semibold">{qrPos.h.toFixed(1)}%</span></div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Guest Name Position</p>
+                  <div className="mt-2 grid grid-cols-4 gap-3 text-sm">
+                    <div><span className="text-slate-500">X:</span> <span className="font-mono font-semibold">{namePos.x.toFixed(1)}%</span></div>
+                    <div><span className="text-slate-500">Y:</span> <span className="font-mono font-semibold">{namePos.y.toFixed(1)}%</span></div>
+                    <div><span className="text-slate-500">W:</span> <span className="font-mono font-semibold">{namePos.w.toFixed(1)}%</span></div>
+                    <div><span className="text-slate-500">H:</span> <span className="font-mono font-semibold">{namePos.h.toFixed(1)}%</span></div>
                   </div>
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer pt-1">

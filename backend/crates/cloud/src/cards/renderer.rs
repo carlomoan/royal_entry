@@ -395,6 +395,56 @@ pub fn render_card(
     Ok(final_images)
 }
 
+/// Stamp the guest's name onto a rendered card inside the designer's box.
+/// Draws a dark outline first, then white fill, so the name stays readable on
+/// any background. Text is centered in the box and sized to ~80% of its height.
+pub fn stamp_guest_name(
+    canvas: &mut RgbaImage,
+    name: &str,
+    x_percent: f32,
+    y_percent: f32,
+    w_percent: f32,
+    h_percent: f32,
+    canvas_width: u32,
+    canvas_height: u32,
+) {
+    if name.trim().is_empty() {
+        return;
+    }
+    let font_size = ((h_percent / 100.0) * canvas_height as f32 * 0.8).clamp(14.0, 160.0);
+    let center_x = x_percent + w_percent / 2.0;
+    let center_y = y_percent + h_percent / 2.0;
+
+    // Outline pass (dark) at small offsets.
+    for (dx, dy) in [(-0.12, 0.0), (0.12, 0.0), (0.0, -0.12), (0.0, 0.12)] {
+        draw_text_on_canvas(
+            canvas,
+            name,
+            center_x + dx,
+            center_y + dy,
+            font_size,
+            "Playfair Display",
+            (0, 0, 0, 255),
+            "center",
+            canvas_width,
+            canvas_height,
+        );
+    }
+    // Fill pass (white).
+    draw_text_on_canvas(
+        canvas,
+        name,
+        center_x,
+        center_y,
+        font_size,
+        "Playfair Display",
+        (255, 255, 255, 255),
+        "center",
+        canvas_width,
+        canvas_height,
+    );
+}
+
 fn draw_text_on_canvas(
     canvas: &mut RgbaImage,
     text: &str,

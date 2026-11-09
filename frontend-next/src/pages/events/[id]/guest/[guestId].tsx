@@ -11,7 +11,7 @@ import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Button, Card, Badge } from "@/components/ui";
 import { RoyalCard } from "@/components/cards/RoyalCard";
-import { QrPosition, clampQrPosition } from "@/types/cardTheme";
+import { QrPosition, clampQrPosition, clampNamePosition } from "@/types/cardTheme";
 
 export default function GuestCardPage() {
   const router = useRouter();
@@ -77,21 +77,29 @@ export default function GuestCardPage() {
   const templateHasBackground = !!assignedTemplate &&
     (!!assignedTemplate.theme_config?.front_file_id || !!assignedTemplate.background_file_id);
 
-  // ── QR placement fine-tuning (drag + resize directly on the rendered card) ──
+  // ── QR + guest-name placement fine-tuning (drag + resize on the card) ──────
   const [qrPos, setQrPos] = useState<QrPosition | null>(null);
   const [savedPos, setSavedPos] = useState<QrPosition | null>(null);
+  const [namePos, setNamePos] = useState<QrPosition | null>(null);
+  const [savedNamePos, setSavedNamePos] = useState<QrPosition | null>(null);
 
   // Re-derive placement whenever the assigned template changes.
   useEffect(() => {
     setQrPos(null);
     setSavedPos(null);
+    setNamePos(null);
+    setSavedNamePos(null);
   }, [assignedTemplate?.id]);
 
   const effectiveQrPos = qrPos ?? clampQrPosition(assignedTemplate?.theme_config?.qr_position);
+  const effectiveNamePos = namePos ?? clampNamePosition(assignedTemplate?.theme_config?.guest_name_position);
   // Only the template owner (creating org) may persist a new placement.
   const canAdjustQr = !!assignedTemplate?.is_owned;
   const storedPos = clampQrPosition(assignedTemplate?.theme_config?.qr_position);
-  const isDirty = !!qrPos && JSON.stringify(qrPos) !== JSON.stringify(savedPos ?? storedPos);
+  const storedNamePos = clampNamePosition(assignedTemplate?.theme_config?.guest_name_position);
+  const isDirty =
+    (!!qrPos && JSON.stringify(qrPos) !== JSON.stringify(savedPos ?? storedPos)) ||
+    (!!namePos && JSON.stringify(namePos) !== JSON.stringify(savedNamePos ?? storedNamePos));
 
   const savePlacementMutation = useMutation({
     mutationFn: () =>
@@ -99,14 +107,16 @@ export default function GuestCardPage() {
         theme_config: {
           ...(assignedTemplate?.theme_config ?? {}),
           qr_position: effectiveQrPos,
+          guest_name_position: effectiveNamePos,
         },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["card-templates"] });
       setSavedPos(effectiveQrPos);
-      toast.success("QR placement saved to the card template");
+      setSavedNamePos(effectiveNamePos);
+      toast.success("Card layout saved to the template");
     },
-    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to save QR placement"),
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to save card layout"),
   });
   const invitation = invitations.find((i: any) => i.guest_id === guestId);
   const pledge = pledges.find((p: any) => p.guest_id === guestId);
@@ -267,8 +277,11 @@ export default function GuestCardPage() {
                     template={assignedTemplate}
                     qrPayload={qrPayload}
                     width={600}
+                    guestName={guest?.full_name}
                     qrPosition={effectiveQrPos}
                     onPositionChange={canAdjustQr ? setQrPos : undefined}
+                    namePosition={effectiveNamePos}
+                    onNamePositionChange={canAdjustQr ? setNamePos : undefined}
                     editable={canAdjustQr}
                   />
 
@@ -277,15 +290,29 @@ export default function GuestCardPage() {
                       <div className="flex items-start gap-2">
                         <Move className="h-4 w-4 mt-0.5 text-gold-600 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">QR placement</p>
+                          <p className="text-sm font-semibold text-slate-800">Card layout</p>
                           <p className="text-xs text-slate-500">
-                            Drag the gold box to reposition the QR, drag its edges to resize. Changes apply to every guest card using this template.
+                            Drag the <span className="font-semibold text-gold-700">gold</span> box to move the QR (resize from the corner handles), and the <span className="font-semibold text-sky-600">blue</span> box to move the guest name. Changes apply to every guest card using this template.
                           </p>
-                          <div className="mt-2 grid grid-cols-4 gap-2 text-xs font-mono">
-                            <span className="text-slate-500">X <span className="font-semibold text-slate-800">{effectiveQrPos.x.toFixed(1)}%</span></span>
-                            <span className="text-slate-500">Y <span className="font-semibold text-slate-800">{effectiveQrPos.y.toFixed(1)}%</span></span>
-                            <span className="text-slate-500">W <span className="font-semibold text-slate-800">{effectiveQrPos.w.toFixed(1)}%</span></span>
-                            <span className="text-slate-500">H <span className="font-semibold text-slate-800">{effectiveQrPos.h.toFixed(1)}%</span></span>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded bg-white/70 p-2">
+                              <p className="font-semibold text-gold-700 mb-1">QR (square)</p>
+                              <div className="grid grid-cols-4 gap-1 font-mono">
+                                <span className="text-slate-500">X <span className="font-semibold text-slate-800">{effectiveQrPos.x.toFixed(1)}%</span></span>
+                                <span className="text-slate-500">Y <span className="font-semibold text-slate-800">{effectiveQrPos.y.toFixed(1)}%</span></span>
+                                <span className="text-slate-500">W <span className="font-semibold text-slate-800">{effectiveQrPos.w.toFixed(1)}%</span></span>
+                                <span className="text-slate-500">H <span className="font-semibold text-slate-800">{effectiveQrPos.h.toFixed(1)}%</span></span>
+                              </div>
+                            </div>
+                            <div className="rounded bg-white/70 p-2">
+                              <p className="font-semibold text-sky-600 mb-1">Guest name</p>
+                              <div className="grid grid-cols-4 gap-1 font-mono">
+                                <span className="text-slate-500">X <span className="font-semibold text-slate-800">{effectiveNamePos.x.toFixed(1)}%</span></span>
+                                <span className="text-slate-500">Y <span className="font-semibold text-slate-800">{effectiveNamePos.y.toFixed(1)}%</span></span>
+                                <span className="text-slate-500">W <span className="font-semibold text-slate-800">{effectiveNamePos.w.toFixed(1)}%</span></span>
+                                <span className="text-slate-500">H <span className="font-semibold text-slate-800">{effectiveNamePos.h.toFixed(1)}%</span></span>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -299,7 +326,7 @@ export default function GuestCardPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => { setQrPos(null); setSavedPos(null); }}
+                          onClick={() => { setQrPos(null); setSavedPos(null); setNamePos(null); setSavedNamePos(null); }}
                           disabled={!isDirty}
                         >
                           <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
@@ -310,7 +337,7 @@ export default function GuestCardPage() {
                           isLoading={savePlacementMutation.isPending}
                           disabled={!isDirty || !assignedTemplate}
                         >
-                          <Save className="h-3.5 w-3.5 mr-1" /> Save placement
+                          <Save className="h-3.5 w-3.5 mr-1" /> Save layout
                         </Button>
                       </div>
                     </div>

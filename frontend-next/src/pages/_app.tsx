@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "@/lib/auth";
 import { useState } from "react";
 import AppShell from "@/components/layout/AppShell";
+import IdleSessionTimeout from "@/components/auth/IdleSessionTimeout";
 
 // Disable SSR for the entire app — auth state depends on localStorage
 const NoSSR = dynamic(() => Promise.resolve(({ children }: { children: React.ReactNode }) => <>{children}</>), {
@@ -24,6 +25,7 @@ export default function App({ Component, pageProps }: AppProps) {
     <NoSSR>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
+          <IdleSessionTimeout />
           {isLogin ? (
             <Component {...pageProps} />
           ) : (

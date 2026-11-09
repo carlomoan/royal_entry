@@ -26,6 +26,12 @@ export default function LoginPage() {
   const router = useRouter();
   const { login, isAuthenticated } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
+  const [expiredNotice] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const reason = window.localStorage.getItem("session_expired");
+    if (reason) window.localStorage.removeItem("session_expired");
+    return reason;
+  });
 
   useEffect(() => {
     if (isAuthenticated) router.replace("/dashboard");
@@ -115,6 +121,15 @@ export default function LoginPage() {
           <p className="mt-1 text-sm text-slate-500">
             Sign in to access your dashboard
           </p>
+
+          {expiredNotice === "idle" && (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <span>
+                Your session expired due to inactivity. Please sign in again to confirm your identity and continue.
+              </span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5">
             <div className="relative">

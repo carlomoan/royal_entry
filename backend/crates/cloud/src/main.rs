@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
     compression::CompressionLayer,
-    cors::{Any, CorsLayer},
+    cors::{AllowHeaders, CorsLayer},
     trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
@@ -171,7 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Method::DELETE,
                         Method::OPTIONS,
                     ])
-                    .allow_headers(Any)
+                    // Reflect the request's Access-Control-Request-Headers —
+                    // required because `*` cannot be combined with credentials.
+                    .allow_headers(AllowHeaders::mirror_request())
                     .allow_credentials(true)
             }
         }
