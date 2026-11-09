@@ -1,47 +1,44 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# deploy.sh — Pull the latest RoyalEntry changes from GitHub and rebuild +
-# restart the backend and frontend on this (production) server.
+# deploy.sh — update RoyalEntry on the production server.
 #
-# Usage:
-#   ./deploy.sh                # full update (pull → build backend → build frontend → restart)
-#   ./deploy.sh --backend-only # only update + restart the Rust API
-#   ./deploy.sh --frontend-only# only update + restart the Next.js app
-#   ./deploy.sh --rebuild      # skip pull (only if already on the latest commit)
+# Run as root:   ./deploy.sh [--backend-only | --frontend-only | --rebuild]
 #
-# Notes:
-#   * The deploy user must own the repo and be able to write to backend/ and
-#     frontend-next/ (they own the build outputs). Run via sudo only if needed.
-#   * Secrets live in backend/.env (or ./env at repo root) and are gitignored —
-#     this script never touches them, and refuses to start the backend without
-#     a .env file present.
-#   * DB migrations run automatically when the backend starts.
-#   * Rollback:  git reset --hard <previous_commit>  && ./deploy.sh --rebuild
+#   (no flag)        pull from GitHub, then rebuild + restart what is needed
+#   --backend-only   only the Rust API
+#   --frontend-only  only the Next.js app
+#   --rebuild        skip the pull and rebuild the current commit
+#
+# Root is used only for systemctl and the database backup. Git and every build
+# run as $DEPLOY_USER, so no root-owned files appear in the repo (that is what
+# broke `next build` with EACCES) and git's "dubious ownership" check passes.
+#
+# Settings below can be overridden from the environment, e.g.
+#   FRONTEND_PORT=3002 ./deploy.sh
 # ==============================================================================
 set -euo pipefail
 
-# ── Locations & config ───────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"                 # repo root (script lives in <root>/scripts or <root>)
-if [ ! -d "$ROOT/backend" ] || [ ! -d "$ROOT/frontend-next" ]; then
-  ROOT="$SCRIPT_DIR"                                  # script itself is at repo root
-fi
-BACKEND_DIR="$ROOT/backend"
-FRONTEND_DIR="$ROOT/frontend-next"
-LOG_DIR="${DEPLOY_LOG_DIR:-$ROOT/logs}"
-BACKEND_BIN="$BACKEND_DIR/target/release/royalentry"
-BRANCH="${DEPLOY_BRANCH:-main}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY_USER="${DEPLOY_USER:-foctek}"
 REMOTE="${DEPLOY_REMOTE:-origin}"
+BRANCH="${DEPLOY_BRANCH:-main}"
+BACKEND_UNIT="${BACKEND_UNIT:-royalentry-backend}"
+FRONTEND_UNIT="${FRONTEND_UNIT:-royalentry-frontend}"
+BACKEND_PORT="${BACKEND_PORT:-3001}"
+FRONTEND_PORT="${FRONTEND_PORT:-3002}"
+DB_NAME="${DB_NAME:-royalentry_db}"
+BACKUP_DIR="${BACKUP_DIR:-/root/royalentry-backups}"
+BIN="$ROOT/backend/target/release/royalentry"
 
-DO_BACKEND="true"
-DO_FRONTEND="true"
-DO_PULL="true"
+DO_BACKEND=true
+DO_FRONTEND=true
+DO_PULL=true
 for arg in "$@"; do
   case "$arg" in
-    --backend-only) DO_FRONTEND="false" ;;
-    --frontend-only) DO_BACKEND="false" ;;
-    --rebuild) DO_PULL="false" ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    --backend-only)  DO_FRONTEND=false ;;
+    --frontend-only) DO_BACKEND=false ;;
+    --rebuild)       DO_PULL=false ;;
+    -h|--help)       sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 1 ;;
   esac
 done
@@ -51,150 +48,129 @@ ok()   { printf '    \033[1;32mOK\033[0m %s\n' "$*"; }
 warn() { printf '    \033[1;33mWARN\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
 
+git_u() { sudo -u "$DEPLOY_USER" -H git -C "$ROOT" "$@"; }
+run_u() { sudo -u "$DEPLOY_USER" -i bash -c "$1"; }   # login shell: finds cargo / node
+
+wait_for() {  # wait_for <url> <seconds>
+  local i
+  for i in $(seq 1 "$2"); do
+    if curl -fsS -m 2 -o /dev/null "$1" 2>/dev/null; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
 # ── Pre-flight ────────────────────────────────────────────────────────────────
-cd "$ROOT"
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Not inside a git repository"
-command -v cargo >/dev/null || die "cargo not found — install the Rust toolchain"
-command -v npm  >/dev/null || die "npm not found — install Node.js"
-mkdir -p "$LOG_DIR"
+[ "$(id -u)" -eq 0 ] || die "Run as root (./deploy.sh). Git and builds run as $DEPLOY_USER automatically."
+id "$DEPLOY_USER" >/dev/null 2>&1 || die "User $DEPLOY_USER does not exist"
+[ -d "$ROOT/backend" ] && [ -d "$ROOT/frontend-next" ] || die "Run this from the repo root ($ROOT has no backend/ or frontend-next/)"
+git_u rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$ROOT is not a git repository"
 
-OLD_COMMIT="$(git rev-parse --short HEAD)"
-
-# ── Pull from GitHub ─────────────────────────────────────────────────────────
-if [ "$DO_PULL" = "true" ]; then
-  log "Fetching $REMOTE/$BRANCH from GitHub"
-  git fetch "$REMOTE" "$BRANCH" || die "git fetch failed — check network access to GitHub"
-
-  LOCAL="$(git rev-parse HEAD)"
-  REMOTE_SHA="$(git rev-parse "$REMOTE/$BRANCH")"
-  if [ "$LOCAL" = "$REMOTE_SHA" ]; then
-    ok "Already on the latest commit ($(git rev-parse --short HEAD))"
-    [ "$DO_BACKEND" = "true" ] && [ "$DO_FRONTEND" = "true" ] \
-      && warn "Nothing to do — rerun with --rebuild to force a rebuild, or press on." 
-    if [ "$DO_BACKEND" != "true" ] || [ "$DO_FRONTEND" != "true" ]; then
-      : # a partial update was requested; continue with the build anyway
-    else
-      exit 0
-    fi
-  fi
-
-  log "Pulling $REMOTE/$BRANCH (fast-forward only)"
-  if ! git pull --ff-only "$REMOTE" "$BRANCH"; then
-    # Git never clobbers local work; give actionable guidance.
-    git status --short
-    die "Pull failed — local files conflict with incoming changes. Commit or stash them, then re-run."
-  fi
-  ok "Updated $(git rev-parse --short HEAD) (was $OLD_COMMIT)"
-else
-  warn "--rebuild: skipping git pull"
+if find "$ROOT" ! -user "$DEPLOY_USER" -print -quit | grep -q .; then
+  warn "Files not owned by $DEPLOY_USER found; fixing ownership"
+  chown -R "$DEPLOY_USER:$DEPLOY_USER" "$ROOT"
 fi
 
-NEW_COMMIT="$(git rev-parse --short HEAD)"
+OLD="$(git_u rev-parse --short HEAD)"
 
-# ── Backend ──────────────────────────────────────────────────────────────────
-restart_backend() {
-  # Prefer systemd if a unit exists, else manage the process directly.
-  for unit in royalentry royalentry-api royalentry-backend; do
-    if systemctl list-unit-files --no-legend 2>/dev/null | grep -qE "^${unit}(\\.service)?[[:space:]]"; then
-      log "Restarting systemd unit: $unit"
-      systemctl restart "$unit" && return 0
-      warn "systemctl restart $unit failed — falling back to process restart"
+# ── Pull ──────────────────────────────────────────────────────────────────────
+if [ "$DO_PULL" = true ]; then
+  CUR="$(git_u branch --show-current)"
+  [ "$CUR" = "$BRANCH" ] || die "Server is on branch '$CUR', expected '$BRANCH'. Switch with: sudo -u $DEPLOY_USER git -C $ROOT checkout $BRANCH"
+  if [ -n "$(git_u status --porcelain --untracked-files=no)" ]; then
+    git_u status --short --untracked-files=no
+    die "Uncommitted changes on the server. Commit or stash them first (never edit production directly)."
+  fi
+  log "Fetching $REMOTE/$BRANCH"
+  git_u fetch "$REMOTE" "$BRANCH" || die "git fetch failed (network or deploy key problem)"
+  if [ "$(git_u rev-parse HEAD)" = "$(git_u rev-parse "$REMOTE/$BRANCH")" ]; then
+    ok "Already up to date at $OLD. Use --rebuild to rebuild this commit."
+    exit 0
+  fi
+  log "Pulling (fast-forward only)"
+  git_u pull --ff-only "$REMOTE" "$BRANCH" || die "Pull failed: server and GitHub have diverged. Nothing was changed."
+fi
+NEW="$(git_u rev-parse --short HEAD)"
+ok "Commit: $OLD -> $NEW"
+
+# ── Migration safety check ────────────────────────────────────────────────────
+# An already-applied migration that was edited makes the backend refuse to start
+# (sqlx VersionMismatch). Catch that before anything is restarted.
+check_migrations() {
+  local f v h db bad=0
+  for f in "$ROOT"/backend/migrations/*.sql; do
+    v=$((10#$(basename "$f" | cut -d_ -f1)))
+    h="$(sha384sum "$f" | cut -d' ' -f1)"
+    db="$(cd /tmp && sudo -u postgres psql "$DB_NAME" -Atc "select encode(checksum,'hex') from _sqlx_migrations where version=$v" 2>/dev/null || true)"
+    if [ -n "$db" ] && [ "$db" != "$h" ]; then
+      warn "Applied migration was modified: $(basename "$f")"
+      bad=1
     fi
   done
-
-  pkill -f "target/release/royalentry" 2>/dev/null || true
-  sleep 1
-  cd "$BACKEND_DIR"
-  nohup "$BACKEND_BIN" >>"$LOG_DIR/backend.log" 2>&1 &
-  cd "$ROOT"
-  ok "Backend started (pid $!; log: $LOG_DIR/backend.log)"
+  [ "$bad" = 0 ] || die "Put schema changes in a NEW numbered migration; never edit an applied one."
+  ok "Migration checksums match"
 }
 
-if [ "$DO_BACKEND" = "true" ]; then
-  log "Building backend (release)"
-  cd "$BACKEND_DIR"
-  cargo build --release -p royalentry-cloud
-  [ -x "$BACKEND_BIN" ] || die "Backend binary missing after build: $BACKEND_BIN"
-  cd "$ROOT"
+# ── Backend ───────────────────────────────────────────────────────────────────
+if [ "$DO_BACKEND" = true ]; then
+  log "Checking migrations"
+  check_migrations
 
-  # Secrets must exist before we (re)start the API.
-  if [ -f "$BACKEND_DIR/.env" ]; then ENV_FILE="$BACKEND_DIR/.env"
-  elif [ -f "$ROOT/.env" ]; then ENV_FILE="$ROOT/.env"
-  else die "No .env found (backend/.env or ./.env) — refusing to start the backend"; fi
-  ok "Using env: $ENV_FILE"
+  log "Backing up database and current binary to $BACKUP_DIR"
+  mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
+  STAMP="$(date +%F_%H%M)"
+  (cd /tmp && sudo -u postgres pg_dump "$DB_NAME") > "$BACKUP_DIR/db_$STAMP.sql"
+  chmod 600 "$BACKUP_DIR/db_$STAMP.sql"
+  if [ -f "$BIN" ]; then cp "$BIN" "$BACKUP_DIR/royalentry.bin_$STAMP"; fi
+  ok "Backup: $BACKUP_DIR/db_$STAMP.sql"
 
-  restart_backend
+  log "Building backend (release) as $DEPLOY_USER"
+  run_u "cd '$ROOT/backend' && cargo build --release"
+  [ -x "$BIN" ] || die "Backend binary missing after build: $BIN"
 
-  # Health check (migrations apply on startup, so wait a moment).
-  BPORT="$(grep -E '^SERVER_PORT=' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
-  BPORT="${BPORT:-3000}"
-  ok "Waiting for backend health on 127.0.0.1:$BPORT/health"
-  UP="false"
-  for _ in $(seq 1 20); do
-    if curl -fsS -m 2 "http://127.0.0.1:$BPORT/health" >/dev/null 2>&1; then UP="true"; break; fi
-    sleep 1
-  done
-  if [ "$UP" != "true" ]; then
-    warn "Backend did not become healthy — last log lines:"
-    tail -n 20 "$LOG_DIR/backend.log" 2>/dev/null || tail -n 20 /dev/null
-    die "Backend failed to start (migrations are the usual suspect — check the log)."
+  log "Restarting $BACKEND_UNIT"
+  systemctl reset-failed "$BACKEND_UNIT" 2>/dev/null || true
+  systemctl restart "$BACKEND_UNIT"
+  if wait_for "http://127.0.0.1:$BACKEND_PORT/health" 30; then
+    ok "Backend healthy on :$BACKEND_PORT"
+  else
+    journalctl -u "$BACKEND_UNIT" -n 25 --no-pager || true
+    die "Backend did not become healthy. Roll back: copy $BACKUP_DIR/royalentry.bin_$STAMP over $BIN and restart $BACKEND_UNIT (restore the DB dump too if new migrations were applied)."
   fi
-  ok "Backend healthy"
 fi
 
-# ── Frontend ─────────────────────────────────────────────────────────────────
-restart_frontend() {
-  for unit in royalentry-frontend royalentry-web royalentry-next; do
-    if systemctl list-unit-files --no-legend 2>/dev/null | grep -qE "^${unit}(\\.service)?[[:space:]]"; then
-      log "Restarting systemd unit: $unit"
-      systemctl restart "$unit" && return 0
-      warn "systemctl restart $unit failed — falling back to process restart"
-    fi
-  done
-
-  pkill -f "next-server" 2>/dev/null || true
-  pkill -f "next start"  2>/dev/null || true
-  sleep 1
-  cd "$FRONTEND_DIR"
-  nohup npm run start >>"$LOG_DIR/frontend.log" 2>&1 &
-  cd "$ROOT"
-  ok "Frontend started (pid $!; log: $LOG_DIR/frontend.log)"
-}
-
-if [ "$DO_FRONTEND" = "true" ]; then
-  log "Installing + building frontend"
-  cd "$FRONTEND_DIR"
-  [ -f package-lock.json ] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-  npm run build
-  cd "$ROOT"
-
-  restart_frontend
-
-  FPORT="$(grep -E 'start.*-p ' "$FRONTEND_DIR/package.json" 2>/dev/null | grep -oE '\-p [0-9]+' | grep -oE '[0-9]+' | head -n1 || true)"
-  FPORT="${FPORT:-3001}"
-  ok "Waiting for frontend on http://127.0.0.1:$FPORT"
-  UP="false"
-  for _ in $(seq 1 15); do
-    if curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$FPORT/login" 2>/dev/null; then UP="true"; break; fi
-    sleep 1
-  done
-  if [ "$UP" != "true" ]; then
-    warn "Frontend did not respond — last log lines:"
-    tail -n 20 "$LOG_DIR/frontend.log" 2>/dev/null || true
-    die "Frontend failed to start — check the log."
+# ── Frontend ──────────────────────────────────────────────────────────────────
+if [ "$DO_FRONTEND" = true ]; then
+  NEEDS_INSTALL=false
+  [ -d "$ROOT/frontend-next/node_modules" ] || NEEDS_INSTALL=true
+  git_u diff --quiet "$OLD" "$NEW" -- frontend-next/package.json frontend-next/package-lock.json || NEEDS_INSTALL=true
+  if [ "$NEEDS_INSTALL" = true ]; then
+    log "Installing frontend dependencies"
+    run_u "cd '$ROOT/frontend-next' && npm ci --no-audit --no-fund"
   fi
-  ok "Frontend healthy"
+
+  # NEXT_PUBLIC_* values are baked in at build time, so a rebuild is required
+  # whenever frontend-next/.env.local changes.
+  log "Building frontend as $DEPLOY_USER"
+  run_u "cd '$ROOT/frontend-next' && npm run build"
+
+  log "Restarting $FRONTEND_UNIT"
+  systemctl reset-failed "$FRONTEND_UNIT" 2>/dev/null || true
+  systemctl restart "$FRONTEND_UNIT"
+  if wait_for "http://127.0.0.1:$FRONTEND_PORT/login" 30; then
+    ok "Frontend healthy on :$FRONTEND_PORT"
+  else
+    journalctl -u "$FRONTEND_UNIT" -n 25 --no-pager || true
+    die "Frontend did not respond on :$FRONTEND_PORT. Check the log above."
+  fi
 fi
 
-# ── Summary ──────────────────────────────────────────────────────────────────
 cat <<EOF
 
 Deployment finished:
-  repo      : $ROOT
-  commit    : $OLD_COMMIT -> $NEW_COMMIT
-  backend   : $([ "$DO_BACKEND" = "true" ] && echo restarted || echo skipped)
-  frontend  : $([ "$DO_FRONTEND" = "true" ] && echo restarted || echo skipped)
-  logs      : $LOG_DIR
+  commit    : $OLD -> $NEW
+  backend   : $([ "$DO_BACKEND" = true ] && echo restarted || echo skipped)
+  frontend  : $([ "$DO_FRONTEND" = true ] && echo restarted || echo skipped)
 
-Rollback: git reset --hard $OLD_COMMIT && ./deploy.sh --rebuild
+Rollback: sudo -u $DEPLOY_USER git -C $ROOT reset --hard $OLD && ./deploy.sh --rebuild
 EOF
