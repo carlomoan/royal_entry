@@ -10,6 +10,7 @@ pub mod pdf;
 pub mod scheduler;
 pub mod sms;
 pub mod templates;
+pub mod tra;
 pub mod usage;
 pub mod webhooks;
 pub mod whatsapp;

@@ -115,6 +115,9 @@ pub struct PlatformInvoiceResponse {
     pub invoice_number: String,
     pub plan_name: Option<String>,
     pub amount_tsh: i64,
+    pub tax_rate_percent: Option<f64>,
+    pub tax_amount_tsh: i64,
+    pub tax_inclusive: bool,
     pub status: String,
     pub issued_at: DateTime<Utc>,
     pub due_at: Option<DateTime<Utc>>,
@@ -300,7 +303,8 @@ async fn fetch_invoices(
 ) -> AppResult<Vec<PlatformInvoiceResponse>> {
     let invoices = sqlx::query_as::<_, PlatformInvoiceResponse>(
         r#"
-        SELECT bi.id, bi.invoice_number, sp.name AS plan_name, bi.amount_tsh, bi.status,
+        SELECT bi.id, bi.invoice_number, sp.name AS plan_name, bi.amount_tsh,
+               bi.tax_rate_percent, bi.tax_amount_tsh, bi.tax_inclusive, bi.status,
                bi.issued_at, bi.due_at, bi.paid_at, bi.period_start, bi.period_end, bi.notes
         FROM billing_invoices bi
         LEFT JOIN service_plans sp ON sp.id = bi.plan_id

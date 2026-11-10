@@ -55,17 +55,17 @@ pub async fn send_otp(
     Json(payload): Json<SendOtpRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
-    assert_event_ownership(&state, event_id, org_id).await?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
 
     let short_link = normalize_short_link(&payload.short_link);
     if short_link.is_empty() {
         return Err(AppError::ValidationError("short_link is required".to_string()));
     }
 
-    // Look up the invitation + guest phone
+    // Look up the invitation + guest contact details
     let row = sqlx::query(
         r#"
-        SELECT g.id AS guest_id, g.full_name, g.phone
+        SELECT g.id AS guest_id, g.full_name, g.phone, g.email
         FROM invitations i
         JOIN guests g ON g.id = i.guest_id
         WHERE i.short_link = $1 AND g.event_id = $2
@@ -80,9 +80,12 @@ pub async fn send_otp(
     let guest_id: Uuid = row.try_get("guest_id").map_err(|_| AppError::GuestNotFound)?;
     let guest_name: String = row.try_get("full_name").unwrap_or_default();
     let guest_phone: String = row.try_get("phone").unwrap_or_default();
+    let guest_email: Option<String> = row.try_get("email").ok();
 
-    if guest_phone.is_empty() {
-        return Err(AppError::BadRequest("Guest has no phone number to send OTP".to_string()));
+    if guest_phone.is_empty() && guest_email.as_deref().unwrap_or("").is_empty() {
+        return Err(AppError::BadRequest(
+            "Guest has no phone or email to send the OTP".to_string(),
+        ));
     }
 
     // Generate 6-digit OTP
@@ -107,12 +110,46 @@ pub async fn send_otp(
     .execute(state.db.pool())
     .await?;
 
-    // Send the code via SMS
-    let message = format!(
-        "Your RoyalEntry entry code for {} is {}. It expires in 10 minutes.",
-        guest_name, code
-    );
-    let _ = crate::services::MessagingService::new().send("sms", &guest_phone, &message).await;
+    // Send the code — email for guests with an address (smartphones), SMS for
+    // feature-phone guests. This verifies identity at the gate so a guest who
+    // obtained a QR/link illegally cannot check in without the owner's device.
+    if let Some(email) = guest_email.filter(|e| !e.trim().is_empty()) {
+        let check_in_link = format!(
+            "{}/g/{}",
+            state.config.app.frontend_url.trim_end_matches('/'),
+            short_link
+        );
+        let subject = format!("Your {} Check-in Code: {}", event.title, code);
+        let html = crate::services::TemplateService::new(state.clone())
+            .render_template(
+                "otp_verification",
+                json!({
+                    "guest_name": guest_name,
+                    "event_title": event.title,
+                    "otp_code": code.to_string(),
+                    "expires_at": expires_at.format("%H:%M").to_string(),
+                    "check_in_link": check_in_link,
+                }),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                format!(
+                    "<p>Dear {guest_name}, your check-in code for {} is <strong>{}</strong>. It expires in 10 minutes.</p>",
+                    event.title, code
+                )
+            });
+        if let Err(e) = state.channels.email(&email, &subject, &html).await {
+            tracing::warn!(guest_id = %guest_id, error = %e, "Failed to send OTP email");
+        }
+    } else {
+        let message = format!(
+            "Your RoyalEntry entry code for {} is {}. It expires in 10 minutes.",
+            guest_name, code
+        );
+        let _ = crate::services::MessagingService::new()
+            .send("sms", &guest_phone, &message)
+            .await;
+    }
 
     Ok(Json(json!({
         "success": true,

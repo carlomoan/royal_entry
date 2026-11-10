@@ -31,6 +31,9 @@ pub struct User {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_login: Option<DateTime<Utc>>,
+    pub must_change_password: bool,
+    pub failed_login_attempts: i32,
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,6 +47,7 @@ pub struct UserResponse {
     pub is_active: bool,
     pub organization_id: Option<Uuid>,
     pub organization_name: Option<String>,
+    pub must_change_password: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -59,6 +63,7 @@ impl From<User> for UserResponse {
             is_active: user.is_active,
             organization_id: user.organization_id,
             organization_name: None,
+            must_change_password: user.must_change_password,
             created_at: user.created_at,
         }
     }

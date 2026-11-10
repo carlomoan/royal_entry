@@ -92,10 +92,17 @@ pub async fn generate_invitations(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     Path(event_id): Path<Uuid>,
-    Json(payload): Json<GenerateInvitationsRequest>,
+    // Optional body: the UI may POST without a payload (no Content-Type), which
+    // would otherwise be rejected with 415 by the Json extractor.
+    payload: Option<Json<GenerateInvitationsRequest>>,
 ) -> AppResult<(StatusCode, Json<serde_json::Value>)> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     assert_event_ownership(&state, event_id, org_id).await?;
+
+    let payload = payload.map(|p| p.0).unwrap_or(GenerateInvitationsRequest {
+        overwrite: None,
+        guest_ids: None,
+    });
 
     let all_guests = list_event_guests(state.db.pool(), event_id).await?;
 

@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import {
   Download, Share2, ArrowLeft, Loader2, AlertCircle,
   Calendar, MapPin, Clock, User, CreditCard, CheckCircle2,
-  QrCode, Smartphone, Mail, Save, RotateCcw, Move
+  QrCode, Smartphone, Mail, Save, RotateCcw, Move, Send
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -118,6 +118,15 @@ export default function GuestCardPage() {
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to save card layout"),
   });
+  const sendVerification = useMutation({
+    mutationFn: () => api.post(`/events/${eventId}/guests/${guestId}/verify-email`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["guest", eventId, guestId] });
+      toast.success("Verification email sent");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to send verification"),
+  });
+
   const invitation = invitations.find((i: any) => i.guest_id === guestId);
   const pledge = pledges.find((p: any) => p.guest_id === guestId);
 
@@ -397,6 +406,42 @@ export default function GuestCardPage() {
                     )}
                   </div>
                 </div>
+                {guest.email && (
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="text-xs text-slate-500 mb-1">Email verification</p>
+                    {guest.email_verified ? (
+                      <Badge label="Verified" variant="green" />
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Badge label="Unverified" variant="amber" />
+                        <button
+                          onClick={() => sendVerification.mutate()}
+                          disabled={sendVerification.isPending}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700 disabled:opacity-50"
+                        >
+                          <Mail className="h-3.5 w-3.5" /> Send verification
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {invitation?.short_link && (
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="text-xs text-slate-500 mb-1">Telegram</p>
+                    {guest.telegram_chat_id ? (
+                      <Badge label="Telegram linked" variant="green" />
+                    ) : (
+                      <a
+                        href={`https://t.me/${process.env.NEXT_PUBLIC_TELEGRAM_BOT ?? "YourBot"}?start=${invitation.short_link}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 transition hover:bg-sky-100"
+                      >
+                        <Send className="h-3.5 w-3.5" /> Link Telegram
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </Card>
 

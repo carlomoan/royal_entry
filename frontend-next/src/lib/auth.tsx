@@ -12,6 +12,7 @@ export interface User {
   is_active: boolean;
   organization_id?: string | null;
   organization_name?: string;
+  must_change_password?: boolean;
   created_at: string;
 }
 

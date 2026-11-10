@@ -19,19 +19,40 @@ use crate::{
     templates as msg_templates, AppState,
 };
 use axum::{
+    extract::State,
+    http::StatusCode,
     middleware,
     routing::{delete, get, post, put},
     Router,
 };
 use std::sync::Arc;
 
+/// Liveness + DB readiness probe.
+async fn health(State(state): State<Arc<AppState>>) -> (StatusCode, &'static str) {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&*state.db.pool())
+        .await
+    {
+        Ok(_) => (StatusCode::OK, "OK"),
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "DB unavailable"),
+    }
+}
+
 pub fn create_router(state: Arc<AppState>) -> Router {
     // ── Public routes (no auth required) ──────────────────────────────────────
-    let public_routes = Router::new()
-        .route("/health", get(|| async { "OK" }))
+    // Auth endpoints are rate-limited to slow brute-force attempts.
+    let auth_public_routes = Router::new()
         .route("/api/v1/auth/register", post(auth::register))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/refresh", post(auth::refresh_token))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::rate_limit_middleware,
+        ));
+
+    let public_routes = Router::new()
+        .route("/health", get(health))
+        .merge(auth_public_routes)
         .route(
             "/api/v1/public/invitations/{code}",
             get(public_invitation::get_public_invitation),
@@ -49,10 +70,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(public_invitation::submit_public_rsvp),
         )
         .route(
+            "/api/v1/telegram/webhook",
+            post(crate::handlers::telegram::telegram_webhook),
+        )
+        .route(
             "/api/v1/payments/mpesa/callback",
             post(payment::mpesa_callback),
         )
-        .route("/api/v1/public/verify", get(verify_token::verify_token));
+        .route("/api/v1/public/verify", get(verify_token::verify_token))
+        .route(
+            "/api/v1/public/verify-email",
+            get(guest::verify_guest_email),
+        );
 
     // ── Auth routes (any authenticated user) ──────────────────────────────────
     let auth_routes = Router::new()
@@ -206,6 +235,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/v1/events/{eid}/guests/{id}",
             delete(guest::delete_guest),
         )
+        .route(
+            "/api/v1/events/{eid}/guests/{id}/verify-email",
+            post(guest::send_email_verification),
+        )
         .route("/api/v1/events/{eid}/guest/{id}", get(guest::get_guest))
         .layer(middleware::from_fn(require_permission_middleware(
             "guests:read",
@@ -245,6 +278,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/v1/events/{eid}/scan/otp/verify",
             post(scanner::verify_otp),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::rate_limit_middleware,
+        ))
         .layer(middleware::from_fn(require_permission_middleware(
             "scanner:read",
         )));
@@ -297,6 +334,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(billing::get_my_subscription),
         )
         .route("/api/v1/billing/invoices", get(billing::list_my_invoices))
+        .route(
+            "/api/v1/billing/invoices/{id}/pdf",
+            get(billing::download_invoice_pdf),
+        )
         .route("/api/v1/billing/usage", get(billing::get_my_usage));
 
     // ── Payment routes ────────────────────────────────────────────────────────

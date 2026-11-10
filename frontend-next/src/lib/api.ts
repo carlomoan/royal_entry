@@ -3,6 +3,8 @@
 // ==============================================================================
 import axios from "axios";
 import type { InternalAxiosRequestConfig } from "axios";
+import { enqueue, flushQueue, isOnline, type QueuedRequest } from "./offline";
+import { cacheGet, getCached } from "./cache";
 
 const api = axios.create({
   baseURL: "/api/v1",
@@ -21,12 +23,62 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-/* Auto-refresh on 401, then retry once. On failure, clean session + redirect. */
+const MUTATION_METHODS = new Set(["post", "put", "patch", "delete"]);
+
+// High-frequency / sensitive GETs that should not be cached.
+const NO_CACHE_PREFIXES = [
+  "/auth/me",
+  "/notifications",
+  "/scan-stats",
+  "/unread-count",
+];
+
+function shouldCacheGet(url: string): boolean {
+  return !NO_CACHE_PREFIXES.some((p) => url.includes(p));
+}
+
+/* Offline-first: when a mutation fails because there is no connection, queue it
+   locally and return a synthetic success so the UI keeps working. It is
+   replayed by flushQueue() when the connection returns. */
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    // Cache successful GET responses for offline reads.
+    const method = (res.config?.method ?? "").toLowerCase();
+    const url = res.config?.url ?? "";
+    if (method === "get" && shouldCacheGet(url)) {
+      cacheGet(url, res.data);
+    }
+    return res;
+  },
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && original && !original._retry) {
+    const method = (original?.method ?? "").toLowerCase();
+    const url = original?.url ?? "";
+
+    // Offline GET: fall back to the cached copy so pages still render.
+    if (original && !error.response && !isOnline() && method === "get") {
+      const cached = getCached(url);
+      if (cached !== undefined) {
+        return Promise.resolve({ data: cached });
+      }
+    }
+
+    if (
+      original &&
+      !error.response &&
+      !isOnline() &&
+      MUTATION_METHODS.has(method)
+    ) {
+      enqueue({
+        method: (method ?? "post").toUpperCase(),
+        url,
+        data: original.data,
+      });
+      return Promise.resolve({ data: { success: true, queued_offline: true } });
+    }
+
+    /* Auto-refresh on 401, then retry once. On failure, clean session + redirect. */
+    if (original && error.response?.status === 401 && !original._retry) {
       original._retry = true;
       try {
         const refreshToken = localStorage.getItem("refresh_token");
@@ -48,5 +100,22 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/** Replay queued offline mutations through the API client. */
+export async function syncOfflineQueue(): Promise<number> {
+  const send = async (req: QueuedRequest) => {
+    await api.request({ method: req.method, url: req.url, data: req.data });
+  };
+  return flushQueue(send);
+}
+
+// When the connection returns, flush anything queued while offline.
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    syncOfflineQueue().then((n) => {
+      if (n > 0) console.info(`[offline] synced ${n} queued change(s)`);
+    });
+  });
+}
 
 export default api;

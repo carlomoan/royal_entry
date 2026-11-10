@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  CreditCard, FileDown, Wallet, Clock, CheckCircle2, ArrowUpRight, Search,
+  CreditCard, FileDown, Wallet, Clock, CheckCircle2, ArrowUpRight, Search, Eye, Printer,
 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
@@ -10,10 +10,12 @@ import api from "@/lib/api";
 import { Card, Badge, StatCard, Select, Modal, Button } from "@/components/ui";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatTZS, formatDate } from "@/lib/utils";
+import ReceiptDocument from "@/components/billing/ReceiptDocument";
 
 export default function PaymentsPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [statusPaymentId, setStatusPaymentId] = useState<string | null>(null);
+  const [receiptPayment, setReceiptPayment] = useState<any | null>(null);
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ["payments"],
@@ -69,10 +71,16 @@ export default function PaymentsPage() {
           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700">
           <Search className="h-3.5 w-3.5" /> Status
         </button>
-        {p.status === "completed" && <button onClick={() => downloadReceipt(p.id)} title="Download receipt"
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700">
-          <FileDown className="h-3.5 w-3.5" /> Receipt
-        </button>}
+        {p.status === "completed" && <>
+          <button onClick={() => setReceiptPayment(p)} title="View receipt"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700">
+            <Eye className="h-3.5 w-3.5" /> View
+          </button>
+          <button onClick={() => downloadReceipt(p.id)} title="Download receipt PDF"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700">
+            <FileDown className="h-3.5 w-3.5" /> PDF
+          </button>
+        </>}
       </div>,
     },
   ];
@@ -121,6 +129,37 @@ export default function PaymentsPage() {
           />
         )}
       </Card>
+
+      <Modal isOpen={!!receiptPayment} onClose={() => setReceiptPayment(null)} title="Payment Receipt" size="lg">
+        {receiptPayment && (
+          <div className="space-y-4">
+            <ReceiptDocument
+              variant="receipt"
+              number={`RCPT-${receiptPayment.id.slice(0, 8).toUpperCase()}`}
+              issuedAt={receiptPayment.completed_at ?? receiptPayment.created_at}
+              status="paid"
+              billTo={{ name: receiptPayment.payer_phone ?? "—", detail: receiptPayment.payment_type }}
+              items={[{
+                description: `Payment — ${receiptPayment.payment_type}${receiptPayment.package_name ? ` (${receiptPayment.package_name})` : ""}`,
+                amount: receiptPayment.amount_tsh ?? 0,
+              }]}
+              subtotal={receiptPayment.amount_tsh ?? 0}
+              taxAmount={0}
+              total={receiptPayment.amount_tsh ?? 0}
+              paidVia={receiptPayment.payment_method}
+              reference={receiptPayment.mpesa_receipt_number ?? receiptPayment.payment_reference ?? receiptPayment.transaction_id}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => window.print()}>
+                <Printer className="h-3.5 w-3.5" /> Print
+              </Button>
+              <Button size="sm" onClick={() => { downloadReceipt(receiptPayment.id); setReceiptPayment(null); }}>
+                <FileDown className="h-3.5 w-3.5" /> Download PDF
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal isOpen={!!statusPaymentId} onClose={() => setStatusPaymentId(null)} title="Payment Status" size="sm">
         {statusLoading ? <p className="py-6 text-sm text-slate-500">Checking payment status…</p> : paymentStatus ? (

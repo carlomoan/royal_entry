@@ -40,6 +40,10 @@ main workflows.
 If you see *"Your session expired due to inactivity"*, simply sign in again —
 this is the automatic idle-logout protecting your account.
 
+If you're asked to **change your password** right after signing in, that's the
+forced password change for accounts created with a default password — set a new
+one before you can continue.
+
 ---
 
 ## 3. Platform roles (Super Admin, Platform Admin, System Admin)
@@ -63,23 +67,31 @@ this is the automatic idle-logout protecting your account.
 1. **Platform → Users** — create platform users, assign roles.
 2. **Platform → RBAC** — manage roles and their permissions, assign roles to users.
 
-### 3.4 Card templates (SaaS catalog)
-1. **Platform → Card Templates** — create visual-preset templates, upload preview
-   images, edit, delete.
-2. **Card Studio** (`/cards`) — upload a designed card, position the QR code
-   (drag + resize), and **Share with all organizations** so every tenant can
-   assign it to their events. Shared templates appear with a gold **Shared** badge.
+### 3.4 Settings hub (vertical tabs)
+**Platform → Settings** opens a page with **vertical tabs** on the left. Each tab
+is a section:
 
-### 3.5 Message templates
-**Platform → Templates** — create SMS/WhatsApp/Email message templates used by
-broadcasts and invitations.
+- **Tax & TRA** — VAT rate, tax-inclusive toggle, and TRA API credentials applied
+  to invoice generation.
+- **Global Variables** — system-wide configuration variables.
+- **Card Templates** — create visual-preset templates, upload preview images,
+  edit, delete.
+- **Email Templates** — edit the system email templates (invitation, reminder,
+  pledge reminder, payment, verification/OTP) with live preview.
+- **Roles & Permissions** — manage roles and their permissions.
+- **Webhooks** — register endpoints that receive event callbacks (HMAC-signed),
+  view deliveries, retry failed ones.
+- **Audit Logs** — searchable audit trail of platform/tenant actions.
+- **WhatsApp / SMS / Telegram Config** — channel credentials (write-only).
+- **AI Integration** — AI feature descriptions.
 
-### 3.6 Audit & webhooks
-- **Platform → Audit** — searchable audit trail of platform/tenant actions.
-- **Platform → Webhooks** — register endpoints that receive event callbacks
-  (signed with HMAC), view deliveries, retry failed ones.
+### 3.5 Card Studio
+**Card Studio** (`/cards`) — upload a designed card, position the **QR code**
+(square, drag + resize from the corner handles), position the **guest name** box,
+and **Share with all organizations** so every tenant can assign it to their
+events. Shared templates appear with a gold **Shared** badge.
 
-### 3.7 Approving events
+### 3.6 Approving events
 When a tenant submits an event for approval you get a **notification** (bell icon
 top-right). Open the event → **Approve** or **Reject** (with a reason). The tenant
 is notified of the outcome.
@@ -112,9 +124,13 @@ is notified of the outcome.
 1. **Generate links** for the event, then **Send Invitations**.
 2. Each guest gets a check-in link + QR. Open **View Card** from a guest or the
    Michango tab to see the rendered card with the QR stamped in the designed spot.
-3. **QR placement** — on the guest card page, drag/resize the gold box to fine-tune
-   where the QR sits, then **Save placement** (applies to every guest card using
-   that template).
+3. **Card layout** — on the guest card page, drag/resize the **gold** box (QR) and
+   the **blue** box (guest name), then **Save layout** (applies to every guest
+   card using that template).
+4. **Email verification** — the guest card shows whether the guest's email is
+   **Verified**; use **Send verification** to email them a confirm link.
+5. **Telegram** — use **Link Telegram** to send a guest the opt-in link so they
+   can receive messages on Telegram.
 
 ### 4.4 Michango (pledges & contributions)
 1. **Michango** tab — set a default pledge amount, **Add Pledge** per guest
@@ -134,7 +150,11 @@ is notified of the outcome.
 ### 4.6 Scanner (check-in)
 1. **Scanner** — scan the guest's QR (camera) or enter the SMS code.
 2. The guest is marked **arrived**; duplicates and invalid codes are rejected.
-3. Scanner Attendants land directly on the Scanner hub.
+3. **Offline scanning** — the scanner caches the event's guests + invitations, so
+   you can keep checking guests in with no connection. Offline check-ins are
+   recorded locally and **sync automatically when you're back online** (a banner
+   shows the pending count). OTP verification needs a connection.
+4. Scanner Attendants land directly on the Scanner hub.
 
 ### 4.7 Reports
 **Reports** — summary + exportable reports (events, guests, payments, michango,
@@ -206,6 +226,17 @@ org, and configure account settings.
 - Backend secrets (`BEEM_*`, `RESEND_*`, `WHATSAPP_*`, `TELEGRAM_*`, `JWT_*`,
   `DATABASE_URL`) live **only** in `backend/.env` (gitignored, `chmod 600`).
   Never put them in `NEXT_PUBLIC_*` variables.
+- **Secrets are write-only** — stored channel/TRA keys are returned masked as
+  `********` and never shown back to the browser.
+- **Accounts lock after 5 failed logins** for 15 minutes; access tokens expire
+  after 2 hours (auto-refreshed).
 - Guest QR/invitation links are built from `FRONTEND_URL` — keep it set to
   `https://royalentry.foctek.co.tz`.
 - Database backups are taken on the server (see `deploy/README.md`).
+
+## 9. Offline mode
+
+- The app works **offline** (browser or the Tauri desktop app): reads come from a
+  local cache, and changes you make (check-ins, pledges, payments) are queued and
+  **sync automatically when you're back online**.
+- A banner shows when you're offline and how many changes are waiting to sync.

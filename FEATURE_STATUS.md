@@ -1,7 +1,7 @@
 # RoyalEntry — Feature Status Matrix
 
 > **Status**: ✅ = Fully Implemented | ⚠️ = Partially Implemented | ❌ = Not Implemented
-> **Last Updated**: 2026-09-20 (Post-Architecture Implementation)
+> **Last Updated**: 2026-11-10
 
 ---
 
@@ -9,27 +9,32 @@
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Authentication (JWT)** | Login, register, refresh, change-password | Login page, auth context, token refresh interceptor | ✅ |
-| **RBAC (Role-Based Access Control)** | `is_platform_role()`, `can()`, middleware guards | `roles.ts` permission matrix, sidebar filtering | ✅ |
-| **Multi-tenancy** | Auto-scopes by `organization_id` from JWT | `RequireAccount` / `RequirePlatform` route guards | ✅ |
-| **Audit Logging** | Middleware captures all requests to `audit_logs` | Platform + Account audit pages | ✅ |
-| **API Response Envelope** | `{ success, data }` wrapper on all responses | `apiClient` interceptor | ✅ |
+| **Authentication (JWT)** | Login, register, refresh, change-password; 2h access tokens | Login page, auth context, token refresh interceptor | ✅ |
+| **Forced Password Change** | `must_change_password` flag on default admin | `/profile/change-password` page + AppShell guard | ✅ |
+| **Account Lockout** | 5 failed logins → 15-min lock (`failed_login_attempts`, `locked_until`) | Error message on login | ✅ |
+| **Rate Limiting** | In-memory limiter on auth + scanner OTP (60/min/IP) | 429 handling | ✅ |
+| **RBAC** | `is_platform_role()`, `can()`, middleware guards | `roles.ts` permission matrix, sidebar filtering | ✅ |
+| **Multi-tenancy** | Auto-scopes by `organization_id` from JWT | Route guards separate account vs platform | ✅ |
+| **Audit Logging** | Middleware captures requests to `audit_logs` | Platform + Account audit pages | ✅ |
+| **API Response Envelope** | `{ success, data }` wrapper | `apiClient` interceptor | ✅ |
 | **Pagination** | `page`, `per_page`, `total`, `total_pages` | `PaginatedResponse<T>` type | ✅ |
-| **File Upload** | `POST /files/upload` (`files/` module: Storage trait, LocalStorage, S3Storage company-agnostic) | — | ⚠️ (backend done, no frontend upload UI) |
+| **File Upload** | `POST /files/upload` (`files/` module) | Card Studio upload | ✅ |
+| **Health Check** | `/health` runs `SELECT 1` (200/503) | — | ✅ |
+| **Secret Masking** | `GET /settings/system` masks channel/TRA keys | Write-only config forms | ✅ |
 
 ## 2. Event Management
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
 | **Event CRUD** | Create, read, update, delete events | Events list + detail pages | ✅ |
-| **Event Status Workflow** | draft → approved → active → completed/cancelled | Status badges, filters | ✅ |
-| **Event Summary/Stats** | `GET /events/{id}/summary` with counts | Dashboard stat cards | ✅ |
-| **QR Code Generation** | `qrcode` crate + `GET /events/{eid}/invitations/{inv_id}/qr` endpoint (`qr_code.rs`) | — | ⚠️ (backend endpoint created) |
-| **QR Secure Token** | `POST /qr/generate-secure` (placeholder), `GET /public/verify?t={token}` (`verify_token.rs`) | — | ⚠️ (endpoint exists, AES-GCM + Ed25519 implemented in `token.rs`) |
-| **Invitation Links** | Generation of short-link + QR payload (`invitations.rs`) | Card studio, copy-to-clipboard | ✅ |
-| **Public Invitation Page** | `GET /public/invitations/{code}` (`public_invitation.rs`) | `PublicInvitation.tsx` | ✅ |
-| **Public RSVP** | `POST /public/invitations/{code}/rsvp` | RSVP form on invitation page | ✅ |
-| **Card Template Design** | `cards/` module (`model.rs`, `repository.rs`, `renderer.rs` with rusttype, `handlers.rs`) | `pages/cards/index.tsx` (new) | ⚠️ (backend module complete, frontend editor basic) |
+| **Event Status Workflow** | draft → pending_review → approved → active → completed/cancelled | Status badges, filters | ✅ |
+| **Account-Admin Activation** | `activate_event` allows draft/pending/approved → active | Dashboard "Activate" button + full event list | ✅ |
+| **Event Summary/Stats** | `GET /events/{id}/summary` (fixed subquery) | Dashboard stat cards | ✅ |
+| **Invitation Links** | Short-link + QR payload generation | Generate links button | ✅ |
+| **Card Template Assignment** | `card_template_id` on events, validated renderable | Event form + "Invitation Card Design" panel | ✅ |
+| **Public Invitation Page** | `GET /public/invitations/{code}` | `PublicInvitation.tsx` | ✅ |
+| **Public RSVP** | `POST /public/invitations/{code}/rsvp` | RSVP form | ✅ |
+| **Card Template Design** | `cards/` renderer (rusttype: QR square + guest-name stamp) | Card Studio (QR + name boxes, corner handles, shared SaaS) | ✅ |
 | **Recurring Events** | — | — | ❌ |
 | **Waitlist Management** | — | — | ❌ |
 | **Seat/Table Assignment** | — | — | ❌ |
@@ -40,21 +45,22 @@
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
 | **Guest CRUD** | Create, read, update, delete guests | Guest list + form modals | ✅ |
-| **Bulk Import** | `POST /events/{eid}/guests/bulk` | CSV upload UI | ⚠️ (needs UI refinement) |
-| **Guest Categories** | VIP, Regular, Staff, Family, Friend | Category badges | ✅ |
+| **Bulk Import** | `POST /events/{eid}/guests/bulk` + CSV import | CSV upload UI | ✅ |
+| **Guest Categories** | VVIP, VIP, Gold, Silver, Premium, Regular, etc. | Category badges | ✅ |
 | **Plus-One Support** | `plus_one_allowed` field | Toggle in guest form | ✅ |
 | **Device Type** | `smartphone` / `feature_phone` for SMS/WhatsApp routing | Selector in guest form | ✅ |
+| **Email Verification** | `email_verified` + token; send + public verify endpoints | Verified badge + "Send verification" | ✅ |
+| **Telegram Linking** | `telegram_chat_id` + webhook (`/start <token>`) | "Link Telegram" on guest card | ✅ |
 
 ## 4. QR Scanner
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Check-in Guest** | `POST /events/{eid}/scan` (`scanner.rs`) | Scanner page with camera | ✅ |
+| **Check-in Guest** | `POST /events/{eid}/scan` | Scanner page with camera | ✅ |
+| **SMS OTP Check-in** | `send_otp` / `verify_otp` (email for smartphone, SMS for feature phone) | SMS-link mode | ✅ |
 | **Scan Stats** | `GET /events/{eid}/scan-stats` | Arrival rate, timeline chart | ✅ |
 | **Duplicate Scan Detection** | Returns `DuplicateScan` error | Toast notification | ✅ |
-| **QR Image Generation** | `GET /events/{eid}/invitations/{inv_id}/qr` returns PNG (`qr_code.rs`) | — | ⚠️ (backend endpoint created) |
-| **QR Secure Token** | `qr/token.rs` (AES-GCM + Ed25519), `qr/render.rs` | — | ⚠️ (encryption implemented, endpoint exists) |
-| **Public Verify** | `GET /public/verify?t={token}` (`verify_token.rs`) | — | ⚠️ (placeholder handler) |
+| **Offline Scanning** | — | Local guest cache + offline check-in queue + sync | ✅ |
 | **Kiosk Mode** | — | — | ❌ |
 
 ## 5. Michango (Pledge/Contribution)
@@ -62,7 +68,7 @@
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
 | **Pledge CRUD** | Create, list pledges | Pledge list + add modal | ✅ |
-| **Pledge Summary** | `GET /michango/summary` | Summary stat cards | ✅ |
+| **Pledge Summary** | `GET /events/{eid}/michango/summary` | Summary stat cards (fixed) | ✅ |
 | **Record Payment** | `POST /michango/{id}/payment` | Payment modal | ✅ |
 | **Reminders** | Send + list reminder deliveries | Reminder button + history | ✅ |
 | **Payment Status** | pending, partial, paid, overdue | Status badges + progress bar | ✅ |
@@ -71,85 +77,75 @@
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Send Broadcast** | `POST /events/{eid}/broadcast` (`broadcast.rs`) | Broadcast form (SMS/WhatsApp) | ✅ |
-| **List Broadcasts** | `GET /events/{eid}/broadcasts` | Campaign history table | ✅ |
-| **Delivery Tracking** | `GET /broadcasts/{id}/deliveries` (`logs/handlers.rs`) | Delivery status per guest | ⚠️ (backend endpoint created) |
-| **Broadcast Dispatcher** | `broadcast/dispatcher.rs` (full pipeline: token → QR → card → upload → message → send → DB updates) | — | ⚠️ (backend pipeline implemented) |
-| **Broadcast Worker** | `broadcast/worker.rs` (`tokio-cron-scheduler`) | — | ⚠️ (backend only) |
-| **Retry Scheduling** | `retry/scheduler.rs` (1m, 5m, 15m, 1h, 6h backoff, max 5) | — | ⚠️ (backend only) |
-| **Message Audit Logs** | `message_logs` table (`0023` migration), `logs/repository.rs`, `logs/handlers.rs` | `pages/logs/index.tsx` (new) | ⚠️ (backend done, frontend basic) |
-| **Message Templates** | `message_templates` table (`0022` migration), `templates/handlers.rs`, `templates/repository.rs` | `pages/templates/index.tsx` (new) | ⚠️ (backend done, frontend basic) |
-| **SMS Integration** | Africa's Talking SDK (`channels/sms.rs`) | — | ⚠️ (sandbox mode) |
-| **WhatsApp Integration** | WhatsApp Business API (`channels/whatsapp.rs`) | — | ⚠️ (sandbox mode) |
-| **Email Integration** | SMTP config (`channels/email.rs`) | — | ⚠️ (configured, untested) |
-| **Telegram Integration** | `channels/telegram.rs` (`TELEGRAM_BOT_TOKEN`) | — | ⚠️ (stub) |
-| **Channel Registry** | `channels/registry.rs` (`ChannelKind` → `Box<dyn MessageChannel>`) | `pages/channels/index.tsx` (new) | ⚠️ (backend done, frontend basic) |
-| **Channel Test Endpoint** | `POST /admin/channels/{kind}/test` (stub, gated by `ENABLE_LIVE_TESTS`) | — | ❌ (route not fully wired) |
+| **Send Broadcast** | `POST /events/{eid}/broadcast` | Broadcast form (SMS/WhatsApp/Email/Telegram) | ✅ |
+| **Broadcast Selectors** | — | Message-template + card-template selects, schedule picker, channel multi-select | ✅ |
+| **List Broadcasts** | `GET /events/{eid}/broadcasts` | Campaign history + delivery details | ✅ |
+| **Unified Channels** | `services/channels.rs` — Beem SMS, SMTP/Resend email, Telegram, WhatsApp Cloud | Channel config in Settings | ✅ |
+| **Message Audit Logs** | `message_logs` table + handlers | Delivery logs page | ✅ |
+| **Message Templates** | `message_templates` table + CRUD | Templates page | ✅ |
+| **SMS Integration** | Beem (`BEEM_*`) | — | ✅ (needs live credentials) |
+| **WhatsApp Integration** | WhatsApp Cloud API (`WHATSAPP_*`) | — | ✅ (needs live credentials) |
+| **Email Integration** | SMTP (Outlook) via `Channels` | — | ✅ (needs app password) |
+| **Telegram Integration** | Bot API + webhook | — | ✅ (needs token + setWebhook) |
 
 ## 7. Payments & Billing
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
 | **Payment CRUD** | List, filter payments | Payments table | ✅ |
-| **M-Pesa STK Push** | Initiate + callback handler | Initiate payment button | ✅ |
+| **M-Pesa STK Push** | Initiate + callback (idempotent) | Initiate payment button | ✅ |
 | **Payment Status** | pending, completed, failed, cancelled | Status badges | ✅ |
-| **Subscription Invoicing** | `billing_invoices` table, `generate_invoice_for_subscription()` | — | ⚠️ (backend done, no frontend) |
-| **Recurring Invoice Generation** | `BillingService::generate_recurring_invoices()` (cron) | — | ✅ (backend only) |
-| **Failed Payment Retry** | Exponential backoff: 1h, 4h, 12h, 24h, 48h | — | ✅ (backend only) |
+| **Subscription Invoicing** | `billing_invoices` + `generate_invoice_for_subscription()` | Billing page (subscription, invoices, pay) | ✅ |
+| **Recurring Invoice Generation** | `BillingService::generate_recurring_invoices()` (cron) | — | ✅ |
+| **Invoice Tax (TRA VAT)** | `tax_rate_percent`, `tax_amount_tsh`, `tax_inclusive` on invoices | VAT column + Net/VAT/Total breakdown | ✅ |
+| **TRA e-Invoice Submission** | `TraService` submits invoices to TRA API | Tax & TRA settings | ✅ (best-effort, needs TRA spec) |
+| **Invoice PDF** | `GET /billing/invoices/{id}/pdf` | "PDF" button on billing page | ✅ |
+| **Receipt/Invoice UI** | — | Printable navy/gold document (receipt + invoice) | ✅ |
+| **Failed Payment Retry** | Exponential backoff | — | ✅ (backend only) |
 | **Dunning Notices** | SMS + email reminders for overdue invoices | — | ✅ (backend only) |
-| **Grace Period / Suspension** | Auto-suspend orgs after 7 days overdue | — | ✅ (backend only) |
-| **Prorated Plan Changes** | `change_plan_with_proration()` with credit calculation | — | ✅ (backend only) |
-| **Invoice PDF Generation** | — | — | ❌ |
 | **Stripe Integration** | — | — | ❌ |
-| **Payment Gateway Agnostic** | — | — | ❌ |
 
 ## 8. Platform (SaaS) Management
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Platform Summary** | `GET /platform/summary` — MRR, customers, etc. | Platform overview dashboard | ✅ |
-| **Customer Listing** | `GET /platform/customers` with org stats | Accounts table with sorting | ✅ |
-| **Customer Detail** | `GET /platform/customers/{id}` | — | ⚠️ (backend done, no frontend) |
-| **Approve/Reject Org** | `POST /customers/{id}/approve`, `/reject` | Approve/Reject buttons | ✅ |
-| **Suspend Org** | `POST /customers/{id}/suspend` | Suspend action | ✅ |
-| **Create Organization** | `POST /platform/organizations` with admin + plan | 3-step wizard modal | ✅ |
-| **Service Plan CRUD** | `POST/GET/PUT/DELETE /platform/plans` | Packages page with modals | ✅ |
-| **Platform User Management** | CRUD `/platform/users` — cross-org | Users page with create/edit/delete | ✅ |
-| **Subscription Management** | `PUT /customers/{id}/subscription` | — | ⚠️ (backend done, no frontend) |
-| **Invoice Management** | Create + mark-paid for invoices | — | ⚠️ (backend done, no frontend) |
-| **Organization Impersonation** | `POST /orgs/{id}/impersonate` — short-lived JWT | "Login as org" button | ✅ |
-| **Usage Metrics API** | `GET /orgs/{id}/usage`, `/usage/limits`, `/usage/track` | — | ⚠️ (backend done, no frontend) |
-| **Plan Limits Enforcement** | `PlanLimits` in `usage.rs` | — | ⚠️ (backend done, no enforcement calls) |
+| **Platform Summary** | `GET /platform/summary` | Platform overview dashboard | ✅ |
+| **Customer Listing** | `GET /platform/customers` (internal org hidden) | Accounts table | ✅ |
+| **Customer Detail** | `GET /platform/customers/{id}` | Account profile page | ✅ |
+| **Approve/Reject/Suspend Org** | Endpoints | Approve/Reject/Suspend actions | ✅ |
+| **Create Organization** | `POST /platform/organizations` with admin + plan | New-organization modal | ✅ |
+| **Service Plan CRUD** | `/platform/plans` | Packages page | ✅ |
+| **Platform User Management** | `/platform/users` | Users page | ✅ |
+| **Organization Impersonation** | Short-lived JWT | "Login as org" button | ✅ |
+| **Usage Metrics API** | `GET /orgs/{id}/usage` | Usage & Limits page | ✅ |
+| **Plan Limits Enforcement** | `PlanLimits` in `usage.rs` | — | ⚠️ (no enforcement calls) |
 
 ## 9. Webhooks
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Endpoint CRUD** | `POST/GET/PUT/DELETE /platform/webhooks` | Webhooks page with event selectors | ✅ |
-| **Delivery Queue** | `webhook_deliveries` table with retry logic | — | ✅ (backend only) |
-| **HMAC Signatures** | `X-RoyalEntry-Signature` header verification | — | ✅ (backend only) |
-| **Event Types** | 35+ types (event.*, guest.*, payment.*, etc.) | Event selector UI | ✅ |
-| **Test Delivery** | `POST /webhooks/{id}/test` — sends sample event | Test button in UI | ✅ |
-| **Retry Policy** | Exponential backoff: 1m, 5m, 15m, 1h, 6h (max 5) | — | ✅ (backend only) |
-| **Delivery Logs UI** | — | Delivery history viewer | ❌ |
+| **Endpoint CRUD** | `/platform/webhooks` | Webhooks page (Settings hub) | ✅ |
+| **Delivery Queue** | `webhook_deliveries` table with retry | — | ✅ (backend only) |
+| **HMAC Signatures** | `X-RoyalEntry-Signature` verification | — | ✅ |
+| **Test Delivery** | `POST /webhooks/{id}/test` | Test button | ✅ |
+| **Retry Policy** | Exponential backoff (max 5) | — | ✅ |
 
 ## 10. Email Template Engine
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Handlebars Rendering** | `TemplateService` with custom helpers | — | ✅ (backend only) |
-| **System Templates** | 6 seeded templates on startup | — | ✅ (backend only) |
-| **Template CRUD** | `POST/GET/PUT/DELETE /message-templates` (`templates/handlers.rs`) | Template editor UI (`pages/templates/index.tsx`) | ⚠️ (backend done, frontend basic) |
-| **Preview** | `POST /message-templates/{id}/preview` (`templates/handlers.rs`) | Preview in admin (`pages/templates/index.tsx`) | ⚠️ (backend done, frontend basic) |
-| **Merge Variables** | `{{user_name}}`, `{{event_title}}`, etc. | — | ✅ (backend only) |
+| **Handlebars Rendering** | `TemplateService` | Live preview | ✅ |
+| **System Templates** | 5 seeded: invitation, reminder, pledge reminder, payment, verification/OTP | Email Templates editor (Settings hub) | ✅ |
+| **Template CRUD** | `/platform/templates` (real DB CRUD) | Editor with variable insertion + preview | ✅ |
+| **Merge Variables** | `{{guest_name}}`, `{{event_title}}`, etc. | Variable chips | ✅ |
 
 ## 11. Email & Communication
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **SMTP Email** | Config in `.env` (`SMTP_HOST`, `SMTP_PORT`) | — | ✅ (backend configured, untested) |
+| **SMTP Email** | Outlook SMTP via `Channels` | — | ✅ (needs app password) |
+| **In-App Notifications** | `notifications` table + emitters (event, payment, invitation) | Bell + dropdown + live popup toasts | ✅ |
 | **SendGrid / Mailgun** | — | — | ❌ |
-| **In-App Notifications** | — | Bell icon with dropdown | ❌ |
 
 ## 12. API & Developer Features
 
@@ -157,95 +153,92 @@
 |---------|---------|----------|--------|
 | **Public REST API** | None (all routes need JWT) | — | ❌ |
 | **API Key Auth** | — | — | ❌ |
-| **Rate Limiting** | `governor` crate in dependencies | — | ❌ |
+| **Rate Limiting** | In-memory limiter (auth/OTP) | 429 handling | ✅ |
 | **OpenAPI / Swagger** | — | — | ❌ |
-| **Webhook Events for Integrations** | 35+ event types | Event selector UI | ✅ |
 
 ## 13. Security
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **JWT Authentication** | HS256, configurable expiry | Token refresh interceptor | ✅ |
-| **Password Hashing** | Argon2 (`argon2` crate) | — | ✅ |
-| **Role-Based Access** | Middleware guards per route group | Route guards, sidebar filtering | ✅ |
-| **CORS** | Permissive (development) | Vite proxy | ✅ |
+| **JWT Authentication** | HS256, 2h access + 30d refresh | Token refresh interceptor | ✅ |
+| **Password Hashing** | Argon2 | — | ✅ |
+| **Account Lockout** | 5 failed → 15-min lock | Error message | ✅ |
+| **Forced Password Change** | `must_change_password` | Change-password page + guard | ✅ |
+| **Rate Limiting** | Auth + OTP endpoints | 429 handling | ✅ |
+| **Secret Masking** | Write-only settings | Masked config forms | ✅ |
+| **CORS** | Env-driven allowlist | — | ✅ |
 | **SQL Injection Protection** | Parameterized queries via `sqlx` | — | ✅ |
-| **XSS Protection** | — | React handles by default | ✅ |
+| **XSS Protection** | — | React escapes by default | ✅ |
+| **M-Pesa Callback Idempotency** | Only completes non-completed payments | — | ✅ |
+| **Telegram Webhook Secret** | `X-Telegram-Bot-Api-Secret-Token` check | — | ✅ |
 | **Encryption at Rest** | — | — | ❌ |
 | **SSO / OIDC** | — | — | ❌ |
-| **SCIM Provisioning** | — | — | ❌ |
 
 ## 14. Multi-tenancy & Isolation
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **Tenant Scoping** | `organization_id` from JWT auto-applied | Route guards separate account vs platform | ✅ |
+| **Tenant Scoping** | `organization_id` from JWT auto-applied | Route guards | ✅ |
 | **Data Isolation** | All queries include `organization_id = $1` | API calls scoped per org | ✅ |
 | **Custom Domains** | — | — | ❌ |
 | **White-labeling** | — | — | ❌ |
-| **Feature Flags per Org** | — | — | ❌ |
 
-## 15. Cross-Platform Architecture (New)
+## 15. Cross-Platform & Offline
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
-| **File Upload & Storage** | `files/` module (`Storage` trait, `LocalStorage`, `S3Storage` company-agnostic) | — | ⚠️ (backend done, no frontend upload UI) |
-| **Card Template Design** | `cards/` module (`CardTemplate`, `CardPlaceholder`, renderer with `rusttype`) | `pages/cards/index.tsx` (basic) | ⚠️ (backend done, frontend basic) |
-| **QR Secure Token** | `qr/token.rs` (`VerifyPayload`, AES-GCM + Ed25519) | — | ⚠️ (encryption implemented) |
-| **QR Rendering** | `qr/render.rs` (`qrcode` crate, PNG output) | — | ⚠️ (backend done) |
-| **Message Templates** | `templates/` (`message_template.rs`, repository, handlers, routes, `0022` migration) | `pages/templates/index.tsx` (basic) | ⚠️ (backend done, frontend basic) |
-| **Unified Messaging Channels** | `channels/` (`MessageChannel` trait, SMS/WA/Email/Telegram, registry) | `pages/channels/index.tsx` (basic) | ⚠️ (backend done, frontend basic) |
-| **Broadcast Dispatcher** | `broadcast/dispatcher.rs` (full pipeline: token → QR → card → upload → message → send → DB updates) | — | ⚠️ (backend pipeline implemented) |
-| **Broadcast Worker** | `broadcast/worker.rs` (`tokio-cron-scheduler`) | — | ⚠️ (backend only) |
-| **Retry Scheduling** | `retry/scheduler.rs` (1m, 5m, 15m, 1h, 6h backoff, max 5) | — | ⚠️ (backend only) |
-| **Message Audit Logs** | `logs/` (`message_logs` table `0023`, repository, handlers, routes) | `pages/logs/index.tsx` (basic) | ⚠️ (backend done, frontend basic) |
-| **Public Verify Endpoint** | `GET /public/verify?t={token}` (`verify_token.rs`) | — | ⚠️ (placeholder handler) |
+| **Offline Mutation Queue** | — | `offline.ts` — queue + replay on reconnect | ✅ |
+| **Offline Read Cache** | — | `cache.ts` — GET cache + fallback | ✅ |
+| **Offline Scanning** | — | `scannerOffline.ts` — local guest cache + queued check-ins | ✅ |
+| **Tauri Compatibility** | — | localStorage works in Tauri; SQLite upgrade path documented | ✅ |
+| **Broadcast Dispatcher** | `broadcast/dispatcher.rs` pipeline | — | ⚠️ (backend pipeline) |
+| **Broadcast Worker** | `broadcast/worker.rs` (cron) | — | ⚠️ (backend only) |
+| **Retry Scheduling** | `retry/scheduler.rs` | — | ⚠️ (backend only) |
 
 ---
 
-## 16. Feature Summary by Status (Updated)
+## 16. Feature Summary by Status
 
 | Status | Count | Details |
 |--------|-------|---------|
-| ✅ **Fully Implemented** | **~65** | Core auth, RBAC, events, guests, scanner, michango, broadcast (basic), payments (M-Pesa), platform management (accounts, plans, users, webhooks), impersonation, usage metrics, file upload backend, card templates backend, QR generation, message templates backend, unified channels backend, retry scheduling, audit logs backend |
-| ⚠️ **Partially Implemented** | **~20** | QR secure token (encryption done, endpoint placeholder), card renderer (rusttype integrated, font path configurable), broadcast dispatcher (pipeline implemented, DB integration done), message templates (DB + handlers done, frontend basic), delivery logs (DB + handlers done, frontend basic), channels settings (backend done, frontend basic), file upload (backend done, no frontend UI), email delivery (SMTP configured, untested), SMS/WhatsApp (sandbox), subscription/invoice management (backend only), usage metrics (backend only), plan limits enforcement (no callers) |
-| ❌ **Not Implemented** | **~20** | Recurring events, waitlist, seating, badge printing, kiosk mode, invoice PDF, Stripe, SSO/SAML, custom domains, white-labeling, feature flags, API keys, OpenAPI, Docker, CI/CD, in-app notifications, SendGrid/Mailgun, delivery logs UI (advanced), template editor UI (advanced), broadcast form selectors (frontend), S3Storage SDK production, rusttype font file production path |
+| ✅ **Fully Implemented** | **~75** | Core auth + security (lockout, rate limit, forced password change, secret masking, 2h tokens), events (incl. account-admin activation), guests (incl. email verification, Telegram linking), scanner (incl. offline), michango, broadcast (selectors + unified channels), payments/billing (tax, TRA, invoice PDF, receipt/invoice UI), platform management, webhooks, email templates (5 system + CRUD), in-app notifications, offline sync (queue + read cache + offline scanning), settings hub (vertical tabs) |
+| ⚠️ **Partially Implemented** | **~8** | Broadcast dispatcher/worker (backend pipeline), retry scheduling (backend only), plan limits enforcement (no callers), live channel delivery (needs real credentials: Beem/WhatsApp/Telegram/SMTP app password), TRA e-invoice (best-effort, needs TRA spec) |
+| ❌ **Not Implemented** | **~12** | Recurring events, waitlist, seating, badge printing, kiosk mode, Stripe, SSO/SAML, custom domains, white-labeling, API keys, OpenAPI, SendGrid/Mailgun |
 
 ---
 
-## 17. Recent Updates (2026-09-20 — Post-Architecture Implementation)
+## 17. Recent Updates (2026-11-10)
 
-### Completed (New Modules)
-- ✅ `files/` — `Storage` trait (`LocalStorage`, `S3Storage` company-agnostic with `STORAGE_ENDPOINT_URL`), upload handler, routes, migration `0021`
-- ✅ `cards/` — `CardTemplate`/`CardPlaceholder` model, repository, renderer (`rusttype` text rendering, QR composite), handlers, routes
-- ✅ `qr/` — `token.rs` (`VerifyPayload` + AES-GCM + Ed25519), `render.rs` (`qrcode` PNG), endpoint `GET .../qr`
-- ✅ `templates/` — `message_template.rs`, repository, handlers (`list`, `create`, `preview`), routes, migration `0022`
-- ✅ `channels/` — `MessageChannel` trait, SMS/WA/Email/Telegram implementations, registry (`get_channel`), routes
-- ✅ `broadcast/` — `dispatcher.rs` (full pipeline: token → QR → card → upload → message → send → DB updates), `worker.rs` (`tokio-cron-scheduler`)
-- ✅ `retry/` — `scheduler.rs` (exponential backoff: 1m, 5m, 15m, 1h, 6h, max 5)
-- ✅ `logs/` — `message_logs` table (`0023`), repository, handlers (`list_message_logs`, `list_broadcast_deliveries`), routes
-- ✅ `public/verify` — `GET /public/verify?t={token}` endpoint (`verify_token.rs`)
+### Card design & events
+- ✅ Card Studio: square QR (corner handles), movable/resizable **guest name** box, shared SaaS templates, renderer stamps guest name.
+- ✅ Account Admin activates events to live from the dashboard (full event list).
+- ✅ Event summary subquery fixed; generate-links 415 fixed (optional body + `{}`).
 
-### Completed (Environment & Config)
-- ✅ `.env.example` updated (`STORAGE_BUCKET`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, `STORAGE_ENDPOINT_URL`, `QR_ENCRYPTION_KEY`, `QR_SIGNING_KEY`, `TELEGRAM_BOT_TOKEN`, `ENABLE_LIVE_TESTS`)
-- ✅ Storage made company-agnostic (Contabo, OVH, Namecheap, AWS, Wasabi, DO Spaces, MinIO all supported via `STORAGE_ENDPOINT_URL`)
+### Messaging & templates
+- ✅ Unified `Channels` (Beem SMS, SMTP/Resend email, Telegram, WhatsApp Cloud) wired into `MessagingService`.
+- ✅ 5 system email templates seeded (invitation, reminder, pledge reminder, payment, verification/OTP); `/platform/templates` CRUD implemented (was stub).
+- ✅ OTP email at scan time; guest email verification; Telegram webhook + chat_id linking.
+- ✅ Broadcast form: message-template + card-template selectors.
 
-### Completed (Frontend — Existing Theme: Navy/Gold)
-- ✅ `pages/templates/index.tsx` — Message Templates (create form with Handlebars editor, preview modal, list table)
-- ✅ `pages/logs/index.tsx` — Delivery Logs (status badges, retry counts, channel filter)
-- ✅ `pages/channels/index.tsx` — Channel Settings (per-channel test buttons, provider labels, status badges)
-- ✅ `pages/cards/index.tsx` — Card Template Editor (placeholder fields, published badge, basic form)
+### Billing & tax
+- ✅ Invoice tax (VAT rate, tax-inclusive) + TRA e-invoice service; invoice PDF; printable receipt/invoice UI.
 
-### Completed (Documentation)
-- ✅ `FEATURE_STATUS.md` — Updated with new modules, cross-platform architecture section, updated counts
-- ✅ `TODO_LIST.md` — Full dependency graph, 4-phase implementation order, current status cross-reference
+### Settings & UI
+- ✅ Settings hub with **vertical tabs** (Tax & TRA, Global Variables, Card Templates, Email Templates, Roles & Permissions, Webhooks, Audit, WhatsApp/SMS/Telegram Config, AI).
+- ✅ Reports page redesigned (full values, breakdown, export cards); StatCard truncation fixed.
+
+### Security
+- ✅ Rate limiting (auth/OTP), account lockout, forced password change, 2h tokens, secret masking (write-only), M-Pesa idempotency, DB-backed `/health`, Telegram webhook secret.
+
+### Offline
+- ✅ Offline mutation queue + GET read cache + offline scanner (local guest cache, queued check-ins, auto-sync).
 
 ---
 
 ## 18. Next Immediate Actions (Priority)
 
-1. **Broadcast Form Selectors** (`events/[id].tsx`) — Add card template dropdown, message template dropdown, schedule picker (`datetime-local`), channel multi-select (`sms`, `whatsapp`, `email`, `telegram`) to existing Broadcast form
-2. **S3Storage SDK** — Replace placeholder with `aws-sdk-s3` or `reqwest` S3 signatures
-3. **Rusttype Font Path** — Verify `CARD_FONT_PATH` env loads production font file
-4. **Message Template DB Verification** — Confirm `message_templates` table exists and handlers return correct data
-5. **Broadcast Form Validation** — Wire `card_templates` query (`published=true`, `org_id=...`) into broadcast handler (`broadcast/handlers.rs`)
+1. **Live channel credentials** — set Beem/WhatsApp/Telegram/SMTP app password in the backend `.env` to enable real delivery.
+2. **TRA e-invoice payload** — align `TraService` body with TRA's current e-invoice API spec.
+3. **S3Storage SDK** — replace the placeholder with real S3 signatures for production file storage.
+4. **Broadcast dispatcher wiring** — connect the scheduled/queued broadcast worker to the unified `Channels`.
+5. **Plan limits enforcement** — call `PlanLimits` from event/guest/broadcast creation.

@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: config.clone(),
         db: db.clone(),
         channels: royalentry_cloud::services::Channels::from_env(),
+        rate_limiter: royalentry_cloud::middleware::RateLimiter::new(60, 60),
     });
 
     tracing::info!(
@@ -146,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: config.clone(),
         db,
         channels: royalentry_cloud::services::Channels::from_env(),
+        rate_limiter: royalentry_cloud::middleware::RateLimiter::new(60, 60),
     });
 
     // CORS: restrict to the origins listed in CORS_ALLOWED_ORIGINS

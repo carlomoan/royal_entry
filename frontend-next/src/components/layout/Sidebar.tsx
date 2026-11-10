@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import {
   LayoutDashboard, CalendarDays, CreditCard, BarChart3, ScrollText,
-  Settings, Building2, Package, Users, Webhook, Palette, SlidersHorizontal,
-  ChevronLeft, ChevronRight, LogOut, Crown, ShieldCheck, UserCircle,
-  ScanLine, Sparkles, MessageCircle, MessageSquare, Send, Gauge, FileText, QrCode, // ✅ Added QrCode
+  Settings, Building2, Package, Users, Palette, MessageSquare,
+  ChevronLeft, ChevronRight, LogOut, Crown, UserCircle,
+  ScanLine, Sparkles, Gauge, QrCode, FileText,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isPlatformAdmin, roleLabel, can } from "@/lib/roles";
@@ -38,18 +38,8 @@ const PLATFORM_NAV: NavSection[] = [
   {
     title: "Settings",
     items: [
-      { href: "/platform/settings", icon: Settings, label: "System Settings" },
-      { href: "/platform/global-variables", icon: SlidersHorizontal, label: "Global Variables" },
-      { href: "/platform/card-templates", icon: Palette, label: "Card Templates" },
+      { href: "/platform/settings", icon: Settings, label: "Settings" },
       { href: "/cards", icon: Sparkles, label: "Visual Card Studio" },
-      { href: "/platform/templates", icon: FileText, label: "Email Templates" },
-      { href: "/platform/rbac", icon: ShieldCheck, label: "Roles & Permissions" },
-      { href: "/platform/webhooks", icon: Webhook, label: "Webhooks" },
-      { href: "/platform/audit", icon: ScrollText, label: "Audit Log" },
-      { href: "/platform/settings/ai", icon: Sparkles, label: "AI Integration" },
-      { href: "/platform/settings/whatsapp", icon: MessageCircle, label: "WhatsApp Config" },
-      { href: "/platform/settings/sms", icon: MessageSquare, label: "SMS Config" },
-      { href: "/platform/settings/telegram", icon: Send, label: "Telegram Config" },
     ],
   },
   {

@@ -6,9 +6,11 @@
 use std::sync::Arc;
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Extension, Json,
 };
 use chrono::{DateTime, Utc};
+use printpdf::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::Row;
@@ -43,6 +45,9 @@ pub struct MyInvoice {
     pub invoice_number: String,
     pub plan_name: Option<String>,
     pub amount_tsh: i64,
+    pub tax_rate_percent: Option<f64>,
+    pub tax_amount_tsh: i64,
+    pub tax_inclusive: bool,
     pub status: String,
     pub issued_at: DateTime<Utc>,
     pub due_at: Option<DateTime<Utc>>,
@@ -91,7 +96,8 @@ pub async fn list_my_invoices(
 
     let invoices = sqlx::query_as::<_, MyInvoice>(
         r#"
-        SELECT bi.id, bi.invoice_number, sp.name AS plan_name, bi.amount_tsh, bi.status,
+        SELECT bi.id, bi.invoice_number, sp.name AS plan_name, bi.amount_tsh,
+               bi.tax_rate_percent, bi.tax_amount_tsh, bi.tax_inclusive, bi.status,
                bi.issued_at, bi.due_at, bi.paid_at, bi.notes
         FROM billing_invoices bi
         LEFT JOIN service_plans sp ON sp.id = bi.plan_id
@@ -244,4 +250,99 @@ pub async fn get_my_usage(
             "users":  row.try_get::<i64, _>("users_used").unwrap_or(0),
         }
     })))
+}
+
+/// GET /api/v1/billing/invoices/{id}/pdf — downloadable invoice PDF.
+pub async fn download_invoice_pdf(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(invoice_id): Path<Uuid>,
+) -> AppResult<(StatusCode, [(String, String); 2], Vec<u8>)> {
+    let org_id = claims_org_id(&claims)?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT bi.invoice_number, bi.amount_tsh, bi.tax_amount_tsh, bi.tax_rate_percent,
+               bi.tax_inclusive, bi.status, bi.issued_at, bi.due_at,
+               sp.name AS plan_name, o.display_name AS org_name
+        FROM billing_invoices bi
+        LEFT JOIN service_plans sp ON sp.id = bi.plan_id
+        LEFT JOIN organizations o ON o.id = bi.organization_id
+        WHERE bi.id = $1 AND bi.organization_id = $2
+        "#,
+    )
+    .bind(invoice_id)
+    .bind(org_id)
+    .fetch_optional(&*state.db.pool())
+    .await?
+    .ok_or(AppError::NotFound("Invoice not found".to_string()))?;
+
+    let invoice_number: String = row.try_get("invoice_number")?;
+    let amount_tsh: i64 = row.try_get("amount_tsh")?;
+    let tax_amount_tsh: i64 = row.try_get::<Option<i64>, _>("tax_amount_tsh").ok().flatten().unwrap_or(0);
+    let tax_rate: f64 = row.try_get::<Option<f64>, _>("tax_rate_percent").ok().flatten().unwrap_or(0.0);
+    let status: String = row.try_get("status")?;
+    let issued_at: DateTime<Utc> = row.try_get("issued_at")?;
+    let due_at: Option<DateTime<Utc>> = row.try_get("due_at").ok();
+    let plan_name: Option<String> = row.try_get("plan_name").ok();
+    let org_name: Option<String> = row.try_get("org_name").ok();
+
+    let (doc, page1, layer1) = PdfDocument::new(
+        &format!("Invoice {}", invoice_number),
+        Mm(210.0),
+        Mm(297.0),
+        "Layer 1",
+    );
+    let font = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| AppError::GenericError(format!("PDF font error: {e}")))?;
+    let font_bold = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| AppError::GenericError(format!("PDF font error: {e}")))?;
+    let layer = doc.get_page(page1).get_layer(layer1);
+
+    layer.use_text("RoyalEntry", 20.0, Mm(20.0), Mm(270.0), &font_bold);
+    layer.use_text("INVOICE", 16.0, Mm(20.0), Mm(255.0), &font_bold);
+    layer.use_text(&format!("Invoice #: {}", invoice_number), 11.0, Mm(20.0), Mm(245.0), &font);
+    layer.use_text(&format!("Issued: {}", issued_at.format("%Y-%m-%d")), 11.0, Mm(20.0), Mm(238.0), &font);
+    if let Some(due) = due_at {
+        layer.use_text(&format!("Due: {}", due.format("%Y-%m-%d")), 11.0, Mm(20.0), Mm(231.0), &font);
+    }
+    layer.use_text(&format!("Status: {}", status), 11.0, Mm(20.0), Mm(224.0), &font);
+    layer.use_text(
+        &format!("Billed to: {}", org_name.unwrap_or_else(|| "Account".to_string())),
+        11.0,
+        Mm(20.0),
+        Mm(217.0),
+        &font,
+    );
+
+    layer.use_text(
+        &format!("{} subscription", plan_name.unwrap_or_else(|| "Subscription".to_string())),
+        11.0,
+        Mm(20.0),
+        Mm(200.0),
+        &font,
+    );
+    layer.use_text(&format!("Net amount: TZS {}", amount_tsh - tax_amount_tsh), 11.0, Mm(20.0), Mm(190.0), &font);
+    layer.use_text(&format!("VAT ({}%): TZS {}", tax_rate, tax_amount_tsh), 11.0, Mm(20.0), Mm(183.0), &font);
+    layer.use_text(&format!("Total due: TZS {}", amount_tsh), 14.0, Mm(20.0), Mm(173.0), &font_bold);
+    layer.use_text("Thank you for choosing RoyalEntry", 10.0, Mm(20.0), Mm(30.0), &font);
+
+    let mut bytes = Vec::new();
+    {
+        let mut writer = std::io::BufWriter::new(&mut bytes);
+        doc.save(&mut writer)
+            .map_err(|e| AppError::GenericError(format!("PDF save error: {e}")))?;
+    }
+
+    let filename = format!("invoice-{}.pdf", invoice_number);
+    let headers = [
+        ("Content-Type".to_string(), "application/pdf".to_string()),
+        (
+            "Content-Disposition".to_string(),
+            format!(r#"attachment; filename="{}""#, filename),
+        ),
+    ];
+    Ok((StatusCode::OK, headers, bytes))
 }

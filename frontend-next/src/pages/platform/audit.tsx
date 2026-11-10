@@ -1,1 +1,1 @@
-export { default } from "../audit";
+export { default } from "@/components/settings/sections/AuditSection";

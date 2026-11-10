@@ -17,6 +17,11 @@
 
 use crate::error::{AppError, AppResult};
 use base64::Engine as _;
+use lettre::{
+    message::{header::ContentType, Mailbox, Message},
+    transport::smtp::authentication::Credentials,
+    AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -208,6 +213,78 @@ impl ResendEmail {
     }
 }
 
+// ── SMTP email (e.g. Yahoo) ──────────────────────────────────────────────────
+#[derive(Debug, Clone)]
+pub struct SmtpEmail {
+    host: String,
+    port: u16,
+    user: String,
+    pass: String,
+    from: String,
+    from_name: String,
+}
+
+impl SmtpEmail {
+    fn from_env() -> Option<Self> {
+        let host = std::env::var("SMTP_HOST").ok()?;
+        if host.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            host,
+            port: std::env::var("SMTP_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(587),
+            user: std::env::var("SMTP_USER").unwrap_or_default(),
+            pass: std::env::var("SMTP_PASSWORD")
+                .or_else(|_| std::env::var("SMTP_PASS"))
+                .unwrap_or_default(),
+            from: std::env::var("EMAIL_FROM")
+                .or_else(|_| std::env::var("SMTP_FROM"))
+                .or_else(|_| std::env::var("SMTP_FROM_ADDRESS"))
+                .unwrap_or_else(|_| "agbbelly89@outlook.com".to_string()),
+            from_name: std::env::var("SMTP_FROM_NAME")
+                .unwrap_or_else(|_| "RoyalEntry".to_string()),
+        })
+    }
+
+    async fn send(&self, to: &str, subject: &str, html: &str) -> AppResult<ProviderReceipt> {
+        let from_display = format!("{} <{}>", self.from_name, self.from);
+        let from: Mailbox = from_display
+            .parse()
+            .map_err(|e| AppError::EmailError(format!("Invalid sender address: {e}")))?;
+        let to: Mailbox = to
+            .parse()
+            .map_err(|e| AppError::EmailError(format!("Invalid recipient address: {e}")))?;
+
+        let email = Message::builder()
+            .from(from)
+            .to(to)
+            .subject(subject)
+            .header(ContentType::TEXT_HTML)
+            .body(html.to_string())
+            .map_err(|e| AppError::EmailError(e.to_string()))?;
+
+        let credentials = Credentials::new(self.user.clone(), self.pass.clone());
+        let transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.host)
+            .map_err(|e| AppError::EmailError(format!("Failed to create SMTP transport: {e}")))?
+            .port(self.port)
+            .credentials(credentials)
+            .build();
+
+        transport
+            .send(email)
+            .await
+            .map_err(|e| AppError::EmailError(format!("SMTP delivery failed: {e}")))?;
+
+        Ok(ProviderReceipt::ok(
+            "smtp",
+            Some(format!("smtp_{}", uuid::Uuid::new_v4())),
+        ))
+    }
+}
+
 // ── Telegram bot ─────────────────────────────────────────────────────────────
 #[derive(Debug, Clone)]
 pub struct TelegramBot {
@@ -378,6 +455,7 @@ impl WhatsAppCloud {
 #[derive(Debug, Clone)]
 pub struct Channels {
     pub sms: Option<BeemSms>,
+    pub email_smtp: Option<SmtpEmail>,
     pub email: Option<ResendEmail>,
     pub telegram: Option<TelegramBot>,
     pub whatsapp: Option<WhatsAppCloud>,
@@ -390,6 +468,7 @@ impl Channels {
         let client = Client::new();
         Self {
             sms: BeemSms::from_env(&client),
+            email_smtp: SmtpEmail::from_env(),
             email: ResendEmail::from_env(&client),
             telegram: TelegramBot::from_env(&client),
             whatsapp: WhatsAppCloud::from_env(&client),
@@ -402,7 +481,7 @@ impl Channels {
         if self.sms.is_some() {
             names.push("sms");
         }
-        if self.email.is_some() {
+        if self.email_smtp.is_some() || self.email.is_some() {
             names.push("email");
         }
         if self.telegram.is_some() {
@@ -424,10 +503,14 @@ impl Channels {
     }
 
     pub async fn email(&self, to: &str, subject: &str, html: &str) -> AppResult<ProviderReceipt> {
+        // Prefer SMTP (e.g. Yahoo) when configured; fall back to Resend.
+        if let Some(smtp) = &self.email_smtp {
+            return smtp.send(to, subject, html).await;
+        }
         match &self.email {
             Some(provider) => provider.send(to, subject, html).await,
             None => Err(AppError::ChannelNotConfigured(
-                "Email (Resend) — set RESEND_API_KEY (and EMAIL_FROM)".to_string(),
+                "Email — set SMTP_HOST/SMTP_USER/SMTP_PASSWORD (or RESEND_API_KEY)".to_string(),
             )),
         }
     }

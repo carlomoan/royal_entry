@@ -36,8 +36,33 @@ pub async fn login(
             AppError::Unauthorized("Invalid username/email or password".to_string())
         })?;
 
+    // Brute-force lockout: after 5 failed attempts the account is locked 15 min.
+    if let Some(locked_until) = user.locked_until {
+        if locked_until > chrono::Utc::now() {
+            return Err(AppError::Unauthorized(
+                "Account is temporarily locked due to too many failed attempts. Try again later.".to_string(),
+            ));
+        }
+    }
+
     let password_valid = AuthService::verify_password(&payload.password, &user.password_hash)?;
     if !password_valid {
+        let attempts = user.failed_login_attempts + 1;
+        if attempts >= 5 {
+            sqlx::query(
+                "UPDATE users SET failed_login_attempts = 0, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $1",
+            )
+            .bind(user.id)
+            .execute(&*state.db.pool())
+            .await?;
+            tracing::warn!(user_id = %user.id, "Account locked after 5 failed login attempts");
+        } else {
+            sqlx::query("UPDATE users SET failed_login_attempts = $2 WHERE id = $1")
+                .bind(user.id)
+                .bind(attempts)
+                .execute(&*state.db.pool())
+                .await?;
+        }
         tracing::warn!(
             user_id = %user.id,
             login = %payload.login,
@@ -46,6 +71,11 @@ pub async fn login(
         return Err(AppError::Unauthorized("Invalid username/email or password".to_string()));
     }
 
+    // Successful login resets the lockout counters.
+    sqlx::query("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1")
+        .bind(user.id)
+        .execute(&*state.db.pool())
+        .await?;
     UserRepository::update_last_login(&state.db.pool(), user.id).await?;
 
     let (access_token, refresh_token) = AuthService::generate_tokens(
@@ -58,7 +88,7 @@ pub async fn login(
     let expiry_hours = std::env::var("JWT_EXPIRY_HOURS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(24);
+        .unwrap_or(2);
 
     tracing::info!(
         user_id = %user.id,
@@ -164,7 +194,7 @@ pub async fn register(
     let expiry_hours = std::env::var("JWT_EXPIRY_HOURS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(24);
+        .unwrap_or(2);
 
     tracing::info!(
         user_id = %user.id,
@@ -212,7 +242,7 @@ pub async fn refresh_token(
     let expiry_hours = std::env::var("JWT_EXPIRY_HOURS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(24);
+        .unwrap_or(2);
 
     tracing::debug!("Token refreshed for user: {}", claims.sub);
 
@@ -256,6 +286,7 @@ pub async fn get_current_user(
         is_active: user.is_active,
         organization_id: user.organization_id,
         organization_name: org_name,
+        must_change_password: user.must_change_password,
         created_at: user.created_at,
     }))
 }
@@ -295,6 +326,11 @@ pub async fn change_password(
 
     let new_password_hash = AuthService::hash_password(&payload.new_password)?;
     UserRepository::change_password(&state.db.pool(), user_id, &new_password_hash).await?;
+    // A successful password change clears the forced-change flag.
+    sqlx::query("UPDATE users SET must_change_password = FALSE WHERE id = $1")
+        .bind(user_id)
+        .execute(&*state.db.pool())
+        .await?;
 
     tracing::info!(user_id = %user_id, "Password changed successfully");
 

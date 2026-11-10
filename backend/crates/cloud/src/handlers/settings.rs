@@ -167,9 +167,37 @@ async fn fetch_team(
     Ok(users.into_iter().map(Into::into).collect())
 }
 
+/// Setting keys that hold secrets — never returned to the browser in full.
+const SECRET_KEYS: &[&str] = &[
+    "sms_api_key",
+    "whatsapp_access_token",
+    "tax_tra_api_key",
+    "tax_tra_secret_key",
+    "telegram_bot_token",
+];
+
+/// Sentinel returned instead of a stored secret value.
+const SECRET_MASK: &str = "********";
+
+fn is_secret_key(key: &str) -> bool {
+    SECRET_KEYS.contains(&key)
+}
+
+/// Mask a secret value in API responses (write-only secrets).
+fn mask_secret(key: &str, value: Value) -> Value {
+    if is_secret_key(key) {
+        if let Some(s) = value.as_str() {
+            if !s.is_empty() {
+                return json!(SECRET_MASK);
+            }
+        }
+    }
+    value
+}
+
 fn rows_to_map(rows: Vec<SettingRow>) -> serde_json::Map<String, Value> {
     rows.into_iter()
-        .map(|row| (row.setting_key, row.setting_value))
+        .map(|row| (row.setting_key.clone(), mask_secret(&row.setting_key, row.setting_value)))
         .collect()
 }
 
@@ -204,6 +232,11 @@ pub async fn update_system_settings(
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?;
     let mut tx = state.db.pool().begin().await?;
     for (setting_key, setting_value) in payload.settings {
+        // An unchanged secret comes back as the mask sentinel — skip it so the
+        // stored value is never overwritten with the placeholder.
+        if is_secret_key(&setting_key) && setting_value.as_str() == Some(SECRET_MASK) {
+            continue;
+        }
         sqlx::query(
             r#"
             INSERT INTO system_settings (setting_key, setting_value, updated_by_user_id, updated_at)

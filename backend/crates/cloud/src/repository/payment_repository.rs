@@ -65,6 +65,8 @@ impl PaymentRepository {
     ) -> AppResult<Payment> {
         let now = Utc::now();
 
+        // Idempotent: only complete a payment that isn't already completed, so a
+        // duplicate M-Pesa callback can't re-process or overwrite the amount.
         let payment = sqlx::query_as::<_, Payment>(
             r#"
             UPDATE payments
@@ -73,7 +75,7 @@ impl PaymentRepository {
                 amount_tsh           = $3,
                 completed_at         = $4,
                 updated_at           = $4
-            WHERE checkout_request_id = $1
+            WHERE checkout_request_id = $1 AND status <> 'completed'
             RETURNING *
             "#,
         )
@@ -81,8 +83,19 @@ impl PaymentRepository {
         .bind(mpesa_receipt)
         .bind(amount_confirmed)
         .bind(now)
-        .fetch_one(pool)
+        .fetch_optional(pool)
         .await?;
+
+        // Already completed — return the existing payment unchanged.
+        let payment = match payment {
+            Some(p) => p,
+            None => sqlx::query_as::<_, Payment>(
+                "SELECT * FROM payments WHERE checkout_request_id = $1",
+            )
+            .bind(checkout_request_id)
+            .fetch_one(pool)
+            .await?,
+        };
 
         tracing::info!(
             payment_id   = %payment.id,

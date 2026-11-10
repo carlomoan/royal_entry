@@ -19,6 +19,7 @@ pub mod rbac;
 pub mod reports;
 pub mod scanner;
 pub mod settings;
+pub mod telegram;
 pub mod templates;
 pub mod verify_token;
 pub mod webhooks;

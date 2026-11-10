@@ -92,6 +92,14 @@ WantedBy=multi-user.target
 
     # Optional: larger uploads for card designs
     LimitRequestBody 20971520
+
+    # Security headers
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # Content-Security-Policy (adjust as needed):
+    # Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
 </VirtualHost>
 ```
 
@@ -127,14 +135,22 @@ pg_dump -U postgres -d royalentry_db -Fc -f /root/royalentry-backups/royalentry_
 pg_restore -U postgres -d royalentry_db --clean --if-exists /root/royalentry-backups/royalentry_<file>.dump
 ```
 
-- Suggested cron (daily 03:00, keep 14 days):
+- Suggested cron (daily 03:00, keep 14 days, encrypted with a passphrase):
 
 ```cron
-0 3 * * * pg_dump -U postgres -d royalentry_db -Fc -f /root/royalentry-backups/royalentry_$(date +\%F_\%H\%M).dump && find /root/royalentry-backups -name '*.dump' -mtime +14 -delete
+0 3 * * * pg_dump -U postgres -d royalentry_db -Fc | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_PASS -out /root/royalentry-backups/royalentry_$(date +\%F_\%H\%M).dump.enc && find /root/royalentry-backups -name '*.dump.enc' -mtime +14 -delete
+```
+
+- Decrypt to restore:
+
+```bash
+BACKUP_PASS=... openssl enc -d -aes-256-cbc -pbkdf2 -in royalentry_<file>.dump.enc -out royalentry.dump
+pg_restore -U postgres -d royalentry_db --clean --if-exists royalentry.dump
 ```
 
 > Test a restore at least once. Backups contain personal data — keep the folder
-> readable only by root (`chmod 700 /root/royalentry-backups`).
+> readable only by root (`chmod 700 /root/royalentry-backups`) and store the
+> `BACKUP_PASS` passphrase somewhere safe (e.g. a password manager).
 
 ---
 
@@ -181,7 +197,33 @@ Logs: `logs/backend.log`, `logs/frontend.log` (or `journalctl -u royalentry-api`
 
 ---
 
-## 6. Security reminders
+## 6. Offline / Tauri sync
+
+The frontend is offline-first:
+
+- **Mutations made while offline** (check-ins, pledges, payments, etc.) are queued
+  in `localStorage` (`src/lib/offline.ts`) and **replayed automatically when the
+  connection returns** (`syncOfflineQueue` on the `online` event).
+- A banner (`OfflineBanner`) shows the offline state, the queued-change count,
+  and the number of cached items, with a **Sync now** button.
+- **Read cache** (`src/lib/cache.ts`): successful GET responses are cached in
+  localStorage (5-min TTL, bounded to 100 entries). When offline, GETs fall back
+  to the cache so pages still render. `useCachedQuery` (`src/lib/useCachedQuery.ts`)
+  returns the cached copy instantly then refreshes when reachable.
+- **Offline scanning** (`src/lib/scannerOffline.ts`): the scanner caches the
+  event's guests + invitations (24h). Offline, a QR scan resolves the guest from
+  the local list, records an offline arrival, and queues the check-in to sync
+  when online. OTP verification still requires a connection.
+- This works in the browser and the **Tauri desktop app** (localStorage is
+  available there).
+
+**SQLite upgrade path (Tauri):** swap the localStorage queue for the Tauri SQL
+plugin (`@tauri-apps/plugin-sql`) using the same `QueuedRequest` shape
+(`{ id, method, url, data, queuedAt }`), and keep the same flush logic — the rest
+of the app is unchanged. For heavier local caching, mirror the key read endpoints
+(events, guests, templates) into a local SQLite table and reconcile on sync.
+
+## 7. Security reminders
 
 - `git check-ignore -v backend/.env frontend-next/.env.local` should list both
   (they are ignored — never commit them).

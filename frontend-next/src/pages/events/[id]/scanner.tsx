@@ -9,6 +9,10 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
+import { isOnline } from "@/lib/offline";
+import {
+  saveEventData, findGuestByLink, getOfflineArrivals, markOfflineArrival, isAlreadyArrivedOffline,
+} from "@/lib/scannerOffline";
 import { Card, Button, Input, Badge } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import jsQR from "jsqr";
@@ -76,6 +80,26 @@ export default function ScannerPage() {
     refetchInterval: 10_000,
   });
 
+  // Cache the event's guests + invitations locally so scanning works offline.
+  const { data: guests = [] } = useQuery({
+    queryKey: ["guests", id],
+    queryFn: async () => (await api.get(`/events/${id}/guests?per_page=500`)).data.data ?? [],
+    enabled: !!id,
+  });
+  const { data: invitations = [] } = useQuery({
+    queryKey: ["invitations", id],
+    queryFn: async () => (await api.get(`/events/${id}/invitations?per_page=500`)).data.data ?? [],
+    enabled: !!id,
+  });
+  useEffect(() => {
+    if (id && guests.length > 0 && invitations.length > 0) {
+      saveEventData(id, guests, invitations);
+    }
+  }, [id, guests, invitations]);
+
+  const offlineArrivals = id ? getOfflineArrivals(id) : [];
+  const offline = !isOnline();
+
   /* ── QR check-in ─────────────────────────────────────────────────────── */
   const checkInMutation = useMutation({
     mutationFn: (payload: { short_link: string; scan_source: string }) =>
@@ -84,13 +108,18 @@ export default function ScannerPage() {
         scan_source: payload.scan_source,
       }),
     onSuccess: (r: any) => {
-      const guest = r.data.data?.guest_name ?? "guest";
+      // Offline queued check-in: resolve the guest name from the local cache.
+      const guest =
+        r.data?.queued_offline
+          ? (findGuestByLink(id, code)?.full_name ?? "guest")
+          : (r.data.data?.guest_name ?? "guest");
       const category = r.data.data?.guest_category;
       const table = r.data.data?.table_number;
       const seat = table ? ` · Table ${table}` : "";
       const cls = category ? ` · ${category}` : "";
-      setResult({ status: "ok", message: `Welcome, ${guest}! Checked in successfully.${cls}${seat}` });
-      toast.success(`Welcome, ${guest}!`);
+      const suffix = r.data?.queued_offline ? " (offline — will sync)" : "";
+      setResult({ status: "ok", message: `Welcome, ${guest}! Checked in successfully.${cls}${seat}${suffix}` });
+      toast.success(`Welcome, ${guest}!${suffix}`);
       setCode("");
 
       // ✅ Haptic feedback for mobile success
@@ -142,8 +171,30 @@ export default function ScannerPage() {
   const handleQrCheckIn = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setResult({ status: null, message: "" });
-    if (!code.trim()) { toast.error("Please scan or enter a QR code"); return; }
-    checkInMutation.mutate({ short_link: code.trim(), scan_source: "qr" });
+    const link = code.trim();
+    if (!link) { toast.error("Please scan or enter a QR code"); return; }
+
+    // Offline check-in: resolve from the local cache, record locally, and queue.
+    // The mutation's onSuccess shows the welcome + queues for sync.
+    if (offline) {
+      const guest = findGuestByLink(id, link);
+      if (!guest) {
+        setResult({ status: "fail", message: "Offline: guest not found in the cached list. Go online to scan new guests." });
+        toast.error("Guest not found in offline cache");
+        if (navigator.vibrate) navigator.vibrate(300);
+        return;
+      }
+      if (isAlreadyArrivedOffline(id, link)) {
+        setResult({ status: "fail", message: "Already checked in (offline)." });
+        toast.error("Already checked in");
+        return;
+      }
+      markOfflineArrival(id, link, guest.full_name);
+      checkInMutation.mutate({ short_link: link, scan_source: "qr" });
+      return;
+    }
+
+    checkInMutation.mutate({ short_link: link, scan_source: "qr" });
   };
 
   /* ── SMS link OTP flow ───────────────────────────────────────────────── */
@@ -197,12 +248,22 @@ export default function ScannerPage() {
   const handleSendOtp = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSmsResult({ status: null, message: "" });
+    if (offline) {
+      setSmsResult({ status: "fail", message: "OTP verification requires an internet connection." });
+      toast.error("OTP requires online");
+      return;
+    }
     if (!link.trim()) { toast.error("Please enter the invitation link"); return; }
     sendOtpMutation.mutate({ short_link: link.trim() });
   };
 
   const handleVerifyOtp = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (offline) {
+      setSmsResult({ status: "fail", message: "OTP verification requires an internet connection." });
+      toast.error("OTP requires online");
+      return;
+    }
     if (!otp.trim()) { toast.error("Please enter the OTP"); return; }
     verifyOtpMutation.mutate({ short_link: otpSent!, code: otp.trim() });
   };
@@ -228,6 +289,27 @@ export default function ScannerPage() {
       </div>
 
       <div className="space-y-4 p-4 md:p-6">
+        {/* Offline indicator */}
+        {offline && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <div className="flex items-center gap-2">
+              <Zap className="h-4 w-4" />
+              <span>
+                Offline mode — scanning from the cached guest list.
+                {offlineArrivals.length > 0 && ` ${offlineArrivals.length} offline check-in(s) will sync when back online.`}
+              </span>
+            </div>
+            {offlineArrivals.length > 0 && (
+              <button
+                onClick={() => toast(`Offline check-ins:\n${offlineArrivals.map((a) => a.guest_name).join("\n")}`)}
+                className="rounded-md bg-white/70 px-2 py-1 text-xs font-semibold hover:bg-white"
+              >
+                View ({offlineArrivals.length})
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Stats - Compact for mobile, easy to read at a glance */}
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-lg bg-white p-3 text-center shadow-sm">

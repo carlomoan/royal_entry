@@ -3,12 +3,13 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CreditCard, Receipt, CalendarDays, TrendingUp, AlertTriangle,
-  Smartphone, Loader2, Inbox, Infinity as InfinityIcon, Clock,
+  Smartphone, Loader2, Inbox, Infinity as InfinityIcon, Clock, Eye, Printer, FileDown,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Card, Badge, Button, StatCard, Modal, Input } from "@/components/ui";
-import { formatTZS, formatDate, cn } from "@/lib/utils";
+import { formatTZS, formatDate } from "@/lib/utils";
+import ReceiptDocument from "@/components/billing/ReceiptDocument";
 
 /* Local datetime formatter (DB timestamps are ISO strings) */
 const fmtDateTime = (v?: string | null) =>
@@ -28,6 +29,7 @@ const INVOICE_BADGE: Record<string, "green" | "blue" | "rose" | "slate"> = {
 export default function BillingPage() {
   const qc = useQueryClient();
   const [payInvoice, setPayInvoice] = useState<any | null>(null);
+  const [viewInvoice, setViewInvoice] = useState<any | null>(null);
   const [phone, setPhone] = useState("");
 
   /* ── Exact DB data ─────────────────────────────────────────────────────── */
@@ -58,6 +60,20 @@ export default function BillingPage() {
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Payment initiation failed"),
   });
+
+  const downloadInvoicePdf = (id: string) => {
+    api.get(`/billing/invoices/${id}/pdf`, { responseType: "blob" }).then((r: any) => {
+      const url = window.URL.createObjectURL(r.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success("Invoice PDF downloaded");
+    }).catch(() => toast.error("Failed to download invoice"));
+  };
 
   const handlePay = () => {
     if (!payInvoice) return;
@@ -170,7 +186,7 @@ export default function BillingPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Invoice #", "Plan", "Amount", "Status", "Issued", "Due", "Paid", ""].map((h) => (
+                  {["Invoice #", "Plan", "Amount", "VAT", "Status", "Issued", "Due", "Paid", ""].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{h}</th>
                   ))}
                 </tr>
@@ -182,20 +198,46 @@ export default function BillingPage() {
                     <td className="px-4 py-3 text-slate-600">{inv.plan_name ?? "—"}</td>
                     <td className="px-4 py-3 font-semibold text-slate-900">{formatTZS(inv.amount_tsh)}</td>
                     <td className="px-4 py-3">
+                      {inv.tax_amount_tsh > 0 ? (
+                        <span className="text-xs text-slate-600">
+                          {formatTZS(inv.tax_amount_tsh)}
+                          <span className="ml-1 text-[10px] text-slate-400">
+                            {inv.tax_inclusive ? "incl." : "+"} {inv.tax_rate_percent ?? 0}%
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
                       <Badge label={inv.status} variant={INVOICE_BADGE[inv.status] ?? "slate"} />
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">{fmtDateTime(inv.issued_at)}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{inv.due_at ? formatDate(inv.due_at) : "—"}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{inv.paid_at ? fmtDateTime(inv.paid_at) : "—"}</td>
                     <td className="px-4 py-3 text-right">
-                      {(inv.status === "open" || inv.status === "overdue") && (
+                      <div className="flex items-center justify-end gap-2">
                         <button
-                          onClick={() => setPayInvoice(inv)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                          onClick={() => setViewInvoice(inv)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700"
                         >
-                          <Smartphone className="h-3.5 w-3.5" /> Pay with M-Pesa
+                          <Eye className="h-3.5 w-3.5" /> View
                         </button>
-                      )}
+                        <button
+                          onClick={() => downloadInvoicePdf(inv.id)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-gold-300 hover:text-gold-700"
+                        >
+                          <FileDown className="h-3.5 w-3.5" /> PDF
+                        </button>
+                        {(inv.status === "open" || inv.status === "overdue") && (
+                          <button
+                            onClick={() => setPayInvoice(inv)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                          >
+                            <Smartphone className="h-3.5 w-3.5" /> Pay with M-Pesa
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -212,6 +254,22 @@ export default function BillingPage() {
             <div className="rounded-lg bg-slate-50 p-3 text-sm">
               <p className="text-xs text-slate-400">Amount due</p>
               <p className="font-semibold text-slate-900">{formatTZS(payInvoice.amount_tsh)}</p>
+              {payInvoice.tax_amount_tsh > 0 && (
+                <div className="mt-2 space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-500">
+                  <div className="flex justify-between">
+                    <span>Net amount</span>
+                    <span>{formatTZS(payInvoice.amount_tsh - payInvoice.tax_amount_tsh)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>VAT ({payInvoice.tax_rate_percent ?? 0}%){payInvoice.tax_inclusive ? " · included" : ""}</span>
+                    <span>{formatTZS(payInvoice.tax_amount_tsh)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-slate-800">
+                    <span>Total</span>
+                    <span>{formatTZS(payInvoice.amount_tsh)}</span>
+                  </div>
+                </div>
+              )}
               <p className="mt-1 text-xs text-slate-500">
                 {payInvoice.plan_name ?? "Subscription"} · due {payInvoice.due_at ? formatDate(payInvoice.due_at) : "—"}
               </p>
@@ -221,6 +279,37 @@ export default function BillingPage() {
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => { setPayInvoice(null); setPhone(""); }}>Cancel</Button>
               <Button onClick={handlePay} isLoading={payMutation.isPending}>Send payment request</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Invoice document modal */}
+      <Modal isOpen={!!viewInvoice} onClose={() => setViewInvoice(null)} title={`Invoice ${viewInvoice?.invoice_number ?? ""}`} size="lg">
+        {viewInvoice && (
+          <div className="space-y-4">
+            <ReceiptDocument
+              variant="invoice"
+              number={viewInvoice.invoice_number}
+              issuedAt={viewInvoice.issued_at}
+              dueAt={viewInvoice.due_at}
+              status={viewInvoice.status}
+              billTo={{ name: sub?.plan_name ?? "Account", detail: "Subscription" }}
+              items={[{
+                description: `${viewInvoice.plan_name ?? "Subscription"} subscription`,
+                amount: (viewInvoice.amount_tsh ?? 0) - (viewInvoice.tax_amount_tsh ?? 0),
+              }]}
+              subtotal={(viewInvoice.amount_tsh ?? 0) - (viewInvoice.tax_amount_tsh ?? 0)}
+              taxAmount={viewInvoice.tax_amount_tsh ?? 0}
+              taxRate={viewInvoice.tax_rate_percent ?? undefined}
+              taxInclusive={viewInvoice.tax_inclusive}
+              total={viewInvoice.amount_tsh ?? 0}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => window.print()}>
+                <Printer className="h-3.5 w-3.5" /> Print
+              </Button>
+              <Button size="sm" onClick={() => setViewInvoice(null)}>Close</Button>
             </div>
           </div>
         )}

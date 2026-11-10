@@ -22,6 +22,7 @@ pub use error::{AppError, AppResult};
 
 use config::Config;
 use db::Database;
+use middleware::rate_limit::RateLimiter;
 use services::channels::Channels;
 
 #[derive(Clone)]
@@ -29,4 +30,5 @@ pub struct AppState {
     pub config: Config,
     pub db: Database,
     pub channels: Channels,
+    pub rate_limiter: RateLimiter,
 }

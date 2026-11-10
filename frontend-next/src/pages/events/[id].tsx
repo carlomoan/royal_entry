@@ -58,7 +58,8 @@ export default function EventDetailPage() {
   });
 
   const genMutation = useMutation({
-    mutationFn: () => api.post(`/events/${id}/invitations/generate`),
+    // Empty object body so axios sends Content-Type: application/json.
+    mutationFn: () => api.post(`/events/${id}/invitations/generate`, {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["event-summary", id] }); toast.success("Invitation links generated"); },
     onError: (e: any) => toast.error(e?.message ?? "Failed"),
   });
@@ -311,7 +312,18 @@ function BroadcastTab({ eventId }: { eventId: string }) {
   const [recipientType, setRecipientType] = useState("all");
   const [channels, setChannels] = useState<string[]>(["whatsapp"]);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [templateId, setTemplateId] = useState("");
+  const [cardTemplateId, setCardTemplateId] = useState("");
   const [expandedBroadcast, setExpandedBroadcast] = useState<string | null>(null);
+
+  const { data: messageTemplates = [] } = useQuery({
+    queryKey: ["message-templates"],
+    queryFn: async () => (await api.get("/message-templates")).data.data ?? [],
+  });
+  const { data: cardTemplates = [] } = useQuery({
+    queryKey: ["card-templates"],
+    queryFn: async () => (await api.get("/cards/templates")).data.data ?? [],
+  });
 
   const { data: broadcasts, isLoading } = useQuery({
     queryKey: ["broadcasts", eventId],
@@ -346,6 +358,7 @@ function BroadcastTab({ eventId }: { eventId: string }) {
       target: recipientType,
       message,
       scheduled_at: scheduledAt || undefined,
+      card_template_id: cardTemplateId || undefined,
     });
   };
 
@@ -417,6 +430,33 @@ function BroadcastTab({ eventId }: { eventId: string }) {
 
       <Modal isOpen={composeOpen} onClose={() => setComposeOpen(false)} title="Compose Broadcast" size="lg">
         <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Message template</label>
+              <Select value={templateId} onChange={(e) => {
+                const id = e.target.value;
+                setTemplateId(id);
+                const tpl = messageTemplates.find((t: any) => t.id === id);
+                if (tpl?.body) setMessage(tpl.body);
+              }}>
+                <option value="">— Custom message —</option>
+                {messageTemplates.map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.name} ({t.channel_kind})</option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Card template (optional)</label>
+              <Select value={cardTemplateId} onChange={(e) => setCardTemplateId(e.target.value)}>
+                <option value="">— No card —</option>
+                {cardTemplates
+                  .filter((t: any) => t.is_active && (t.theme_config?.front_file_id || t.background_file_id))
+                  .map((t: any) => (
+                    <option key={t.id} value={t.id}>{t.name}{t.is_owned === false ? " (Shared)" : ""}</option>
+                  ))}
+              </Select>
+            </div>
+          </div>
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Message</label>
             <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} placeholder="Type your message here..." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />

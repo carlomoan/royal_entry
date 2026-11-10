@@ -28,6 +28,44 @@ impl BillingService {
         Self { state, mpesa, messaging }
     }
 
+    /// Read the platform's TRA tax settings from `system_settings`.
+    /// Returns (enabled, vat_rate_percent, tax_inclusive).
+    async fn tax_config(&self) -> (bool, f64, bool) {
+        let rows: Vec<(String, serde_json::Value)> = sqlx::query_as(
+            "SELECT setting_key, setting_value FROM system_settings \
+             WHERE setting_key IN ('tax_enabled', 'tax_vat_rate_percent', 'tax_inclusive')",
+        )
+        .fetch_all(&*self.state.db.pool())
+        .await
+        .unwrap_or_default();
+
+        let mut enabled = false;
+        let mut rate = 18.0;
+        let mut inclusive = true;
+        for (key, value) in rows {
+            match key.as_str() {
+                "tax_enabled" => enabled = value.as_bool().unwrap_or(false),
+                "tax_vat_rate_percent" => rate = value.as_f64().unwrap_or(18.0),
+                "tax_inclusive" => inclusive = value.as_bool().unwrap_or(true),
+                _ => {}
+            }
+        }
+        (enabled, rate, inclusive)
+    }
+
+    /// Compute VAT for an amount. Returns (tax_amount, total_amount).
+    /// Inclusive: the amount already contains VAT (tax = amount - net).
+    /// Exclusive: VAT is added on top of the amount.
+    fn compute_tax(amount: i64, rate_percent: f64, inclusive: bool) -> (i64, i64) {
+        if inclusive {
+            let tax = (amount as f64 - amount as f64 / (1.0 + rate_percent / 100.0)).round() as i64;
+            (tax, amount)
+        } else {
+            let tax = ((amount as f64) * rate_percent / 100.0).round() as i64;
+            (tax, amount + tax)
+        }
+    }
+
     // ============================================================================
     // MAIN CRON JOBS
     // ============================================================================
@@ -50,15 +88,29 @@ impl BillingService {
         .await?;
 
         let mut generated = 0u64;
+        let mut invoice_ids = Vec::new();
         for sub in due_subscriptions {
-            if let Err(e) = self.generate_invoice_for_subscription(&mut tx, &sub, now).await {
-                tracing::error!(subscription_id = %sub.id, error = %e, "Failed to generate invoice");
-                continue;
+            match self.generate_invoice_for_subscription(&mut tx, &sub, now).await {
+                Ok(invoice_id) => {
+                    invoice_ids.push(invoice_id);
+                    generated += 1;
+                }
+                Err(e) => {
+                    tracing::error!(subscription_id = %sub.id, error = %e, "Failed to generate invoice");
+                }
             }
-            generated += 1;
         }
 
         tx.commit().await?;
+
+        // Submit generated invoices to TRA (best-effort, non-blocking).
+        let tra = crate::services::tra::TraService::new(self.state.clone());
+        for invoice_id in invoice_ids {
+            if let Err(e) = tra.submit_invoice(invoice_id).await {
+                tracing::warn!(invoice_id = %invoice_id, error = %e, "TRA submission failed");
+            }
+        }
+
         tracing::info!(count = generated, "Generated recurring invoices");
         Ok(generated)
     }
@@ -356,13 +408,22 @@ impl BillingService {
         );
         let invoice_id = Uuid::new_v4();
 
+        // Apply TRA VAT per the platform tax settings.
+        let (tax_enabled, tax_rate, tax_inclusive) = self.tax_config().await;
+        let (tax_amount, total_amount) = if tax_enabled {
+            Self::compute_tax(price_tsh, tax_rate, tax_inclusive)
+        } else {
+            (0, price_tsh)
+        };
+
         sqlx::query(
             r#"
             INSERT INTO billing_invoices (
                 id, organization_id, subscription_id, plan_id, invoice_number,
-                amount_tsh, status, issued_at, due_at, period_start, period_end,
+                amount_tsh, tax_rate_percent, tax_amount_tsh, tax_inclusive,
+                status, issued_at, due_at, period_start, period_end,
                 notes, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, $11, $7, $7)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10, $11, $12, $13, $14, $10, $10)
             "#,
         )
         .bind(invoice_id)
@@ -370,7 +431,10 @@ impl BillingService {
         .bind(sub.id)
         .bind(plan_id)
         .bind(&invoice_number)
-        .bind(price_tsh)
+        .bind(total_amount)
+        .bind(tax_rate)
+        .bind(tax_amount)
+        .bind(tax_inclusive)
         .bind(now)
         .bind(due_at)
         .bind(period_start)
@@ -525,13 +589,23 @@ impl BillingService {
                 org_id.to_string()[..8].to_uppercase(),
                 Utc::now().format("%Y%m%d%H%M%S")
             );
+
+            // Apply TRA VAT per the platform tax settings.
+            let (tax_enabled, tax_rate, tax_inclusive) = self.tax_config().await;
+            let (tax_amount, total_amount) = if tax_enabled {
+                Self::compute_tax(net_charge, tax_rate, tax_inclusive)
+            } else {
+                (0, net_charge)
+            };
+
             sqlx::query(
                 r#"
                 INSERT INTO billing_invoices (
                     id, organization_id, subscription_id, plan_id, invoice_number,
-                    amount_tsh, status, issued_at, due_at, period_start, period_end,
+                    amount_tsh, tax_rate_percent, tax_amount_tsh, tax_inclusive,
+                    status, issued_at, due_at, period_start, period_end,
                     notes, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, $11, $7, $7)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10, $11, $12, $13, $14, $10, $10)
                 "#,
             )
             .bind(invoice_id)
@@ -539,7 +613,10 @@ impl BillingService {
             .bind(sub.id)
             .bind(new_plan_id)
             .bind(&invoice_number)
-            .bind(net_charge)
+            .bind(total_amount)
+            .bind(tax_rate)
+            .bind(tax_amount)
+            .bind(tax_inclusive)
             .bind(Utc::now())
             .bind(Utc::now() + Duration::days(7))
             .bind(Utc::now())

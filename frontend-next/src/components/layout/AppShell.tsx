@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import CommandPalette from "./CommandPalette";
+import OfflineBanner from "./OfflineBanner";
 import { isPlatformAdmin } from "@/lib/roles";
 import { LogOut } from "lucide-react";
 
@@ -31,9 +32,14 @@ function Shell({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
     if (!isAuthenticated) { router.replace("/login"); return; }
     if (unassigned && pathname !== "/profile") { router.replace("/profile"); return; }
+    // Force a password change before allowing access to the rest of the app.
+    if (user?.must_change_password && pathname !== "/profile/change-password") {
+      router.replace("/profile/change-password");
+      return;
+    }
     if (pathname === "/") { router.replace(home); return; }
     if (!platform && pathname.startsWith("/platform")) router.replace(home);
-  }, [isAuthenticated, isLoading, pathname, home, unassigned, router, platform]);
+  }, [isAuthenticated, isLoading, pathname, home, unassigned, router, platform, user?.must_change_password]);
 
   // ✅ Close mobile menu when navigating to a new page
   useEffect(() => {
@@ -71,6 +77,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </div>
         )}
         <TopBar onMenuClick={() => setMobileMenuOpen(true)} />
+        <OfflineBanner />
         <CommandPalette />
         <main className="flex-1 p-6">{children}</main>
         <footer className="border-t border-slate-200 px-6 py-4 text-center text-xs text-slate-400">

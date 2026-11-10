@@ -52,6 +52,13 @@ impl BootstrapService {
         )
         .await?;
 
+        // The default admin ships with a known password — force a change on
+        // first login.
+        sqlx::query("UPDATE users SET must_change_password = TRUE WHERE id = $1")
+            .bind(user.id)
+            .execute(pool)
+            .await?;
+
         let username = admin_email
             .split('@')
             .next()

@@ -4,8 +4,10 @@
 // HTTP handlers for Guests CRUD
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State, Multipart},
     http::StatusCode,
+    response::Response,
     Extension, Json,
 };
 use std::sync::Arc;
@@ -14,6 +16,7 @@ use serde_json::json;
 use uuid::Uuid;
 use validator::Validate;
 use csv::ReaderBuilder;
+use sqlx::Row;
 use std::io::Cursor;
 
 use crate::{
@@ -557,5 +560,85 @@ pub async fn download_guest_template(
         .header("Content-Type", "text/csv")
         .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
         .body(csv.into())
+        .unwrap())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyEmailQuery {
+    pub token: String,
+}
+
+/// POST /api/v1/events/{eid}/guests/{id}/verify-email — send a verification email.
+pub async fn send_email_verification(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, guest_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+
+    let row = sqlx::query("SELECT email, full_name FROM guests WHERE id = $1 AND event_id = $2")
+        .bind(guest_id)
+        .bind(event_id)
+        .fetch_optional(state.db.pool())
+        .await?
+        .ok_or(AppError::GuestNotFound)?;
+    let email: Option<String> = row.try_get("email").ok();
+    let full_name: String = row.try_get("full_name").unwrap_or_default();
+    let email = email
+        .filter(|e| !e.trim().is_empty())
+        .ok_or_else(|| AppError::BadRequest("Guest has no email address".to_string()))?;
+
+    let token = format!("{}-{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    sqlx::query(
+        "UPDATE guests SET email_verification_token = $1, updated_at = NOW() WHERE id = $2",
+    )
+    .bind(&token)
+    .bind(guest_id)
+    .execute(state.db.pool())
+    .await?;
+
+    let verify_url = format!(
+        "{}/api/v1/public/verify-email?token={}",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        token
+    );
+    let html = format!(
+        "<div style=\"background:#f1f5f9;padding:24px;font-family:Arial,sans-serif;\"><div style=\"max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;\"><div style=\"background:#0a1628;padding:20px;text-align:center;\"><h1 style=\"color:#c9a84c;margin:0;font-size:20px;\">RoyalEntry</h1></div><div style=\"padding:24px;text-align:center;\"><p style=\"color:#334e68;\">Hi {full_name},</p><p style=\"color:#334e68;\">Please confirm your email address so you can receive invitations and updates.</p><a href=\"{verify_url}\" style=\"display:inline-block;background:#c9a84c;color:#0a1628;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:8px;\">Confirm Email</a></div></div></div>"
+    );
+    let _ = state
+        .channels
+        .email(&email, "Confirm your email — RoyalEntry", &html)
+        .await;
+
+    Ok(Json(json!({ "success": true, "message": "Verification email sent" })))
+}
+
+/// GET /api/v1/public/verify-email?token=... — confirm a guest's email.
+pub async fn verify_guest_email(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<VerifyEmailQuery>,
+) -> Result<Response, AppError> {
+    let token = query.token.trim().to_string();
+    if token.is_empty() {
+        return Err(AppError::BadRequest("Missing token".to_string()));
+    }
+    let updated = sqlx::query(
+        "UPDATE guests SET email_verified = TRUE, email_verification_token = NULL, updated_at = NOW() \
+         WHERE email_verification_token = $1",
+    )
+    .bind(&token)
+    .execute(&*state.db.pool())
+    .await?;
+
+    let html = if updated.rows_affected() > 0 {
+        "<html><body style=\"font-family:Arial,sans-serif;text-align:center;padding:48px;background:#f1f5f9;\"><div style=\"max-width:420px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0;\"><h1 style=\"color:#0a1628;\">Email verified &#10003;</h1><p style=\"color:#334e68;\">Thank you for confirming your email address.</p></div></body></html>"
+    } else {
+        "<html><body style=\"font-family:Arial,sans-serif;text-align:center;padding:48px;background:#f1f5f9;\"><div style=\"max-width:420px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0;\"><h1 style=\"color:#b45309;\">Invalid or expired link</h1><p style=\"color:#334e68;\">This verification link is no longer valid.</p></div></body></html>"
+    };
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/html")
+        .body(Body::from(html))
         .unwrap())
 }
