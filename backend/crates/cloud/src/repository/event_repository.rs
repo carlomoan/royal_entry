@@ -37,10 +37,10 @@ impl EventRepository {
             INSERT INTO events (
                 id, organization_id, created_by_user_id, title, description,
                 event_date, event_time, venue_name, venue_address,
-                dress_code, card_theme, card_template_id, main_characters, guest_count_expected, rsvp_deadline,
+                dress_code, card_theme, card_template_id, checkin_card_template_id, main_characters, guest_count_expected, rsvp_deadline,
                 status, approval_status, send_save_the_date, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             RETURNING *
             "#
         )
@@ -56,6 +56,7 @@ impl EventRepository {
         .bind(&req.dress_code)
         .bind(&req.card_theme)
         .bind(&req.card_template_id)
+        .bind(&req.checkin_card_template_id)
         .bind(&req.main_characters)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)
@@ -161,11 +162,12 @@ impl EventRepository {
                 dress_code = COALESCE($8, dress_code),
                 card_theme = COALESCE($9, card_theme),
                 card_template_id = COALESCE($10, card_template_id),
-                main_characters = COALESCE($11, main_characters),
-                guest_count_expected = COALESCE($12, guest_count_expected),
-                rsvp_deadline = $13,
-                send_save_the_date = COALESCE($14, send_save_the_date),
-                updated_at = $15
+                checkin_card_template_id = COALESCE($11, checkin_card_template_id),
+                main_characters = COALESCE($12, main_characters),
+                guest_count_expected = COALESCE($13, guest_count_expected),
+                rsvp_deadline = $14,
+                send_save_the_date = COALESCE($15, send_save_the_date),
+                updated_at = $16
             WHERE id = $1
             RETURNING *
             "#
@@ -180,6 +182,7 @@ impl EventRepository {
         .bind(&req.dress_code)
         .bind(&req.card_theme)
         .bind(&req.card_template_id)
+        .bind(&req.checkin_card_template_id)
         .bind(&req.main_characters)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)

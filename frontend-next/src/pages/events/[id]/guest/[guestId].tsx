@@ -12,6 +12,7 @@ import api from "@/lib/api";
 import { Button, Card, Badge } from "@/components/ui";
 import { RoyalCard } from "@/components/cards/RoyalCard";
 import { QrPosition, clampQrPosition, clampNamePosition } from "@/types/cardTheme";
+import { cn } from "@/lib/utils";
 
 export default function GuestCardPage() {
   const router = useRouter();
@@ -68,11 +69,15 @@ export default function GuestCardPage() {
     },
   });
 
-  // Resolve the card template assigned to this event. The backend only renders
-  // with the event's own `card_template_id`, so the preview must match that
-  // exactly — no fallback to an unrelated active template.
+  // Which card to show: the invitation or the check-in card/ticket.
+  const [cardKind, setCardKind] = useState<"invitation" | "checkin">("invitation");
+
+  // Resolve the card template for the selected kind. The backend renders with
+  // the event's own template id, so the preview must match that exactly.
   const assignedTemplate =
-    event?.card_template_id && templates.find((t: any) => t.id === event.card_template_id);
+    cardKind === "checkin"
+      ? (event?.checkin_card_template_id && templates.find((t: any) => t.id === event.checkin_card_template_id))
+      : (event?.card_template_id && templates.find((t: any) => t.id === event.card_template_id));
 
   const templateHasBackground = !!assignedTemplate &&
     (!!assignedTemplate.theme_config?.front_file_id || !!assignedTemplate.background_file_id);
@@ -154,6 +159,10 @@ export default function GuestCardPage() {
       const res = await api.post("/cards/render", {
         event_id: eventId,
         guest_id: guestId,
+        // Render the selected kind: check-in uses the event's check-in template.
+        ...(cardKind === "checkin" && event?.checkin_card_template_id
+          ? { template_id: event.checkin_card_template_id }
+          : {}),
       }, { responseType: "blob" });
 
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -265,8 +274,26 @@ export default function GuestCardPage() {
           <div className="lg:col-span-2">
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-slate-900">Your Invitation Card</h2>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {cardKind === "checkin" ? "Check-in Card / Ticket" : "Invitation Card"}
+                </h2>
                 <Badge label={isPaid ? "Paid" : paymentStatus} variant={isPaid ? "green" : "amber"} />
+              </div>
+
+              {/* Invitation / Check-in toggle */}
+              <div className="mb-4 flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                {(["invitation", "checkin"] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    onClick={() => setCardKind(kind)}
+                    className={cn(
+                      "flex-1 rounded-md px-3 py-1.5 text-sm font-semibold transition",
+                      cardKind === kind ? "bg-navy-950 text-white shadow-sm" : "text-slate-600 hover:bg-white"
+                    )}
+                  >
+                    {kind === "invitation" ? "Invitation" : "Check-in"}
+                  </button>
+                ))}
               </div>
 
               {assignedTemplate ? (

@@ -2,15 +2,20 @@
 // FILE: crates/cloud/src/middleware/rate_limit.rs
 // ==============================================================================
 // Simple in-memory sliding-window rate limiter keyed by client IP + route.
-// Protects auth and OTP endpoints from brute-force / abuse. Behind Apache the
-// real client IP arrives via X-Forwarded-For.
+// Protects auth and OTP endpoints from brute-force / abuse.
+//
+// Behind Apache the real client IP arrives via X-Forwarded-For. To prevent a
+// client from spoofing that header to bypass the limit, we only trust it when
+// the request actually came from the local proxy (loopback socket address);
+// direct connections are keyed on their real socket IP.
 // ==============================================================================
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::StatusCode,
     middleware::Next,
     response::Response,
@@ -49,18 +54,24 @@ impl RateLimiter {
 
 pub async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     req: Request,
     next: Next,
 ) -> Response {
-    let ip = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    // Trust X-Forwarded-For only when the peer is the local proxy (loopback).
+    let client_ip = if addr.ip().is_loopback() {
+        req.headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| addr.ip().to_string())
+    } else {
+        addr.ip().to_string()
+    };
 
-    let key = format!("{}:{}", req.uri().path(), ip);
+    let key = format!("{}:{}", req.uri().path(), client_ip);
     if !state.rate_limiter.check(&key) {
         return Response::builder()
             .status(StatusCode::TOO_MANY_REQUESTS)

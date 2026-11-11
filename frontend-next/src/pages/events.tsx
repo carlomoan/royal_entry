@@ -41,6 +41,7 @@ export default function EventsPage() {
       main_characters: (f.elements.namedItem("main_characters") as HTMLInputElement).value || undefined,
       guest_count_expected: (f.elements.namedItem("guest_count_expected") as HTMLInputElement).value ? parseInt((f.elements.namedItem("guest_count_expected") as HTMLInputElement).value, 10) : undefined,
       card_template_id: (f.elements.namedItem("card_template_id") as HTMLSelectElement).value || undefined,
+      checkin_card_template_id: (f.elements.namedItem("checkin_card_template_id") as HTMLSelectElement).value || undefined,
       send_save_the_date: (f.elements.namedItem("send_save_the_date") as HTMLInputElement).checked,
     });
   };
@@ -123,6 +124,19 @@ export default function EventsPage() {
               .filter((template: any) =>
                 template.is_active &&
                 // Only offer templates that have a real design background
+                (template.theme_config?.front_file_id || template.background_file_id)
+              )
+              .map((template: any) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}{template.is_owned === false ? " (Shared)" : ""}
+                </option>
+              ))}
+          </Select>
+          <Select label="Check-in Card / Ticket Design" name="checkin_card_template_id" defaultValue="">
+            <option value="">Use event default</option>
+            {cardTemplates
+              .filter((template: any) =>
+                template.is_active &&
                 (template.theme_config?.front_file_id || template.background_file_id)
               )
               .map((template: any) => (

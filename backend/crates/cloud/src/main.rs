@@ -202,7 +202,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     tracing::info!("Server listening on http://{}", addr);
-    axum::serve(listener, app).await?;
+    // Expose the peer socket address so middleware (e.g. the rate limiter) can
+    // tell local proxy connections apart from direct clients.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

@@ -39,22 +39,26 @@ export default function EventDetailPage() {
     enabled: !!id && id !== "undefined",
   });
 
-  // Card design assignment for this event
+  // Card design assignment for this event (invitation + check-in templates)
   const [selectedCardTemplateId, setSelectedCardTemplateId] = useState("");
+  const [selectedCheckinTemplateId, setSelectedCheckinTemplateId] = useState("");
   useEffect(() => {
     if (summary?.event?.card_template_id) {
       setSelectedCardTemplateId(summary.event.card_template_id);
     }
-  }, [summary?.event?.card_template_id]);
+    if (summary?.event?.checkin_card_template_id) {
+      setSelectedCheckinTemplateId(summary.event.checkin_card_template_id);
+    }
+  }, [summary?.event?.card_template_id, summary?.event?.checkin_card_template_id]);
 
   const assignCardMutation = useMutation({
-    mutationFn: (templateId: string) =>
-      api.put(`/events/${id}`, { card_template_id: templateId }),
+    mutationFn: (payload: { card_template_id?: string; checkin_card_template_id?: string }) =>
+      api.put(`/events/${id}`, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["event-summary", id] });
-      toast.success("Card design updated for this event");
+      toast.success("Card designs updated for this event");
     },
-    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to update card design"),
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to update card designs"),
   });
 
   const genMutation = useMutation({
@@ -234,15 +238,14 @@ export default function EventDetailPage() {
           </Card>
         </div>
 
-          <Card title="Invitation Card Design">
-            <div className="space-y-3">
-              <p className="text-sm text-slate-500">
-                Choose which card template is used when generating guest invitation cards.
-              </p>
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="flex-1 min-w-[240px]">
+          <Card title="Card Designs">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {/* Invitation template */}
+                <div className="rounded-lg border border-slate-200 p-4">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Invitation card</p>
                   <Select
-                    label="Card template"
+                    label="Template"
                     value={selectedCardTemplateId}
                     onChange={(e) => setSelectedCardTemplateId(e.target.value)}
                   >
@@ -255,22 +258,52 @@ export default function EventDetailPage() {
                         </option>
                       ))}
                   </Select>
+                  <Button
+                    className="mt-3 w-full"
+                    size="sm"
+                    onClick={() => assignCardMutation.mutate({ card_template_id: selectedCardTemplateId })}
+                    isLoading={assignCardMutation.isPending}
+                    disabled={!selectedCardTemplateId || selectedCardTemplateId === event.card_template_id}
+                  >
+                    <Palette className="h-4 w-4" /> Save invitation
+                  </Button>
                 </div>
-                <Button
-                  onClick={() => assignCardMutation.mutate(selectedCardTemplateId)}
-                  isLoading={assignCardMutation.isPending}
-                  disabled={!selectedCardTemplateId || selectedCardTemplateId === event.card_template_id}
-                >
-                  <Palette className="h-4 w-4" /> Save design
-                </Button>
+
+                {/* Check-in template */}
+                <div className="rounded-lg border border-slate-200 p-4">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Check-in card / ticket</p>
+                  <Select
+                    label="Template"
+                    value={selectedCheckinTemplateId}
+                    onChange={(e) => setSelectedCheckinTemplateId(e.target.value)}
+                  >
+                    <option value="">Keep current{event.checkin_card_template_id ? "" : " (none set)"}</option>
+                    {(cardTemplates as any[])
+                      .filter((t) => t.is_active && (t.theme_config?.front_file_id || t.background_file_id))
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}{t.is_owned === false ? " (Shared)" : ""}
+                        </option>
+                      ))}
+                  </Select>
+                  <Button
+                    className="mt-3 w-full"
+                    size="sm"
+                    onClick={() => assignCardMutation.mutate({ checkin_card_template_id: selectedCheckinTemplateId })}
+                    isLoading={assignCardMutation.isPending}
+                    disabled={!selectedCheckinTemplateId || selectedCheckinTemplateId === event.checkin_card_template_id}
+                  >
+                    <Palette className="h-4 w-4" /> Save check-in
+                  </Button>
+                </div>
               </div>
               {event.status === "active" || event.status === "completed" ? (
                 <p className="text-xs text-amber-600">
-                  This event is {event.status} — the card design can no longer be changed.
+                  This event is {event.status} — the card designs can no longer be changed.
                 </p>
               ) : (
                 <p className="text-xs text-slate-400">
-                  The design applies to all guest invitation cards for this event.
+                  The invitation template is used for guest invitations; the check-in template is used for the check-in card/ticket.
                 </p>
               )}
             </div>

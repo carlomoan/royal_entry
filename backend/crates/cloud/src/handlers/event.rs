@@ -33,8 +33,11 @@ pub async fn create_event(
             .await?;
     }
 
-    // A referenced card template must be able to render actual guest cards.
+    // Referenced card templates must be able to render actual guest cards.
     if let Some(template_id) = payload.card_template_id {
+        crate::cards::repository::ensure_renderable(state.db.pool(), org_id, template_id).await?;
+    }
+    if let Some(template_id) = payload.checkin_card_template_id {
         crate::cards::repository::ensure_renderable(state.db.pool(), org_id, template_id).await?;
     }
 
@@ -82,8 +85,11 @@ pub async fn update_event(
         return Err(AppError::BadRequest("Cannot update an active or completed event".to_string()));
     }
 
-    // A referenced card template must be able to render actual guest cards.
+    // Referenced card templates must be able to render actual guest cards.
     if let Some(template_id) = payload.card_template_id {
+        crate::cards::repository::ensure_renderable(state.db.pool(), org_id, template_id).await?;
+    }
+    if let Some(template_id) = payload.checkin_card_template_id {
         crate::cards::repository::ensure_renderable(state.db.pool(), org_id, template_id).await?;
     }
 

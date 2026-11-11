@@ -15,7 +15,7 @@ const DEFAULT_IDLE_MINUTES = 2;
 const CHECK_INTERVAL_MS = 15_000;
 
 export default function IdleSessionTimeout() {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, user } = useAuth();
   const router = useRouter();
 
   const lastActivity = useRef<number>(Date.now());
@@ -25,6 +25,8 @@ export default function IdleSessionTimeout() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    // Scanner attendants work at the gate — never log them out for inactivity.
+    if (user?.role === "scanner_attendant") return;
 
     const bump = () => {
       lastActivity.current = Date.now();
@@ -71,7 +73,7 @@ export default function IdleSessionTimeout() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [isAuthenticated, router.pathname, logout]);
+  }, [isAuthenticated, router.pathname, logout, user?.role]);
 
   return null;
 }
