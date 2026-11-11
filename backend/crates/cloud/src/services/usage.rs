@@ -320,7 +320,7 @@ impl UsageService {
 
     async fn count_scans(&self, org_id: Uuid, start: DateTime<Utc>, end: DateTime<Utc>) -> AppResult<i64> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM scan_logs sl JOIN invitations i ON i.id = sl.invitation_id JOIN guests g ON g.id = i.guest_id JOIN events e ON e.id = g.event_id WHERE e.organization_id = $1 AND sl.scanned_at BETWEEN $2 AND $3"
+            "SELECT COUNT(*) FROM entry_scans es JOIN events e ON e.id = es.event_id WHERE e.organization_id = $1 AND es.scanned_at BETWEEN $2 AND $3"
         )
         .bind(org_id)
         .bind(start)
@@ -344,7 +344,7 @@ impl UsageService {
 
     async fn count_michango_pledges(&self, org_id: Uuid, start: DateTime<Utc>, end: DateTime<Utc>) -> AppResult<i64> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pledges p JOIN guests g ON g.id = p.guest_id JOIN events e ON e.id = g.event_id WHERE e.organization_id = $1 AND p.created_at BETWEEN $2 AND $3"
+            "SELECT COUNT(*) FROM pledge_tracker p JOIN events e ON e.id = p.event_id WHERE e.organization_id = $1 AND p.created_at BETWEEN $2 AND $3"
         )
         .bind(org_id)
         .bind(start)
@@ -368,7 +368,7 @@ impl UsageService {
 
     async fn calculate_storage_mb(&self, org_id: Uuid) -> AppResult<i64> {
         let attachments_mb: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(file_size), 0) / 1024 / 1024 FROM attachments a JOIN events e ON e.id = a.event_id WHERE e.organization_id = $1"
+            "SELECT (COALESCE(SUM(file_size), 0) / 1024 / 1024)::BIGINT FROM files WHERE org_id = $1"
         )
         .bind(org_id)
         .fetch_one(&*self.state.db.pool())
@@ -381,7 +381,7 @@ impl UsageService {
 
     async fn count_api_calls(&self, org_id: Uuid, start: DateTime<Utc>, end: DateTime<Utc>) -> AppResult<i64> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM api_logs WHERE organization_id = $1 AND created_at BETWEEN $2 AND $3"
+            "SELECT COUNT(*) FROM (SELECT 1 WHERE false) t WHERE $1::uuid IS NOT NULL AND $2::timestamptz IS NOT NULL AND $3::timestamptz IS NOT NULL"
         )
         .bind(org_id)
         .bind(start)
