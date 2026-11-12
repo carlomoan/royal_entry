@@ -62,10 +62,9 @@ pub async fn send_otp(
         return Err(AppError::ValidationError("short_link is required".to_string()));
     }
 
-    // Look up the invitation + guest contact details
     let row = sqlx::query(
         r#"
-        SELECT g.id AS guest_id, g.full_name, g.phone, g.email
+        SELECT g.id AS guest_id, g.full_name, g.phone, g.email, g.device_type
         FROM invitations i
         JOIN guests g ON g.id = i.guest_id
         WHERE i.short_link = $1 AND g.event_id = $2
@@ -81,27 +80,72 @@ pub async fn send_otp(
     let guest_name: String = row.try_get("full_name").unwrap_or_default();
     let guest_phone: String = row.try_get("phone").unwrap_or_default();
     let guest_email: Option<String> = row.try_get("email").ok();
+    let device_type: String = row.try_get("device_type").unwrap_or_default();
 
-    if guest_phone.is_empty() && guest_email.as_deref().unwrap_or("").is_empty() {
+    let phone = guest_phone.trim().to_string();
+    let email = guest_email
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty());
+    if phone.is_empty() && email.is_none() {
         return Err(AppError::BadRequest(
             "Guest has no phone or email to send the OTP".to_string(),
         ));
     }
 
-    // Generate 6-digit OTP
-    use rand::Rng;
-    let code: u32 = rand::rng().random_range(100_000..999_999);
-    let expires_at = Utc::now() + chrono::Duration::minutes(10);
-    let otp_hash = format!("{:?}", Sha256::digest(code.to_string().as_bytes()));
+    // Throttle: every OTP costs money (SMS) and widens the guessing window.
+    let last_minute: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM otp_tokens WHERE event_id = $1 AND invitation_short_link = $2 \
+         AND created_at > NOW() - INTERVAL '60 seconds'",
+    )
+    .bind(event_id)
+    .bind(&short_link)
+    .fetch_one(state.db.pool())
+    .await?;
+    if last_minute > 0 {
+        return Err(AppError::BadRequest(
+            "A code was just sent to this guest. Wait a minute before requesting another."
+                .to_string(),
+        ));
+    }
+    let last_ten_minutes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM otp_tokens WHERE event_id = $1 AND invitation_short_link = $2 \
+         AND created_at > NOW() - INTERVAL '10 minutes'",
+    )
+    .bind(event_id)
+    .bind(&short_link)
+    .fetch_one(state.db.pool())
+    .await?;
+    if last_ten_minutes >= 3 {
+        return Err(AppError::BadRequest(
+            "Too many codes requested for this guest. Try again in a few minutes.".to_string(),
+        ));
+    }
 
-    // Store OTP
+    // A new code replaces any earlier unused one.
+    sqlx::query(
+        "UPDATE otp_tokens SET expires_at = NOW() \
+         WHERE event_id = $1 AND invitation_short_link = $2 \
+           AND engaged_at IS NULL AND expires_at > NOW()",
+    )
+    .bind(event_id)
+    .bind(&short_link)
+    .execute(state.db.pool())
+    .await?;
+
+    use rand::Rng;
+    let code: u32 = rand::rng().random_range(100_000..1_000_000);
+    let expires_at = Utc::now() + chrono::Duration::minutes(10);
+    // Same hash format as verify_otp (do not change one without the other).
+    let otp_hash = format!("{:?}", Sha256::digest(code.to_string().as_bytes()));
+    let otp_id = Uuid::new_v4();
+
     sqlx::query(
         r#"
         INSERT INTO otp_tokens (id, event_id, guest_id, invitation_short_link, otp_hash, expires_at, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, NOW())
         "#,
     )
-    .bind(Uuid::new_v4())
+    .bind(otp_id)
     .bind(event_id)
     .bind(guest_id)
     .bind(&short_link)
@@ -110,10 +154,14 @@ pub async fn send_otp(
     .execute(state.db.pool())
     .await?;
 
-    // Send the code — email for guests with an address (smartphones), SMS for
-    // feature-phone guests. This verifies identity at the gate so a guest who
-    // obtained a QR/link illegally cannot check in without the owner's device.
-    if let Some(email) = guest_email.filter(|e| !e.trim().is_empty()) {
+    // Short, plain-ASCII text so it fits one SMS unit (160 characters).
+    let title: String = event.title.chars().take(40).collect();
+    let sms_text = format!(
+        "Msimbo wako wa kuingia {}: {}. Unaisha baada ya dakika 10.",
+        title, code
+    );
+
+    let (subject, html) = if email.is_some() {
         let check_in_link = format!(
             "{}/g/{}",
             state.config.app.frontend_url.trim_end_matches('/'),
@@ -138,22 +186,58 @@ pub async fn send_otp(
                     event.title, code
                 )
             });
-        if let Err(e) = state.channels.email(&email, &subject, &html).await {
-            tracing::warn!(guest_id = %guest_id, error = %e, "Failed to send OTP email");
-        }
+        (subject, html)
     } else {
-        let message = format!(
-            "Your RoyalEntry entry code for {} is {}. It expires in 10 minutes.",
-            guest_name, code
-        );
-        let _ = crate::services::MessagingService::new()
-            .send("sms", &guest_phone, &message)
-            .await;
+        (String::new(), String::new())
+    };
+
+    // Feature phones cannot read email: SMS first. Smartphones: email first.
+    let sms_first = device_type == "feature_phone" || email.is_none();
+    let order: [&str; 2] = if sms_first { ["sms", "email"] } else { ["email", "sms"] };
+
+    let mut delivered_via: Option<&str> = None;
+    for ch in order {
+        // NOTE: if the SMS receipts expose a `success` flag, check it here too;
+        // this only detects hard errors.
+        let result: AppResult<()> = match ch {
+            "sms" if !phone.is_empty() => state
+                .channels
+                .sms(&[phone.clone()], &sms_text)
+                .await
+                .map(|_| ()),
+            "email" if email.is_some() => state
+                .channels
+                .email(email.as_deref().unwrap_or_default(), &subject, &html)
+                .await
+                .map(|_| ()),
+            _ => continue,
+        };
+        match result {
+            Ok(()) => {
+                delivered_via = Some(ch);
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(guest_id = %guest_id, channel = ch, error = %e, "OTP delivery failed");
+            }
+        }
     }
 
+    let Some(via) = delivered_via else {
+        let _ = sqlx::query("UPDATE otp_tokens SET expires_at = NOW() WHERE id = $1")
+            .bind(otp_id)
+            .execute(state.db.pool())
+            .await;
+        return Err(AppError::BadRequest(
+            "Could not deliver the code to this guest. Check their phone number or email, or use another check-in method."
+                .to_string(),
+        ));
+    };
+
+    tracing::info!(guest_id = %guest_id, channel = via, "OTP sent");
     Ok(Json(json!({
         "success": true,
-        "data": OtpResponse { message: "OTP sent to guest phone".to_string() }
+        "data": OtpResponse { message: format!("Code sent by {via}") }
     })))
 }
 
