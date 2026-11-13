@@ -25,7 +25,6 @@ pub use mpesa::MpesaService;
 pub use notifications::NotificationService; // ✅ Exports the struct
 pub use pdf::PdfService;
 pub use scheduler::start_scheduler;
-pub use sms::SmsService;
 pub use templates::TemplateService;
 pub use usage::UsageService;
 pub use webhooks::WebhookService;

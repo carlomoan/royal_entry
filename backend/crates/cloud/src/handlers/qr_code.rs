@@ -45,7 +45,9 @@ pub async fn generate_qr_code(
     .ok_or(AppError::NotFound("Invitation not found".to_string()))?;
 
     let frontend_url = state.config.app.frontend_url.clone();
-    let check_in_url = crate::models::invitation::build_scan_url(&frontend_url, event_id, &invitation.short_link);
+    // The QR points to the guest's public invitation page (card + QR), which the
+    // scanner can still read via the short-link in the URL.
+    let check_in_url = crate::models::invitation::build_public_invitation_url(&frontend_url, &invitation.short_link);
 
     // Generate QR code using qrcode crate
     use qrcode::QrCode;

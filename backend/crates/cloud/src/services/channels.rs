@@ -515,6 +515,27 @@ impl Channels {
         }
     }
 
+    /// Send an email with a card image embedded (base64) below the message body.
+    /// `card_png` is optional — when None/empty the email is sent without it.
+    pub async fn email_card(
+        &self,
+        to: &str,
+        subject: &str,
+        html: &str,
+        card_png: Option<&[u8]>,
+    ) -> AppResult<ProviderReceipt> {
+        let html_with_card = match card_png {
+            Some(png) if !png.is_empty() => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+                format!(
+                    "{html}<p style='text-align:center;margin:18px 0;'><img src='data:image/png;base64,{b64}' alt='Card' style='max-width:100%;border-radius:8px;'/></p>"
+                )
+            }
+            _ => html.to_string(),
+        };
+        self.email(to, subject, &html_with_card).await
+    }
+
     pub async fn telegram(&self, chat_id: &str, text: &str) -> AppResult<ProviderReceipt> {
         match &self.telegram {
             Some(provider) => provider.send(chat_id, text).await,

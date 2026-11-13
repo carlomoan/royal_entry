@@ -97,6 +97,7 @@ struct ReminderRecipient {
     pledge_id: Uuid,
     guest_id: Uuid,
     phone: String,
+    email: Option<String>,
     contact_method: String,
     full_name: String,
     pledged_amount: i64,
@@ -269,6 +270,53 @@ pub async fn create_pledge(
         .find(|item| item.id == pledge_id)
         .ok_or(AppError::InternalServerError)?;
 
+    // Pledge confirmation email: confirms the pledge and attaches the guest's card.
+    let guest_email: Option<String> = sqlx::query_scalar("SELECT email FROM guests WHERE id = $1")
+        .bind(payload.guest_id)
+        .fetch_optional(state.db.pool())
+        .await?
+        .flatten();
+    if let Some(email) = guest_email.filter(|e| !e.trim().is_empty()) {
+        let event_title: String = sqlx::query_scalar("SELECT title FROM events WHERE id = $1")
+            .bind(event_id)
+            .fetch_one(state.db.pool())
+            .await?;
+        let guest_name: String = sqlx::query_scalar("SELECT full_name FROM guests WHERE id = $1")
+            .bind(payload.guest_id)
+            .fetch_one(state.db.pool())
+            .await?;
+        let card_png = crate::cards::handlers::render_guest_card(
+            &state,
+            org_id,
+            event_id,
+            payload.guest_id,
+            None,
+        )
+        .await
+        .ok();
+        let subject = format!("Pledge Confirmed — {}", event_title);
+        let html = crate::services::TemplateService::new(state.clone())
+            .render_template(
+                "payment_receipt",
+                json!({
+                    "guest_name": guest_name,
+                    "event_title": event_title,
+                    "amount": format!("TZS {}", payload.pledged_amount),
+                    "payment_method": "Pledge",
+                }),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                format!(
+                    "<p>Dear {guest_name}, your pledge of TZS {} for {} is confirmed. Thank you for your support!</p>",
+                    payload.pledged_amount, event_title
+                )
+            });
+        if let Err(e) = state.channels.email_card(&email, &subject, &html, card_png.as_deref()).await {
+            tracing::warn!(guest_id = %payload.guest_id, error = %e, "Failed to send pledge confirmation email");
+        }
+    }
+
     Ok((StatusCode::CREATED, Json(json!({ "success": true, "data": pledge }))))
 }
 
@@ -366,13 +414,13 @@ pub async fn send_reminders(
     Json(payload): Json<SendRemindersRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
-    assert_event_ownership(&state, event_id, org_id).await?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
 
     let custom_message = payload.custom_message.clone();
     let statuses = payload.statuses.unwrap_or_else(|| vec!["pending".to_string(), "partial".to_string(), "overdue".to_string()]);
 
     let recipients = sqlx::query_as::<_, ReminderRecipient>(
-        r#"SELECT pt.id AS pledge_id, g.id AS guest_id, g.phone, g.contact_method, g.full_name, pt.pledged_amount, pt.amount_paid, pt.payment_deadline FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status = ANY($2) ORDER BY g.full_name ASC"#,
+        r#"SELECT pt.id AS pledge_id, g.id AS guest_id, g.phone, g.email, g.contact_method, g.full_name, pt.pledged_amount, pt.amount_paid, pt.payment_deadline FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.event_id = $1 AND pt.payment_status = ANY($2) ORDER BY g.full_name ASC"#,
     )
     .bind(event_id)
     .bind(&statuses)
@@ -392,11 +440,67 @@ pub async fn send_reminders(
         let message = custom_message.clone().unwrap_or(default_message);
         let channel = match recipient.contact_method.as_str() {
             "sms" => "sms",
-            "whatsapp" => "whatsapp",
+            "email" => "email",
             _ => "whatsapp",
         };
 
-        let attempts = messaging.send(channel, &recipient.phone, &message).await?;
+        // Email reminders attach the pledge card; SMS/WhatsApp are text only.
+        let attempts = if channel == "email" {
+            let Some(email) = recipient.email.as_deref().filter(|e| !e.trim().is_empty()) else {
+                failed += 1;
+                continue;
+            };
+            let subject = format!("Pledge Payment Reminder — TZS {} outstanding", outstanding);
+            let html = crate::services::TemplateService::new(state.clone())
+                .render_template(
+                    "pledge_reminder",
+                    json!({
+                        "guest_name": recipient.full_name,
+                        "event_title": event.title,
+                        "pledged_amount": format!("TZS {}", recipient.pledged_amount),
+                        "amount_paid": format!("TZS {}", recipient.amount_paid),
+                        "amount_remaining": format!("TZS {}", outstanding),
+                        "payment_deadline": recipient.payment_deadline.map(|d| d.to_string()).unwrap_or_default(),
+                        "pay_link": format!("{}/billing", state.config.app.frontend_url.trim_end_matches('/')),
+                    }),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    format!(
+                        "<p>Dear {}, your outstanding pledge is TZS {}. Please settle it soon.</p>",
+                        recipient.full_name, outstanding
+                    )
+                });
+            let card_png = crate::cards::handlers::render_guest_card(
+                &state,
+                org_id,
+                event_id,
+                recipient.guest_id,
+                None,
+            )
+            .await
+            .ok();
+            let receipt = state
+                .channels
+                .email_card(email, &subject, &html, card_png.as_deref())
+                .await;
+            vec![match receipt {
+                Ok(r) => crate::services::messaging::DeliveryAttempt {
+                    channel: "email".to_string(),
+                    success: r.success,
+                    provider_message_id: r.provider_id,
+                    error_message: r.error,
+                },
+                Err(e) => crate::services::messaging::DeliveryAttempt {
+                    channel: "email".to_string(),
+                    success: false,
+                    provider_message_id: None,
+                    error_message: Some(e.to_string()),
+                },
+            }]
+        } else {
+            messaging.send(channel, &recipient.phone, &message).await?
+        };
         let success = attempts.iter().any(|attempt| attempt.success);
 
         for attempt in attempts {

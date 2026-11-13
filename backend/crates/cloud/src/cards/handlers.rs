@@ -186,6 +186,18 @@ pub async fn render_cards_bulk(
     Ok(Json(json!({ "success": true, "data": { "cards": cards } })))
 }
 
+/// Public wrapper so other modules (invitations, michango) can render a guest's
+/// card PNG for use as an email attachment.
+pub async fn render_guest_card(
+    state: &Arc<AppState>,
+    org_id: Uuid,
+    event_id: Uuid,
+    guest_id: Uuid,
+    requested_template_id: Option<Uuid>,
+) -> AppResult<Vec<u8>> {
+    render_for_guest(state, org_id, event_id, guest_id, requested_template_id).await
+}
+
 async fn render_for_guest(
     state: &Arc<AppState>,
     org_id: Uuid,

@@ -136,6 +136,9 @@ pub async fn create_guest(
 
     let guest = GuestRepository::create(state.db.pool(), event_id, &payload).await?;
 
+    // Every guest gets a check-in link (QR / entry token) automatically.
+    crate::handlers::invitations::ensure_invitation(state.db.pool(), guest.id).await?;
+
     tracing::info!(
         event_id = %event_id,
         guest_id = %guest.id,
@@ -210,6 +213,11 @@ pub async fn bulk_create_guests(
         payload.guests,
     )
     .await?;
+
+    // Every guest gets a check-in link (QR / entry token) automatically.
+    for guest in &guests {
+        crate::handlers::invitations::ensure_invitation(state.db.pool(), guest.id).await?;
+    }
 
     let responses: Vec<GuestResponse> = guests
         .into_iter()
