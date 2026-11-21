@@ -424,6 +424,7 @@ pub async fn send_invitations(
                         "venue_address": event.venue_address.clone().unwrap_or_default(),
                         "check_in_link": check_in_link,
                         "organization_name": "RoyalEntry",
+                        "pledge_range": pledge_range,
                     }),
                 )
                 .await

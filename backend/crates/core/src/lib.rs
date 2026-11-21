@@ -7,6 +7,7 @@ pub mod payment;
 pub mod scan;
 pub mod organization;
 pub mod billing;
+pub mod corporate;
 pub mod webhook;
 pub mod template;
 

@@ -101,6 +101,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap();
     }
 
+    // Automatic pledge reminders — hourly; the service enforces the 09:00–18:00 EAT window.
+    {
+        let state = app_state.clone();
+        scheduler
+            .add(
+                tokio_cron_scheduler::Job::new_async("0 0 * * * *", move |_uuid, _l| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        match royalentry_cloud::services::reminders::process_automatic_reminders(&state).await {
+                            Ok(n) if n > 0 => tracing::info!(count = n, "Automatic reminders sent"),
+                            Ok(_) => {}
+                            Err(error) => tracing::error!(error = %error, "Automatic reminder pass failed"),
+                        }
+                    })
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
     // Process queued webhook deliveries every minute.
     {
         let state = app_state.clone();

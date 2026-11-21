@@ -4,9 +4,9 @@
 use crate::{
     files,
     handlers::{
-        audit, auth, billing, broadcast, event, event_assignment, guest, invitations, michango,
-        notifications, payment, platform, public_invitation, qr_code, rbac, reports, scanner,
-        settings, templates, verify_token, webhooks,
+        audit, auth, billing, broadcast, corporate, event, event_assignment, guest, invitations,
+        michango, notifications, payment, platform, public_invitation, qr_code, rbac, reports,
+        scanner, settings, templates, verify_token, webhooks,
     },
     logs,
     middleware::{
@@ -81,6 +81,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/public/verify-email",
             get(guest::verify_guest_email),
+        )
+        .route(
+            "/api/v1/public/invitations/{token}/card",
+            get(crate::handlers::card_issuing::public_invitation_card),
+        )
+        .route(
+            "/api/v1/public/w/{event_id}",
+            get(crate::handlers::arrival::venue_info),
+        )
+        .route(
+            "/api/v1/public/w/{event_id}/view",
+            post(crate::handlers::arrival::venue_message),
         );
 
     // ── Auth routes (any authenticated user) ──────────────────────────────────
@@ -141,6 +153,102 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .layer(middleware::from_fn(require_permission_middleware(
             "events:write",
+        )));
+
+    // ── Corporate packages / bookings / gate routes ─────────────────────────────
+    let corporate_read_routes = Router::new()
+        .route(
+            "/api/v1/events/{eid}/packages",
+            get(corporate::list_packages),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings",
+            get(corporate::list_bookings),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}",
+            get(corporate::get_booking),
+        )
+        .route(
+            "/api/v1/events/{eid}/tables/open",
+            get(corporate::list_open_tables),
+        )
+        .route(
+            "/api/v1/events/{eid}/seating/suggest",
+            get(corporate::suggest_seating),
+        )
+        .route(
+            "/api/v1/events/{eid}/gate-dashboard",
+            get(corporate::gate_dashboard),
+        )
+        .route(
+            "/api/v1/events/{eid}/corporate-report",
+            get(corporate::corporate_report),
+        )
+        .route(
+            "/api/v1/events/{eid}/parking-variants",
+            get(corporate::list_parking_variants),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/invoice",
+            get(corporate::get_booking_invoice),
+        )
+        .layer(middleware::from_fn(require_permission_middleware(
+            "events:read",
+        )));
+
+    let corporate_write_routes = Router::new()
+        .route(
+            "/api/v1/events/{eid}/packages",
+            post(corporate::create_package),
+        )
+        .route(
+            "/api/v1/events/{eid}/packages/{id}",
+            put(corporate::update_package).delete(corporate::delete_package),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings",
+            post(corporate::create_booking),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}",
+            put(corporate::update_booking),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/tables",
+            post(corporate::add_table),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/tables/{tid}",
+            delete(corporate::remove_table),
+        )
+        .route(
+            "/api/v1/events/{eid}/tables/open",
+            post(corporate::create_open_table),
+        )
+        .route(
+            "/api/v1/events/{eid}/parking-variants",
+            post(corporate::create_parking_variant),
+        )
+        .route(
+            "/api/v1/events/{eid}/parking-variants/{id}",
+            delete(corporate::delete_parking_variant),
+        )
+        .layer(middleware::from_fn(require_permission_middleware(
+            "events:write",
+        )));
+
+    let corporate_payment_routes = Router::new()
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/confirm",
+            post(corporate::confirm_booking),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/invoice",
+            post(corporate::generate_booking_invoice),
+        )
+        .layer(middleware::from_fn(require_permission_middleware(
+            "payments:write",
         )));
 
     // ── File upload routes ──────────────────────────────────────────────────────
@@ -239,6 +347,27 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/v1/events/{eid}/guests/{id}/verify-email",
             post(guest::send_email_verification),
         )
+        .route(
+            "/api/v1/events/{eid}/guests/{id}/issue-card",
+            post(crate::handlers::card_issuing::issue_card),
+        )
+        .route(
+            "/api/v1/events/{eid}/guests/{id}/approve-card",
+            post(crate::handlers::card_issuing::approve_card),
+        )
+        .route(
+            "/api/v1/events/{eid}/guests/{id}/withdraw-approval",
+            post(crate::handlers::card_issuing::withdraw_approval),
+        )
+        .route(
+            "/api/v1/events/{eid}/arrival-messages",
+            get(crate::handlers::arrival::list_messages)
+                .post(crate::handlers::arrival::create_message),
+        )
+        .route(
+            "/api/v1/events/{eid}/arrival-messages/{id}",
+            delete(crate::handlers::arrival::delete_message),
+        )
         .route("/api/v1/events/{eid}/guest/{id}", get(guest::get_guest))
         .layer(middleware::from_fn(require_permission_middleware(
             "guests:read",
@@ -284,6 +413,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         ))
         .layer(middleware::from_fn(require_permission_middleware(
             "scanner:read",
+        )));
+
+    let scanner_write_routes = Router::new()
+        .route(
+            "/api/v1/events/{eid}/scan/override",
+            post(scanner::override_check_in),
+        )
+        .layer(middleware::from_fn(require_permission_middleware(
+            "scanner:write",
         )));
 
     // ── Michango routes ───────────────────────────────────────────────────────
@@ -585,9 +723,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(log_routes)
         .merge(staff_read_routes)
         .merge(staff_write_routes)
+        .merge(corporate_read_routes)
+        .merge(corporate_write_routes)
+        .merge(corporate_payment_routes)
         .merge(guest_routes)
         .merge(invitation_routes)
         .merge(scanner_routes)
+        .merge(scanner_write_routes)
         .merge(michango_routes)
         .merge(broadcast_routes)
         .merge(billing_routes)

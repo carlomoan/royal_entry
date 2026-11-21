@@ -44,6 +44,7 @@ struct PublicInvitationRow {
     rsvp_deadline: Option<NaiveDate>,
     entry_start_time: Option<String>,
     entry_end_time: Option<String>,
+    parking_instructions: Option<String>,
     rsvp_response: Option<String>,
     rsvp_responded_at: Option<DateTime<Utc>>,
 }
@@ -96,6 +97,14 @@ pub struct PublicEventMeta {
     pub rsvp_deadline: Option<NaiveDate>,
     pub entry_start_time: Option<String>,
     pub entry_end_time: Option<String>,
+    pub parking_instructions: Option<String>,
+    parking_variants: Vec<ParkingVariantMeta>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ParkingVariantMeta {
+    pub class_name: String,
+    pub instructions: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -153,6 +162,7 @@ async fn fetch_public_invitation(
             e.rsvp_deadline,
             e.entry_start_time,
             e.entry_end_time,
+            e.parking_instructions,
             r.response AS rsvp_response,
             r.responded_at AS rsvp_responded_at
         FROM invitations i
@@ -170,8 +180,18 @@ async fn fetch_public_invitation(
     Ok(row)
 }
 
-fn to_public_payload(state: &Arc<AppState>, row: PublicInvitationRow) -> PublicInvitationPayload {
+async fn to_public_payload(state: &Arc<AppState>, row: PublicInvitationRow) -> PublicInvitationPayload {
     let frontend_url = &state.config.app.frontend_url;
+    let parking_variants = sqlx::query_as::<_, (String, String)>(
+        "SELECT class_name, instructions FROM event_parking_variants WHERE event_id = $1 ORDER BY class_name",
+    )
+    .bind(row.event_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(class_name, instructions)| ParkingVariantMeta { class_name, instructions })
+    .collect();
 
     PublicInvitationPayload {
         invitation: PublicInvitationMeta {
@@ -209,6 +229,8 @@ fn to_public_payload(state: &Arc<AppState>, row: PublicInvitationRow) -> PublicI
             rsvp_deadline: row.rsvp_deadline,
             entry_start_time: row.entry_start_time,
             entry_end_time: row.entry_end_time,
+            parking_instructions: row.parking_instructions,
+            parking_variants,
         },
         rsvp: PublicRsvpMeta {
             response: row.rsvp_response.unwrap_or_else(|| "pending".to_string()),
@@ -244,7 +266,7 @@ pub async fn get_public_invitation(
 
     Ok(Json(json!({
         "success": true,
-        "data": to_public_payload(&state, fresh),
+        "data": to_public_payload(&state, fresh).await,
     })))
 }
 
@@ -292,6 +314,6 @@ pub async fn submit_public_rsvp(
     Ok(Json(json!({
         "success": true,
         "message": "RSVP updated",
-        "data": to_public_payload(&state, fresh),
+        "data": to_public_payload(&state, fresh).await,
     })))
 }

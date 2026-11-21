@@ -26,6 +26,9 @@ pub struct Guest {
     pub telegram_chat_id: Option<String>, // set when the guest links their Telegram via /start
     pub email_verified: bool,
     pub email_verification_token: Option<String>,
+    pub party_size: i32,
+    pub seat_number: Option<String>,
+    pub card_issued_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -45,6 +48,9 @@ pub struct GuestResponse {
     pub contact_method: String,
     pub telegram_chat_id: Option<String>,
     pub email_verified: bool,
+    pub party_size: i32,
+    pub seat_number: Option<String>,
+    pub card_issued_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -63,6 +69,9 @@ impl From<Guest> for GuestResponse {
             contact_method: guest.contact_method,
             telegram_chat_id: guest.telegram_chat_id,
             email_verified: guest.email_verified,
+            party_size: guest.party_size,
+            seat_number: guest.seat_number,
+            card_issued_at: guest.card_issued_at,
             created_at: guest.created_at,
         }
     }

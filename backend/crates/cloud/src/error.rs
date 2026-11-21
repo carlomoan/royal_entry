@@ -59,6 +59,9 @@ pub enum AppError {
     #[error("Bad request: {0}")]
     BadRequest(String),
 
+    #[error("Identity confirmation required")]
+    OtpRequired,
+
     // ========================================================================
     // Authorization Errors
     // ========================================================================
@@ -252,6 +255,11 @@ impl IntoResponse for AppError {
             // ====================================================================
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg),
             AppError::ValidationError(msg) => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR", msg),
+            AppError::OtpRequired => (
+                StatusCode::PRECONDITION_REQUIRED,
+                "OTP_REQUIRED",
+                "Identity confirmation required. Send a one-time code to the guest.".to_string(),
+            ),
             AppError::InvalidQrCode => (
                 StatusCode::BAD_REQUEST,
                 "INVALID_QR_CODE",

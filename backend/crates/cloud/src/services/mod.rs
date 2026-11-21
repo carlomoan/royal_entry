@@ -7,6 +7,7 @@ pub mod messaging;
 pub mod mpesa;
 pub mod notifications;
 pub mod pdf;
+pub mod reminders;
 pub mod scheduler;
 pub mod sms;
 pub mod templates;

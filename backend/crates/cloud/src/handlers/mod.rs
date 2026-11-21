@@ -1,10 +1,13 @@
 // ==============================================================================
 // FILE: crates/cloud/src/handlers/mod.rs
 // ==============================================================================
+pub mod arrival;
 pub mod audit;
 pub mod auth;
+pub mod card_issuing;
 pub mod billing;
 pub mod broadcast;
+pub mod corporate;
 pub mod event;
 pub mod event_assignment;
 pub mod guest;

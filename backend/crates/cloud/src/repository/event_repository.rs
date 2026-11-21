@@ -5,7 +5,7 @@
 
 use sqlx::PgPool;
 use uuid::Uuid;
-use chrono::{Utc, NaiveDate};
+use chrono::{DateTime, Utc, NaiveDate};
 use crate::models::event::{Event, CreateEventRequest, UpdateEventRequest};
 use crate::error::AppResult;
 
@@ -37,10 +37,21 @@ impl EventRepository {
             INSERT INTO events (
                 id, organization_id, created_by_user_id, title, description,
                 event_date, event_time, venue_name, venue_address,
-                dress_code, card_theme, card_template_id, checkin_card_template_id, main_characters, guest_count_expected, rsvp_deadline,
+                dress_code, card_theme, card_template_id, checkin_card_template_id,
+                event_mode, checkin_policy, min_percent, card_issue_at, parking_instructions,
+                otp_mode, otp_channels, pledge_deadline_at, min_pledge_per_person,
+                min_pledge_plus_one, payment_instructions,
+                main_characters, guest_count_expected, rsvp_deadline,
                 status, approval_status, send_save_the_date, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                COALESCE($14, 'family'), COALESCE($15, 'family_approval'), COALESCE($16, 100),
+                $17, $18, COALESCE($19, 'feature_phone_only'),
+                COALESCE($20, ARRAY['sms','whatsapp','email']),
+                $21, $22, $23, $24,
+                $25, $26, $27, 'draft', 'pending', COALESCE($28, TRUE), $29, $29
+            )
             RETURNING *
             "#
         )
@@ -57,13 +68,21 @@ impl EventRepository {
         .bind(&req.card_theme)
         .bind(&req.card_template_id)
         .bind(&req.checkin_card_template_id)
+        .bind(&req.event_mode)
+        .bind(&req.checkin_policy)
+        .bind(&req.min_percent)
+        .bind(req.card_issue_at.as_ref().map(|s| s.parse::<DateTime<Utc>>()).transpose().map_err(|_| crate::error::AppError::BadRequest("Invalid card_issue_at".to_string()))?)
+        .bind(&req.parking_instructions)
+        .bind(&req.otp_mode)
+        .bind(&req.otp_channels)
+        .bind(req.pledge_deadline_at.as_ref().map(|s| s.parse::<DateTime<Utc>>()).transpose().map_err(|_| crate::error::AppError::BadRequest("Invalid pledge_deadline_at".to_string()))?)
+        .bind(&req.min_pledge_per_person)
+        .bind(&req.min_pledge_plus_one)
+        .bind(&req.payment_instructions)
         .bind(&req.main_characters)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)
-        .bind("draft") // Initial status
-        .bind("pending") // Initial approval status
-        .bind(req.send_save_the_date.unwrap_or(true)) // send_save_the_date default
-        .bind(now)
+        .bind(&req.send_save_the_date)
         .bind(now)
         .fetch_one(pool)
         .await?;
@@ -163,11 +182,22 @@ impl EventRepository {
                 card_theme = COALESCE($9, card_theme),
                 card_template_id = COALESCE($10, card_template_id),
                 checkin_card_template_id = COALESCE($11, checkin_card_template_id),
-                main_characters = COALESCE($12, main_characters),
-                guest_count_expected = COALESCE($13, guest_count_expected),
-                rsvp_deadline = $14,
-                send_save_the_date = COALESCE($15, send_save_the_date),
-                updated_at = $16
+                event_mode = COALESCE($12, event_mode),
+                checkin_policy = COALESCE($13, checkin_policy),
+                min_percent = COALESCE($14, min_percent),
+                card_issue_at = COALESCE($15, card_issue_at),
+                parking_instructions = COALESCE($16, parking_instructions),
+                otp_mode = COALESCE($17, otp_mode),
+                otp_channels = COALESCE($18, otp_channels),
+                pledge_deadline_at = COALESCE($19, pledge_deadline_at),
+                min_pledge_per_person = COALESCE($20, min_pledge_per_person),
+                min_pledge_plus_one = COALESCE($21, min_pledge_plus_one),
+                payment_instructions = COALESCE($22, payment_instructions),
+                main_characters = COALESCE($23, main_characters),
+                guest_count_expected = COALESCE($24, guest_count_expected),
+                rsvp_deadline = $25,
+                send_save_the_date = COALESCE($26, send_save_the_date),
+                updated_at = $27
             WHERE id = $1
             RETURNING *
             "#
@@ -183,6 +213,17 @@ impl EventRepository {
         .bind(&req.card_theme)
         .bind(&req.card_template_id)
         .bind(&req.checkin_card_template_id)
+        .bind(&req.event_mode)
+        .bind(&req.checkin_policy)
+        .bind(&req.min_percent)
+        .bind(req.card_issue_at.as_ref().map(|s| s.parse::<DateTime<Utc>>()).transpose().map_err(|_| crate::error::AppError::BadRequest("Invalid card_issue_at".to_string()))?)
+        .bind(&req.parking_instructions)
+        .bind(&req.otp_mode)
+        .bind(&req.otp_channels)
+        .bind(req.pledge_deadline_at.as_ref().map(|s| s.parse::<DateTime<Utc>>()).transpose().map_err(|_| crate::error::AppError::BadRequest("Invalid pledge_deadline_at".to_string()))?)
+        .bind(&req.min_pledge_per_person)
+        .bind(&req.min_pledge_plus_one)
+        .bind(&req.payment_instructions)
         .bind(&req.main_characters)
         .bind(&req.guest_count_expected)
         .bind(&rsvp_deadline)

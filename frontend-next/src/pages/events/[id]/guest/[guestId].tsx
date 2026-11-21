@@ -135,6 +135,15 @@ export default function GuestCardPage() {
   const invitation = invitations.find((i: any) => i.guest_id === guestId);
   const pledge = pledges.find((p: any) => p.guest_id === guestId);
 
+  // Arrival message on the guest's own card page (auto-recognised by their token).
+  const { data: arrivalData } = useQuery({
+    queryKey: ["arrival-message", eventId, invitation?.short_link],
+    queryFn: async () =>
+      (await api.post(`/public/w/${eventId}/view`, { code: invitation?.short_link })).data.data,
+    enabled: !!eventId && !!invitation?.short_link,
+    retry: false,
+  });
+
   const isLoading = guestLoading || eventLoading;
   const hasError = guestError || (!guest && !isLoading) || (!event && !isLoading);
 
@@ -386,6 +395,27 @@ export default function GuestCardPage() {
                     <p className="text-sm text-slate-500">No card template assigned to this event</p>
                     <p className="text-xs text-slate-400 mt-1">Open the event and choose an invitation card design</p>
                   </div>
+                </div>
+              )}
+
+              {/* Arrival message — shown automatically after check-in */}
+              {arrivalData?.messages?.length > 0 && (
+                <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gold-700">Welcome message</p>
+                  {arrivalData.messages.map((m: any) => (
+                    <div key={m.id} className="rounded-xl border border-gold-200 bg-gold-50/40 p-4">
+                      <h3 className="font-bold text-slate-900">{m.title}</h3>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{m.body}</p>
+                      {m.media_url && (
+                        <a href={m.media_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-gold-700 hover:underline">
+                          Open {m.media_type ?? "media"} →
+                        </a>
+                      )}
+                      {m.contribution_block && (
+                        <p className="mt-2 whitespace-pre-wrap rounded-lg bg-white/70 p-3 text-sm text-slate-700">{m.contribution_block}</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </Card>

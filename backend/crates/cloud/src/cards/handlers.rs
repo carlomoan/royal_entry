@@ -6,13 +6,12 @@ use crate::{
     error::{AppError, AppResult},
     files::storage::Storage,
     models::user::Claims,
-    utils::rbac::is_platform_role,
     AppState,
 };
-use sqlx::Row;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::{imageops::FilterType, DynamicImage, ImageFormat, Rgba};
 use qrcode::QrCode;
+use sqlx::Row;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -53,19 +52,7 @@ pub async fn create_card_template(
             "Template name is required".to_string(),
         ));
     }
-    // Only platform roles may publish templates to the shared SaaS catalog;
-    // for them sharing is the default. Account roles always create private templates.
-    let payload = CreateCardTemplateRequest {
-        is_global: Some(payload.is_global.unwrap_or(true) && is_platform_role(&claims.role)),
-        ..payload
-    };
-    let template = match repository::create_template(state.db.pool(), org_id, payload).await {
-        Ok(template) => template,
-        Err(error) => {
-            tracing::error!(organization_id = %org_id, error = %error, "Failed to create card template");
-            return Err(error);
-        }
-    };
+    let template = repository::create_template(state.db.pool(), org_id, payload).await?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -81,15 +68,6 @@ pub async fn update_card_template(
     Json(payload): Json<UpdateCardTemplateRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
-    // Only platform roles may toggle sharing to the SaaS catalog.
-    let payload = UpdateCardTemplateRequest {
-        is_global: if is_platform_role(&claims.role) {
-            payload.is_global
-        } else {
-            None // keep existing value (always private for account templates)
-        },
-        ..payload
-    };
     let template = repository::update_template(state.db.pool(), id, org_id, payload).await?;
     Ok(Json(
         json!({ "success": true, "message": "Card template updated", "data": template }),
@@ -115,7 +93,7 @@ pub async fn upload_template_image(
     mut multipart: axum::extract::Multipart,
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
-    let _ = repository::get_owned_template(state.db.pool(), id, org_id).await?; // Verify ownership
+    let _ = repository::get_template(state.db.pool(), id, org_id).await?; // Verify ownership
 
     while let Some(field) = multipart
         .next_field()
@@ -250,7 +228,7 @@ async fn render_for_guest(
     }
     let storage = crate::files::storage::LocalStorage::new("uploads/cards");
     // Backgrounds live under the template owner's org directory, so shared
-    // platform templates stay renderable for every organization.
+    // platform templates render correctly for every organization.
     let storage_path = format!("{}/{}", template.org_id, file_id);
     let front_bytes = storage.download(&storage_path).await.map_err(|_| AppError::FileNotFound)?;
     let mut front = image::load_from_memory(&front_bytes)
@@ -277,39 +255,15 @@ async fn render_for_guest(
         return Err(AppError::BadRequest("QR position falls outside the card bounds".to_string()));
     }
 
-    // QR codes are square — use the smaller side so the stamp never stretches.
-    let side = width.min(height);
     let qr_code = QrCode::new(qr_url.as_bytes()).map_err(|error| AppError::QrGenerationError(error.to_string()))?;
     let qr = qr_code
         .render::<Rgba<u8>>()
-        .min_dimensions(side.max(1), side.max(1))
+        .min_dimensions(width.max(1), height.max(1))
         .dark_color(Rgba([0, 0, 0, 255]))
         .light_color(Rgba([0, 0, 0, 0]))
         .build();
-    let qr = image::imageops::resize(&qr, side, side, FilterType::Nearest);
+    let qr = image::imageops::resize(&qr, width, height, FilterType::Nearest);
     image::imageops::overlay(&mut front, &qr, i64::from(left), i64::from(top));
-
-    // Optional guest-name stamp positioned by the template designer.
-    if let Some(name_pos) = config.get("guest_name_position").and_then(serde_json::Value::as_object) {
-        let n = |key: &str| -> f32 {
-            name_pos.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32
-        };
-        let guest_name: String = sqlx::query_scalar("SELECT full_name FROM guests WHERE id = $1")
-            .bind(guest_id)
-            .fetch_one(state.db.pool())
-            .await?;
-        let (card_w, card_h) = (front.width(), front.height());
-        crate::cards::renderer::stamp_guest_name(
-            &mut front,
-            &guest_name,
-            n("x"),
-            n("y"),
-            n("w"),
-            n("h"),
-            card_w,
-            card_h,
-        );
-    }
 
     let mut output = Cursor::new(Vec::new());
     DynamicImage::ImageRgba8(front)

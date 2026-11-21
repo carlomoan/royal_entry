@@ -6,6 +6,7 @@ import { useRouter } from "next/router";
 import {
   ArrowLeft, ScanLine, UserCheck, Clock, QrCode, MessageSquare,
   MessageCircle, CheckCircle2, XCircle, ShieldCheck, Loader2, Zap,
+  AlertTriangle, ShieldAlert,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -27,6 +28,8 @@ export default function ScannerPage() {
   const [mode, setMode] = useState<ScanMode>("qr");
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
+  // Tracks the last submitted QR/manual link so onError can prefill the OTP form.
+  const lastLinkRef = useRef<string>("");
   const [scanInterval, setScanInterval] = useState<NodeJS.Timeout | null>(null);
 
   // QR mode state
@@ -37,7 +40,12 @@ export default function ScannerPage() {
   const [link, setLink] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState<string | null>(null);
-  const [smsResult, setSmsResult] = useState<{ status: "ok" | "fail" | null; message: string }>({ status: null, message: "" });
+  const [smsResult, setSmsResult] = useState<{ status: "ok" | "fail" | "warn" | null; message: string }>({ status: null, message: "" });
+
+  // Manual override (exceptional, logged) state
+  const [showOverride, setShowOverride] = useState(false);
+  const [overrideLink, setOverrideLink] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
 
   // Live QR scanning from camera stream using jsQR
   useEffect(() => {
@@ -108,17 +116,30 @@ export default function ScannerPage() {
         scan_source: payload.scan_source,
       }),
     onSuccess: (r: any) => {
+      const d = r.data?.data ?? {};
       // Offline queued check-in: resolve the guest name from the local cache.
       const guest =
         r.data?.queued_offline
           ? (findGuestByLink(id, code)?.full_name ?? "guest")
-          : (r.data.data?.guest_name ?? "guest");
-      const category = r.data.data?.guest_category;
-      const table = r.data.data?.table_number;
-      const seat = table ? ` · Table ${table}` : "";
+          : (d.guest_name ?? "guest");
+      const category = d.guest_category;
+      const location = [
+        d.table_number ? `Table ${d.table_number}` : null,
+        d.seat_number ? `Seat ${d.seat_number}` : null,
+      ].filter(Boolean).join(", ");
+      const locPart = location ? ` · ${location}` : "";
       const cls = category ? ` · ${category}` : "";
+      const entryPart =
+        d.entries_used != null && d.party_size != null
+          ? ` · Entry ${d.entries_used} of ${d.party_size} on this card`
+          : "";
+      const affiliation = [d.company_name, d.package_name].filter(Boolean).join(" · ");
+      const affiliationPart = affiliation ? ` · ${affiliation}` : "";
       const suffix = r.data?.queued_offline ? " (offline — will sync)" : "";
-      setResult({ status: "ok", message: `Welcome, ${guest}! Checked in successfully.${cls}${seat}${suffix}` });
+      setResult({
+        status: "ok",
+        message: `Welcome, ${guest}! Checked in successfully.${cls}${locPart}${entryPart}${affiliationPart}${suffix}`,
+      });
       toast.success(`Welcome, ${guest}!${suffix}`);
       setCode("");
 
@@ -129,6 +150,19 @@ export default function ScannerPage() {
     },
     onError: (e: any) => {
       const status = e?.response?.status;
+      const errorCode = e?.response?.data?.error?.code;
+      if (status === 428 || errorCode === "OTP_REQUIRED") {
+        // Backend requires identity confirmation — hand off to the OTP flow.
+        const msg = "Identity confirmation required — send a one-time code to this guest.";
+        setMode("sms");
+        setLink(lastLinkRef.current);
+        setOtpSent(null);
+        setOtp("");
+        setResult({ status: null, message: "" });
+        setSmsResult({ status: "warn", message: msg });
+        toast.error(msg);
+        return;
+      }
       const msg =
         status === 409 ? "QR code already used or guest already checked in." :
         status === 404 ? "Invalid QR code. Guest not found." :
@@ -173,6 +207,7 @@ export default function ScannerPage() {
     setResult({ status: null, message: "" });
     const link = code.trim();
     if (!link) { toast.error("Please scan or enter a QR code"); return; }
+    lastLinkRef.current = link;
 
     // Offline check-in: resolve from the local cache, record locally, and queue.
     // The mutation's onSuccess shows the welcome + queues for sync.
@@ -190,7 +225,7 @@ export default function ScannerPage() {
         return;
       }
       markOfflineArrival(id, link, guest.full_name);
-      checkInMutation.mutate({ short_link: link, scan_source: "qr" });
+      checkInMutation.mutate({ short_link: link, scan_source: "qr_offline" });
       return;
     }
 
@@ -266,6 +301,48 @@ export default function ScannerPage() {
     }
     if (!otp.trim()) { toast.error("Please enter the OTP"); return; }
     verifyOtpMutation.mutate({ short_link: otpSent!, code: otp.trim() });
+  };
+
+  /* ── Manual override (logged, exceptional) ───────────────────────────── */
+  const overrideMutation = useMutation({
+    mutationFn: (payload: { short_link?: string; reason: string }) =>
+      api.post(`/events/${id}/scan/override`, {
+        short_link: payload.short_link,
+        reason: payload.reason,
+      }),
+    onSuccess: (r: any) => {
+      const guest = r.data?.data?.guest_name ?? "guest";
+      setSmsResult({
+        status: "warn",
+        message: `Manual override applied for ${guest}. This override was logged.`,
+      });
+      toast.success(`Manual override applied for ${guest}`);
+      setShowOverride(false);
+      setOverrideReason("");
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+      qc.invalidateQueries({ queryKey: ["scan-stats", id] });
+    },
+    onError: (e: any) => {
+      const msg = e?.response?.data?.error?.message ?? "Manual override failed.";
+      setSmsResult({ status: "fail", message: msg });
+      toast.error(msg);
+      if (navigator.vibrate) navigator.vibrate(300);
+    },
+  });
+
+  const handleOverride = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSmsResult({ status: null, message: "" });
+    if (offline) {
+      setSmsResult({ status: "fail", message: "Manual override requires an internet connection." });
+      toast.error("Manual override requires online");
+      return;
+    }
+    if (!overrideReason.trim()) { toast.error("Please provide a reason for the override"); return; }
+    overrideMutation.mutate({
+      short_link: overrideLink.trim() || undefined,
+      reason: overrideReason.trim(),
+    });
   };
 
   // Cleanup on unmount
@@ -469,13 +546,70 @@ export default function ScannerPage() {
                   </form>
                 )}
 
+                {/* Manual override — exceptional, logged action */}
+                <div className="border-t border-slate-200 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOverride((v) => !v);
+                      setOverrideLink(otpSent ?? link);
+                      setSmsResult({ status: null, message: "" });
+                    }}
+                    className="text-sm font-semibold text-amber-700 hover:text-amber-800 hover:underline"
+                  >
+                    {showOverride ? "Hide manual override" : "No code delivered? Manual override"}
+                  </button>
+
+                  {showOverride && (
+                    <form onSubmit={handleOverride} className="mt-3 space-y-3 rounded-xl border border-amber-300 bg-amber-50/60 p-4">
+                      <div className="flex items-start gap-2 text-xs text-amber-800">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                        <p>Use only when no OTP channel can reach the guest. This action is logged.</p>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-amber-900">Invitation link (optional)</label>
+                        <Input
+                          placeholder="Leave blank to use the scanned link"
+                          value={overrideLink}
+                          onChange={(e) => setOverrideLink(e.target.value)}
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-amber-900">Reason (required)</label>
+                        <Input
+                          placeholder="e.g. Guest phone unavailable"
+                          value={overrideReason}
+                          onChange={(e) => setOverrideReason(e.target.value)}
+                          className="text-sm"
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        isLoading={overrideMutation.isPending}
+                        className="w-full border-amber-400 py-3 text-base font-bold text-amber-800 hover:bg-amber-100"
+                      >
+                        {overrideMutation.isPending
+                          ? <Loader2 className="h-5 w-5 animate-spin" />
+                          : <ShieldAlert className="h-5 w-5" />}
+                        Confirm Manual Override
+                      </Button>
+                    </form>
+                  )}
+                </div>
+
                 {smsResult.status && (
                   <div className={cn(
                     "flex items-start gap-3 rounded-xl border p-4 text-base font-semibold shadow-sm",
-                    smsResult.status === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"
+                    smsResult.status === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : smsResult.status === "warn" ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-rose-200 bg-rose-50 text-rose-800"
                   )}>
                     {smsResult.status === "ok"
                       ? <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0" />
+                      : smsResult.status === "warn"
+                      ? <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0" />
                       : <XCircle className="mt-0.5 h-6 w-6 flex-shrink-0" />}
                     <span className="leading-tight">{smsResult.message}</span>
                   </div>

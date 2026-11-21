@@ -112,6 +112,11 @@ is notified of the outcome.
    - **Save the Date** — sends save-the-date messages (requires all pledges paid).
    - **Invitation Card Design** panel — change the card template for the event.
 4. **Scanner** — open the door scanner for this event.
+5. **Gate dashboard** — see who is expected/arrived and table occupancy (§4.12).
+
+> Choose the event **Mode** (`family` or `corporate`) in the **Overview** tab's
+> **Event Settings** editor (§4.9). Corporate events get an extra
+> **Packages & Bookings** tab (§4.11).
 
 ### 4.2 Guests
 1. **Guests** tab → **Add Guest** or **Import CSV** (download the template first).
@@ -141,6 +146,10 @@ is notified of the outcome.
    collection progress bar.
 4. **Reminders** — send payment reminders to pending/partial/overdue guests.
 5. Fully-paid guests get a **Guest card** button (check-in card).
+6. **Family events** — under the event's card-issuing policy you can **Issue card**,
+   **Approve** a partly-paid guest's card, or **Withdraw approval** (§4.10).
+7. **Automatic reminders** go out before the pledge deadline and when overdue —
+   you do not need to send them manually (§4.10).
 
 ### 4.5 Broadcast
 1. **Broadcast** tab → **New Broadcast** — pick channel (SMS/WhatsApp/Email),
@@ -155,6 +164,9 @@ is notified of the outcome.
    recorded locally and **sync automatically when you're back online** (a banner
    shows the pending count). OTP verification needs a connection.
 4. Scanner Attendants land directly on the Scanner hub.
+5. **OTP gate** — if the event requires OTP, a QR scan asks for the SMS code first (§4.13).
+6. **Party size** — one card can be scanned up to the guest's `party_size` times (§4.13).
+7. **Manual override** — use the amber panel with a required reason if a guest cannot check in (§4.13).
 
 ### 4.7 Reports
 **Reports** — summary + exportable reports (events, guests, payments, michango,
@@ -164,31 +176,129 @@ broadcasts) as CSV.
 **Settings** — organization profile, account settings, and **team management**
 (create users, assign account roles).
 
+### 4.9 Event settings: mode, card policy, OTP and parking
+Open an event → **Overview** tab → **Event Settings** editor.
+
+1. **Mode** — choose `family` (default) or `corporate`. Corporate events get the
+   extra **Packages & Bookings** tab (§4.11); family events use the pledge/card
+   flow (§4.10).
+2. **Card-issuing policy** — `family_approval` (organizer approves partly-paid
+   guests), `full_payment` (card only after the pledge is fully paid), or
+   `min_percent` plus a **Minimum %** and optional **Card issue at** date/time.
+3. **Gate OTP** — `otp_mode` = `all`, `feature_phone_only`, or `off`, and an
+   ordered `otp_channels` list (`sms`, `whatsapp`, `email`). This controls what
+   the scanner requires at the door (§4.13).
+4. **Family pledge settings** — minimum pledge per person / plus-one, a
+   timestamped **Pledge deadline**, and **Payment instructions** shown on the
+   guest invitation.
+5. **Parking** — general **Parking instructions**, plus **per-class parking
+   variants** (class name + instructions). Add or delete variants; guests see
+   them as "Parking by class" on their invitation page.
+6. **Arrival messages** — use the **Arrival Messages** editor in the Overview tab
+   to set the message guests see on their own card after check-in. A venue QR
+   page (`/w/{event}`) and SMS to feature phones deliver the same message.
+
+Save with **Save settings**.
+
+### 4.10 Family flow: approving cards and the guest invitation
+1. Open the event → **Michango** tab. Each guest shows a pledge status and card
+   actions.
+2. **Issue card** (`POST /events/{eid}/guests/{id}/issue-card`) — issue a check-in
+   card to a guest who meets the event's card policy.
+3. For a **partly-paid** guest under `family_approval`, use **Approve**
+   (`approve-card`) to allow their card; use **Withdraw approval**
+   (`withdraw-approval`) to revoke it. The check-in link `/g/{token}` only works
+   once the card is active.
+4. Guests open their QR-free invitation page `/i/{token}`. It shows the pledge
+   amount and status, payment instructions, general parking instructions and a
+   **Parking by class** block with the variant matching their guest class.
+5. **Automatic reminders** are sent 14, 7, 3 and 1 days before the pledge
+   deadline, on the deadline morning, and when overdue — between 09:00 and
+   18:00 EAT. They are idempotent (tracked per stage) and run hourly, so you do
+   not need to send them manually.
+
+### 4.11 Corporate events: packages, bookings, passes and invoices
+Available on events whose mode is `corporate` — open the event →
+**Packages & Bookings** tab.
+
+1. **Packages** — create a package with a name, price (TZS), seats per table,
+   card template and an active flag.
+2. **Bookings** — add a booking with company name, contact, chosen packages and
+   quantities, and notes.
+3. **Confirm payment** — record the bank reference/proof and amount. Installments
+   are allowed; the remaining balance is shown on the booking.
+4. **Passes** — once confirmed, one guest pass is created per seat, named
+   "Company — Package seat N". Check-in links are sent to the contact by email
+   or SMS.
+5. **Tables** — assign tables to a booking (`POST /events/{eid}/bookings/{id}/tables`)
+   or open shared tables (`/events/{eid}/tables/open`) that several bookings can
+   use.
+6. **Seating suggestion** — click **Suggest** for a booking
+   (`GET /events/{eid}/seating/suggest?booking_id=...`). Priority is the booking's
+   own tables → open tables → the next free table. The usher confirms the
+   suggestion; an extra seat can be invoiced.
+7. **Invoice** — **Generate invoice** (`POST /events/{eid}/bookings/{id}/invoice`)
+   creates an idempotent booking invoice using the organizer's TIN and VAT rate
+   from account tax settings; view it with `GET .../invoice`.
+8. **Corporate report** — `GET /events/{eid}/corporate-report` summarises revenue,
+   paid, balance, passes and attendance by package, company and table.
+
+### 4.12 Gate dashboard
+Open an event → **Gate dashboard** (button next to **Scanner**), or visit
+`/events/{id}/gate-dashboard`. It refreshes automatically and shows:
+
+- expected vs arrived counts and table occupancy;
+- a searchable guest list with company, package, party size and entries used.
+
+Use it at the door to see who is still expected and how full each table is.
+
+### 4.13 Scanner: OTP-required scans, party size and manual override
+1. **OTP gate** — when the event's `otp_mode` requires it, scanning a QR returns
+   HTTP 428 `OTP_REQUIRED` and the scanner switches to **SMS OTP** mode. Enter the
+   code sent to the guest (channels are tried in the order set in event settings)
+   to complete check-in. Feature phones can be restricted via
+   `feature_phone_only`; `off` disables the gate.
+2. **Party size** — a card can be scanned up to the guest's `party_size` times
+   (e.g. a couple on one card enters separately). The invitation is marked
+   scanned only after the last entry.
+3. **Manual override** — if a guest cannot present a valid code, use the amber
+   **Manual override** panel (`POST /events/{eid}/scan/override`). A **reason is
+   required** and is logged together with your operator id.
+4. **Offline scans** — queued offline check-ins are sent with
+   `scan_source: qr_offline` and flagged for review when they sync. Arrival
+   messages are still sent after check-in.
+
 ---
 
 ## 5. Role-specific walkthroughs
 
 ### Account Admin
-Everything in §4. Manage the team in **Settings → Users**, view **Audit** for the
-org, and configure account settings.
+Everything in §4, including event settings (§4.9), the family flow (§4.10),
+corporate packages/bookings (§4.11), the gate dashboard (§4.12) and scanner
+overrides (§4.13). Manage the team in **Settings → Users**, view **Audit** for
+the org, and configure account settings.
 
 ### Event Manager
-§4.1–§4.6. Cannot manage team, payments, or org settings.
+§4.1–§4.6, plus event settings (§4.9), corporate packages/bookings (§4.11) and
+the gate dashboard (§4.12). Cannot manage team, payments, or org settings.
 
 ### Event Accountant
 1. **Events** — view events (read-only).
 2. **Michango** — add pledges, record payments, send reminders.
 3. **Payments** — view payment records.
+4. **Corporate events** — view booking invoices and the corporate report (§4.11).
 
 ### Secretary
 1. **Events** — view events.
 2. **Guests** — full guest management (add/import/edit).
-3. **Invitations** — generate and send invitation links.
+3. **Invitations** — generate and send invitation links; guests see pledge and
+   parking details on their `/i/{token}` page (§4.10).
 4. **Broadcast** — read campaign history (cannot send).
 
 ### Scanner Attendant
 - The app opens the **Scanner** hub directly.
 - Scan QR codes or type SMS codes to check guests in.
+- Handle OTP-required scans, party-size entries and manual overrides (§4.13).
 - No other menus are visible.
 
 ### Viewer
@@ -218,6 +328,8 @@ org, and configure account settings.
 | Save-the-date blocked | All guests must have fully paid pledges first. |
 | Invitations "delivery failed" | Channel credentials missing on the server (Beem/Resend/WhatsApp/Telegram) — contact the platform admin. |
 | Platform menus missing | Your role is an account role; platform access requires a platform role. |
+| QR scan says "OTP required" | Normal when the event's `otp_mode` is `all` or `feature_phone_only` — switch to SMS OTP mode and enter the code sent to the guest. |
+| "Already scanned" but the party hasn't all entered | A card can be used `party_size` times; if all entries are used, use **Manual override** with a reason. |
 
 ---
 

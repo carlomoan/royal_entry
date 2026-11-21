@@ -526,7 +526,13 @@ pub async fn import_guests_csv(
         }
 
         match GuestRepository::create(state.db.pool(), event_id, &guest).await {
-            Ok(_) => imported += 1,
+            Ok(created) => {
+                imported += 1;
+                // Every guest gets a check-in link (QR / entry token) automatically.
+                let _ =
+                    crate::handlers::invitations::ensure_invitation(state.db.pool(), created.id)
+                        .await;
+            }
             Err(e) => {
                 skipped += 1;
                 import_errors.push(format!("Failed to import guest {}: {}", guest.full_name, e));

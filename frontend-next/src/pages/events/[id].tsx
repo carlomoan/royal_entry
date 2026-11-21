@@ -6,11 +6,14 @@ import {
   ArrowLeft, ArrowUpRight, Banknote, Radio, ScanLine, Users, Zap, QrCode, FileText, Mail,
   UserPlus, Upload, Download, FileUp, Plus, Trash2, CheckSquare, Square, MoreVertical,
   MessageSquare, Smartphone, Copy, ExternalLink, AlertCircle, Send, Bell, CheckCircle, Pencil,
-  Palette
+  Palette, LayoutDashboard
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Card, Badge, Button, StatCard, Modal, Input, Select } from "@/components/ui";
+import ArrivalMessagesEditor from "@/components/events/ArrivalMessagesEditor";
+import EventSettingsEditor from "@/components/events/EventSettingsEditor";
+import CorporateTab from "@/components/events/CorporateTab";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -179,7 +182,10 @@ export default function EventDetailPage() {
           { key: "michango", label: "Michango", icon: Banknote },
           { key: "broadcast", label: "Broadcast", icon: Radio },
           { key: "staff", label: "Staff", icon: Users },
-        ].map(({ key, label, icon: Icon }) => (
+          { key: "corporate", label: "Packages & Bookings", icon: LayoutDashboard },
+        ]
+          .filter((tab) => tab.key !== "corporate" || event?.event_mode === "corporate")
+          .map(({ key, label, icon: Icon }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -194,6 +200,12 @@ export default function EventDetailPage() {
           className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"
         >
           <ScanLine className="h-4 w-4" /> Scanner
+        </button>
+        <button
+          onClick={() => router.push(`/events/${id}/gate-dashboard`)}
+          className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"
+        >
+          <LayoutDashboard className="h-4 w-4" /> Gate dashboard
         </button>
       </div>
 
@@ -308,6 +320,10 @@ export default function EventDetailPage() {
               )}
             </div>
           </Card>
+
+          <ArrivalMessagesEditor eventId={id} />
+
+          <EventSettingsEditor eventId={id} />
         </>
       )}
 
@@ -315,6 +331,7 @@ export default function EventDetailPage() {
       {activeTab === "staff" && <EventStaffTab eventId={id} />}
       {activeTab === "broadcast" && <BroadcastTab eventId={id} />}
       {activeTab === "michango" && <MichangoTab eventId={id} />}
+      {activeTab === "corporate" && <CorporateTab eventId={id} />}
     </div>
   );
 }
@@ -622,6 +639,18 @@ function MichangoTab({ eventId }: { eventId: string }) {
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
   });
 
+  // Per-guest card issuing: issue, approve (family override), withdraw approval.
+  const cardActionMutation = useMutation({
+    mutationFn: ({ guestId, action }: { guestId: string; action: "issue" | "approve" | "withdraw" }) =>
+      api.post(`/events/${eventId}/guests/${guestId}/${action === "issue" ? "issue-card" : action === "approve" ? "approve-card" : "withdraw-approval"}`, action === "approve" ? { note: null } : {}),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["guests-for-pledge", eventId] });
+      qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
+      toast.success(vars.action === "withdraw" ? "Approval withdrawn" : vars.action === "approve" ? "Card approved and issued" : "Check-in card issued");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Card action failed"),
+  });
+
   const sendGuestInvitationMutation = useMutation({
     mutationFn: ({ guestId, channel }: { guestId: string; channel: string }) =>
       api.post(`/events/${eventId}/invitations/send`, { guest_ids: [guestId], channel }),
@@ -803,10 +832,28 @@ function MichangoTab({ eventId }: { eventId: string }) {
                           <Button size="sm" variant="ghost" onClick={() => reminderMutation.mutate(p.guest_id)}><Bell className="h-4 w-4" /></Button>
                         </>
                       )}
-                      {/* ✅ NEW: Show "Guest card" button ONLY if fully paid */}
+                      {/* Per-guest card issuing (family approval policy) */}
+                      {remainingAmount > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-gold-300 text-gold-700 hover:bg-gold-50"
+                          onClick={() => cardActionMutation.mutate({ guestId: p.guest_id, action: "approve" })}
+                          isLoading={cardActionMutation.isPending}
+                          title={`Approve card with balance ${formatTsh(remainingAmount)}`}
+                        >
+                          <CheckCircle className="h-4 w-4 mr-1" /> Approve card
+                        </Button>
+                      )}
                       {paymentStatus === "paid" && (
-                        <Button size="sm" variant="outline" className="border-gold-300 text-gold-700 hover:bg-gold-50" onClick={() => openGuestCard(p)}>
-                          <QrCode className="h-4 w-4 mr-1.5" /> Guest card
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-gold-300 text-gold-700 hover:bg-gold-50"
+                          onClick={() => cardActionMutation.mutate({ guestId: p.guest_id, action: "issue" })}
+                          isLoading={cardActionMutation.isPending}
+                        >
+                          <QrCode className="h-4 w-4 mr-1.5" /> Issue card
                         </Button>
                       )}
 

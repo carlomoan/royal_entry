@@ -1,7 +1,7 @@
 # RoyalEntry — Feature Status Matrix
 
 > **Status**: ✅ = Fully Implemented | ⚠️ = Partially Implemented | ❌ = Not Implemented
-> **Last Updated**: 2026-11-10
+> **Last Updated**: 2026-11-21
 
 ---
 
@@ -35,10 +35,27 @@
 | **Public Invitation Page** | `GET /public/invitations/{code}` | `PublicInvitation.tsx` | ✅ |
 | **Public RSVP** | `POST /public/invitations/{code}/rsvp` | RSVP form | ✅ |
 | **Card Template Design** | `cards/` renderer (rusttype: QR square + guest-name stamp) | Card Studio (QR + name boxes, corner handles, shared SaaS) | ✅ |
+| **Event Modes & Settings** | `events.event_mode` = `family`/`corporate`; card policy (`family_approval`/`full_payment`/`min_percent`), Gate OTP mode + ordered channels, pledge minimums/deadline, payment + parking instructions | `EventSettingsEditor.tsx` in the event Overview tab | ✅ |
+| **Per-class Parking Variants** | `GET/POST/DELETE /events/{eid}/parking-variants` | Parking instructions + variants editor in event settings | ✅ |
+| **Arrival Messages** | Venue QR `/w/{event}`, auto-shown on the guest's own card after check-in, SMS to feature phones | Editor in event Overview tab | ✅ |
+| **Gate Dashboard** | `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list) | `/events/{id}/gate-dashboard` page + link on event detail | ✅ |
 | **Recurring Events** | — | — | ❌ |
 | **Waitlist Management** | — | — | ❌ |
-| **Seat/Table Assignment** | — | — | ❌ |
+| **Seat/Table Assignment** | Table reservations + seating suggestions; `seat_number` field exists | No full seat-map UI yet | ⚠️ |
 | **Badge Printing** | — | — | ❌ |
+
+## 2A. Corporate Events (Packages & Bookings)
+
+| Feature | Backend | Frontend | Status |
+|---------|---------|----------|--------|
+| **Packages** | Name, price (TZS), seats/table, card template, active flag | `CorporateTab.tsx` — "Packages & Bookings" tab (corporate events only) | ✅ |
+| **Bookings** | Company, contact, packages + quantities, notes | Booking form + list | ✅ |
+| **Booking Payment Confirmation** | Bank reference/proof/amount; installments allowed, balance shown | Confirm-payment modal | ✅ |
+| **Automatic Pass Creation** | One guest per seat ("Company — Package seat N"), check-in links sent to contact by email/SMS | Pass list per booking | ✅ |
+| **Table Reservations & Open Tables** | `POST /events/{eid}/bookings/{id}/tables`, `/events/{eid}/tables/open` | Assign table / open shared tables | ✅ |
+| **Seating Suggestion** | `GET /events/{eid}/seating/suggest?booking_id=...` — own tables → open tables → next free table | Suggest button (usher confirms; extra seat invoiceable) | ✅ |
+| **Booking Invoices** | `POST/GET /events/{eid}/bookings/{id}/invoice`, idempotent, organizer TIN + VAT from tax settings | Generate/view invoice | ✅ |
+| **Corporate Report** | `GET /events/{eid}/corporate-report` by package/company/table — revenue, paid, balance, passes, attendance | Report table in tab | ✅ |
 
 ## 3. Guest Management
 
@@ -51,6 +68,7 @@
 | **Device Type** | `smartphone` / `feature_phone` for SMS/WhatsApp routing | Selector in guest form | ✅ |
 | **Email Verification** | `email_verified` + token; send + public verify endpoints | Verified badge + "Send verification" | ✅ |
 | **Telegram Linking** | `telegram_chat_id` + webhook (`/start <token>`) | "Link Telegram" on guest card | ✅ |
+| **Family Card Issuing & Approval** | `POST /events/{eid}/guests/{id}/issue-card`, `approve-card`, `withdraw-approval`; policy from event settings | Issue / Approve / Withdraw actions in Michango tab | ✅ |
 
 ## 4. QR Scanner
 
@@ -58,9 +76,12 @@
 |---------|---------|----------|--------|
 | **Check-in Guest** | `POST /events/{eid}/scan` | Scanner page with camera | ✅ |
 | **SMS OTP Check-in** | `send_otp` / `verify_otp` (email for smartphone, SMS for feature phone) | SMS-link mode | ✅ |
+| **OTP Gate Enforcement** | `otp_mode` = all / feature_phone_only / off; ordered `otp_channels` (sms/whatsapp/email); QR scan returns 428 `OTP_REQUIRED` | Scanner switches to SMS OTP mode on 428 | ✅ |
+| **Party-size Entry Counting** | Card scannable up to `party_size` times; invitation marked scanned only when all entries used | Entries-used count shown | ✅ |
+| **Manual Override** | `POST /events/{eid}/scan/override` with required reason, logged with operator id | Amber override panel | ✅ |
 | **Scan Stats** | `GET /events/{eid}/scan-stats` | Arrival rate, timeline chart | ✅ |
 | **Duplicate Scan Detection** | Returns `DuplicateScan` error | Toast notification | ✅ |
-| **Offline Scanning** | — | Local guest cache + offline check-in queue + sync | ✅ |
+| **Offline Scanning** | Offline scans send `scan_source: qr_offline`, flagged for review | Local guest cache + offline check-in queue + sync | ✅ |
 | **Kiosk Mode** | — | — | ❌ |
 
 ## 5. Michango (Pledge/Contribution)
@@ -71,6 +92,7 @@
 | **Pledge Summary** | `GET /events/{eid}/michango/summary` | Summary stat cards (fixed) | ✅ |
 | **Record Payment** | `POST /michango/{id}/payment` | Payment modal | ✅ |
 | **Reminders** | Send + list reminder deliveries | Reminder button + history | ✅ |
+| **Automatic Reminders** | 14/7/3/1 days before deadline, deadline morning, overdue; 09:00–18:00 EAT; idempotent via `reminder_stages`; hourly cron | — | ✅ |
 | **Payment Status** | pending, partial, paid, overdue | Status badges + progress bar | ✅ |
 
 ## 6. Broadcast (Messaging)
@@ -201,13 +223,35 @@
 
 | Status | Count | Details |
 |--------|-------|---------|
-| ✅ **Fully Implemented** | **~75** | Core auth + security (lockout, rate limit, forced password change, secret masking, 2h tokens), events (incl. account-admin activation), guests (incl. email verification, Telegram linking), scanner (incl. offline), michango, broadcast (selectors + unified channels), payments/billing (tax, TRA, invoice PDF, receipt/invoice UI), platform management, webhooks, email templates (5 system + CRUD), in-app notifications, offline sync (queue + read cache + offline scanning), settings hub (vertical tabs) |
-| ⚠️ **Partially Implemented** | **~8** | Broadcast dispatcher/worker (backend pipeline), retry scheduling (backend only), plan limits enforcement (no callers), live channel delivery (needs real credentials: Beem/WhatsApp/Telegram/SMTP app password), TRA e-invoice (best-effort, needs TRA spec) |
-| ❌ **Not Implemented** | **~12** | Recurring events, waitlist, seating, badge printing, kiosk mode, Stripe, SSO/SAML, custom domains, white-labeling, API keys, OpenAPI, SendGrid/Mailgun |
+| ✅ **Fully Implemented** | **~90** | Core auth + security, events (incl. account-admin activation, modes/settings, per-class parking, arrival messages, gate dashboard), family flow (card issuing/approval, automatic reminders), corporate flow (packages, bookings, passes, tables, seating suggestions, invoices, report), guests (incl. email verification, Telegram linking), scanner (OTP gate, party-size counting, manual override, offline), michango, broadcast, payments/billing, platform management, webhooks, email templates, in-app notifications, offline sync, settings hub |
+| ⚠️ **Partially Implemented** | **~9** | Broadcast dispatcher/worker (backend pipeline), retry scheduling (backend only), plan limits enforcement (no callers), live channel delivery (needs real credentials: Beem/WhatsApp/Telegram/SMTP app password), TRA e-invoice (best-effort, needs TRA spec), seat/table assignment (reservations + suggestions, no full seat-map UI) |
+| ❌ **Not Implemented** | **~11** | Recurring events, waitlist, badge printing, kiosk mode, Stripe, SSO/SAML, custom domains, white-labeling, API keys, OpenAPI, SendGrid/Mailgun |
 
 ---
 
-## 17. Recent Updates (2026-11-10)
+## 17. Recent Updates (2026-11-21)
+
+### Event modes & settings
+- ✅ `events.event_mode` = `family` | `corporate`; `EventSettingsEditor.tsx` in the event Overview tab configures card-issuing policy (`family_approval` / `full_payment` / `min_percent` + `min_percent` + `card_issue_at`), Gate OTP (`otp_mode` = all / feature_phone_only / off, ordered `otp_channels` sms/whatsapp/email), family pledge minimums + timestamped pledge deadline + payment instructions, general parking instructions, and per-class parking variants (`GET/POST/DELETE /events/{eid}/parking-variants`).
+
+### Family flow
+- ✅ Per-guest card issuing (`POST /events/{eid}/guests/{id}/issue-card`), approval for partly-paid guests (`approve-card`, `withdraw-approval`), QR-free public invitation page `/i/{token}` with pledge info/payment/parking and a "Parking by class" block, check-in card `/g/{token}` gated by the issuing policy.
+- ✅ Automatic reminders (14/7/3/1 days before deadline, deadline morning, overdue; 09:00–18:00 EAT; idempotent via `reminder_stages`; hourly cron).
+
+### Corporate flow
+- ✅ New "Packages & Bookings" tab (`CorporateTab.tsx`) for corporate events: packages, bookings, payment confirmation (bank reference/proof/amount, installments, balance), automatic pass creation (one guest per seat, check-in links to contact), table reservations + open/shared tables, seating suggestion (own → open → next free), booking invoices (idempotent, organizer TIN + VAT), corporate report by package/company/table.
+
+### Gate & scanner
+- ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
+- ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
+
+### Arrival messages & migrations
+- ✅ Venue QR `/w/{event}` page, editor in event Overview, auto-shown on the guest's own card after check-in, SMS to feature phones.
+- ✅ Migrations now run up to **0039**: 0032 checkin card template, 0033 tax rate float, 0034 invitation/pledge template, 0035 event modes & card issuing, 0036 arrival messages & reminders, 0037 corporate packages/bookings, 0038 event open tables, 0039 booking invoices & parking variants. **sqlx migration versions must be unique** — a duplicate version causes `VersionMismatch(N)` on startup.
+
+---
+
+## 18. Earlier Updates (2026-11-10)
 
 ### Card design & events
 - ✅ Card Studio: square QR (corner handles), movable/resizable **guest name** box, shared SaaS templates, renderer stamps guest name.
@@ -235,10 +279,12 @@
 
 ---
 
-## 18. Next Immediate Actions (Priority)
+## 19. Next Immediate Actions (Priority)
 
 1. **Live channel credentials** — set Beem/WhatsApp/Telegram/SMTP app password in the backend `.env` to enable real delivery.
 2. **TRA e-invoice payload** — align `TraService` body with TRA's current e-invoice API spec.
 3. **S3Storage SDK** — replace the placeholder with real S3 signatures for production file storage.
 4. **Broadcast dispatcher wiring** — connect the scheduled/queued broadcast worker to the unified `Channels`.
 5. **Plan limits enforcement** — call `PlanLimits` from event/guest/broadcast creation.
+6. **Seat map UI** — full visual seat map (only `seat_number` + table reservations/suggestions exist today).
+7. **Corporate invoice PDF** — PDF export for booking invoices (invoices are generated/viewable in-app).

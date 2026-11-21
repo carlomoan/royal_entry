@@ -17,6 +17,12 @@ RBAC source of truth: `backend/crates/cloud/src/utils/rbac.rs`. The frontend
 mirrors it in `frontend-next/src/lib/roles.ts` — keep these in sync when changing
 roles.
 
+Events have an `event_mode` of `family` or `corporate`. Both modes share the same
+cards, check-in/scanner and messaging; corporate events add packages, bookings,
+passes and table reservations/invoices. The event detail page
+(`frontend-next/src/pages/events/[id].tsx`) shows a conditional
+**Packages & Bookings** tab (corporate only) and a **Gate dashboard** link.
+
 ## Build & verify
 
 Backend (Rust):
@@ -38,10 +44,15 @@ Deploy: `./deploy.sh` at the repo root (pull from GitHub → build → restart).
 ## Database
 
 PostgreSQL. Migrations live in `backend/migrations/` and run automatically on
-startup via sqlx. Notable: `0006` (settings/audit), `0025` (card template
-visibility), `0026` (invoice voided_at), `0027` (invoice tax), `0028`
-(telegram_chat_id + email templates), `0029` (org_subscriptions notes fix),
-`0030` (account security), `0031` (guest email verification).
+startup via sqlx (currently up to `0039`). Notable: `0006` (settings/audit),
+`0025` (card template visibility), `0026` (invoice voided_at), `0027` (invoice
+tax), `0028` (telegram_chat_id + email templates), `0029` (org_subscriptions
+notes fix), `0030` (account security), `0031` (guest email verification),
+`0032` (checkin card template), `0033` (tax rate float), `0034` (invitation/
+pledge template), `0035` (event modes & card issuing), `0036` (arrival messages
+& reminders), `0037` (corporate packages/bookings), `0038` (event open tables),
+`0039` (booking invoices & parking variants). **sqlx migration versions must be
+unique** — a duplicate version fails startup with `VersionMismatch(N)`.
 
 ## Key conventions
 
