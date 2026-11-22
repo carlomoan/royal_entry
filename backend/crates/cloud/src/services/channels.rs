@@ -454,7 +454,7 @@ impl WhatsAppCloud {
 // ── Aggregated Channels ──────────────────────────────────────────────────────
 #[derive(Debug, Clone)]
 pub struct Channels {
-    pub sms: Option<BeemSms>,
+    pub sms: Option<SmsRouter>,
     pub email_smtp: Option<SmtpEmail>,
     pub email: Option<ResendEmail>,
     pub telegram: Option<TelegramBot>,
@@ -467,7 +467,7 @@ impl Channels {
     pub fn from_env() -> Self {
         let client = Client::new();
         Self {
-            sms: BeemSms::from_env(&client),
+            sms: SmsRouter::from_env(&client),
             email_smtp: SmtpEmail::from_env(),
             email: ResendEmail::from_env(&client),
             telegram: TelegramBot::from_env(&client),
@@ -497,7 +497,7 @@ impl Channels {
         match &self.sms {
             Some(provider) => provider.send(numbers, message).await,
             None => Err(AppError::ChannelNotConfigured(
-                "SMS (Beem) — set BEEM_API_KEY, BEEM_SECRET_KEY and BEEM_SENDER_NAME".to_string(),
+                "SMS — set UNITXT_API_TOKEN and UNITXT_SENDER_ID (or BEEM_API_KEY, BEEM_SECRET_KEY and BEEM_SENDER_NAME)".to_string(),
             )),
         }
     }
@@ -585,4 +585,316 @@ pub fn html_wrap(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('\n', "<br/>");
     format!("<p style=\"font-family:sans-serif;font-size:15px;line-height:1.5;\">{escaped}</p>")
+}
+
+fn sms_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Tanzanian numbers as 255XXXXXXXXX (no plus sign): accepts +255..., 255..., 0712... and 712...
+fn normalize_tz_phone(phone: &str) -> String {
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.starts_with("255") {
+        digits
+    } else if digits.starts_with('0') && digits.len() == 10 {
+        format!("255{}", &digits[1..])
+    } else if digits.len() == 9 {
+        format!("255{digits}")
+    } else {
+        digits
+    }
+}
+
+// ── SMS length / cost ────────────────────────────────────────────────────────
+
+const GSM7_BASIC: &str = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+const GSM7_EXTENDED: &str = "^{}\\[~]|€"; // each counts as two characters
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmsSegments {
+    /// true when any character is outside the GSM-7 alphabet (curly quotes, emoji, ...)
+    pub unicode: bool,
+    /// length in the units the network counts
+    pub length: usize,
+    /// number of SMS units billed per recipient
+    pub parts: usize,
+}
+
+/// How many SMS units a message will use. GSM-7: 160 characters, then 153 per part.
+/// Unicode: 70 characters, then 67 per part.
+pub fn sms_segments(text: &str) -> SmsSegments {
+    let mut gsm_len = 0usize;
+    let mut is_gsm = true;
+    for c in text.chars() {
+        if GSM7_BASIC.contains(c) {
+            gsm_len += 1;
+        } else if GSM7_EXTENDED.contains(c) {
+            gsm_len += 2;
+        } else {
+            is_gsm = false;
+            break;
+        }
+    }
+    if is_gsm {
+        let parts = if gsm_len <= 160 { 1 } else { (gsm_len + 152) / 153 };
+        SmsSegments { unicode: false, length: gsm_len, parts }
+    } else {
+        let len = text.encode_utf16().count();
+        let parts = if len <= 70 { 1 } else { (len + 66) / 67 };
+        SmsSegments { unicode: true, length: len, parts }
+    }
+}
+
+// ── UniTxt SMS (Laravel-style API v3: POST {base}/sms/send, Bearer token, JSON) ──
+
+#[derive(Clone)]
+pub struct UniTxtSms {
+    base_url: String,
+    token: String,
+    sender_id: String,
+    client: Client,
+}
+
+// Manual Debug so the token can never end up in a log line.
+impl std::fmt::Debug for UniTxtSms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UniTxtSms")
+            .field("base_url", &self.base_url)
+            .field("sender_id", &self.sender_id)
+            .field("token", &"<hidden>")
+            .finish()
+    }
+}
+
+impl UniTxtSms {
+    fn from_env(client: &Client) -> Option<Self> {
+        let token = sms_env("UNITXT_API_TOKEN")?;
+        let sender_id = sms_env("UNITXT_SENDER_ID")?;
+        let base_url = sms_env("UNITXT_BASE_URL")
+            .unwrap_or_else(|| "https://unitxt.co.tz/api/v3".to_string());
+        Some(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            token,
+            sender_id,
+            client: client.clone(),
+        })
+    }
+
+    /// One request per recipient, so every number gets its own receipt.
+    async fn send(&self, numbers: &[String], message: &str) -> AppResult<Vec<ProviderReceipt>> {
+        let mut receipts = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            let body = json!({
+                "recipient": normalize_tz_phone(number),
+                "sender_id": self.sender_id,
+                "type": "plain",
+                "message": message,
+            });
+            let response = self
+                .client
+                .post(format!("{}/sms/send", self.base_url))
+                .bearer_auth(&self.token)
+                .header("Accept", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| {
+                    AppError::ExternalApiError(format!(
+                        "UniTxt SMS request failed: {}",
+                        e.without_url()
+                    ))
+                })?;
+
+            let status = response.status();
+            let payload: serde_json::Value =
+                response.json().await.unwrap_or_else(|_| json!({}));
+            let api_ok = payload.get("status").and_then(|v| v.as_str()) == Some("success");
+
+            if status.is_success() && api_ok {
+                let id = ["/data/uid", "/data/id", "/data/message_id"]
+                    .iter()
+                    .find_map(|p| payload.pointer(p))
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(String::from)
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    });
+                receipts.push(ProviderReceipt::ok("unitxt", id));
+            } else {
+                let reason = payload
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+                receipts.push(ProviderReceipt::fail(
+                    "unitxt",
+                    format!("UniTxt SMS API {}: {}", status.as_u16(), reason),
+                ));
+            }
+        }
+        Ok(receipts)
+    }
+}
+
+// ── Router: several SMS providers, in order, with optional failover ──────────
+
+#[derive(Debug, Clone)]
+pub enum SmsBackend {
+    UniTxt(UniTxtSms),
+    Beem(BeemSms),
+    // NextSms(NextSms),   // add when its request format is confirmed
+}
+
+impl SmsBackend {
+    fn name(&self) -> &'static str {
+        match self {
+            SmsBackend::UniTxt(_) => "unitxt",
+            SmsBackend::Beem(_) => "beem",
+        }
+    }
+
+    async fn send(&self, numbers: &[String], message: &str) -> AppResult<Vec<ProviderReceipt>> {
+        match self {
+            SmsBackend::UniTxt(p) => p.send(numbers, message).await,
+            SmsBackend::Beem(p) => p.send(numbers, message).await,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SmsRouter {
+    backends: Vec<SmsBackend>,
+    failover: bool,
+}
+
+impl SmsRouter {
+    fn from_env(client: &Client) -> Option<Self> {
+        let mut available: Vec<SmsBackend> = Vec::new();
+        if let Some(p) = UniTxtSms::from_env(client) {
+            available.push(SmsBackend::UniTxt(p));
+        }
+        if let Some(p) = BeemSms::from_env(client) {
+            available.push(SmsBackend::Beem(p));
+        }
+        if available.is_empty() {
+            return None;
+        }
+
+        if let Some(order) = sms_env("SMS_PROVIDER_ORDER") {
+            let wanted: Vec<String> = order
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            // stable sort: providers not listed keep their relative order, after the listed ones
+            available.sort_by_key(|b| {
+                wanted.iter().position(|w| w == b.name()).unwrap_or(usize::MAX)
+            });
+        }
+
+        let failover = !matches!(
+            sms_env("SMS_FAILOVER").as_deref(),
+            Some("false") | Some("0") | Some("off")
+        );
+        Some(Self { backends: available, failover })
+    }
+
+    /// Same signature as the old BeemSms::send, so Channels::sms() keeps working.
+    ///
+    /// Tries the providers in order and stops at the first one whose receipts are all
+    /// successful. If every provider fails, the FIRST provider's receipts are returned,
+    /// because its error message is the most useful one (for example "sender not
+    /// authorized").
+    ///
+    /// Trade-off: if a provider accepts a message but its reply is unreadable, the next
+    /// provider sends it again. That is harmless for gate codes and acceptable for
+    /// invitations; set SMS_FAILOVER=false to turn failover off.
+    pub async fn send(&self, numbers: &[String], message: &str) -> AppResult<Vec<ProviderReceipt>> {
+        if numbers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut first_failure: Option<AppResult<Vec<ProviderReceipt>>> = None;
+        for backend in &self.backends {
+            let result = backend.send(numbers, message).await;
+            let delivered =
+                matches!(&result, Ok(r) if !r.is_empty() && r.iter().all(|x| x.success));
+            if delivered {
+                return result;
+            }
+            tracing::warn!(
+                provider = backend.name(),
+                failover = self.failover,
+                "SMS provider did not accept the message"
+            );
+            if first_failure.is_none() {
+                first_failure = Some(result);
+            }
+            if !self.failover {
+                break;
+            }
+        }
+        first_failure.unwrap_or_else(|| Ok(Vec::new()))
+    }
+}
+
+// ── Checked send: Ok only when the provider really accepted the SMS ──────────
+
+impl Channels {
+    /// Channels::sms() returns Ok even when the provider rejects the message (the
+    /// rejection is inside the receipts). Use this wherever "sent" must mean "accepted":
+    /// reminders, arrival messages, anything that records a delivery as done.
+    pub async fn sms_checked(&self, numbers: &[String], message: &str) -> Result<(), String> {
+        match self.sms(numbers, message).await {
+            Ok(receipts) if !receipts.is_empty() && receipts.iter().all(|r| r.success) => Ok(()),
+            Ok(receipts) => Err(receipts
+                .iter()
+                .find_map(|r| r.error.clone())
+                .unwrap_or_else(|| "SMS provider returned no receipt".to_string())),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod sms_tests {
+    use super::*;
+
+    #[test]
+    fn gsm_length_limits() {
+        assert_eq!(sms_segments(&"a".repeat(160)).parts, 1);
+        assert_eq!(sms_segments(&"a".repeat(161)).parts, 2);
+        assert_eq!(sms_segments(&"a".repeat(306)).parts, 2);
+        assert_eq!(sms_segments(&"a".repeat(307)).parts, 3);
+    }
+
+    #[test]
+    fn unicode_length_limits() {
+        let one = sms_segments(&"’".repeat(70));
+        assert!(one.unicode);
+        assert_eq!(one.parts, 1);
+        assert_eq!(sms_segments(&"’".repeat(71)).parts, 2);
+        assert_eq!(sms_segments(&"’".repeat(134)).parts, 2);
+        assert_eq!(sms_segments(&"’".repeat(135)).parts, 3);
+    }
+
+    #[test]
+    fn phone_normalisation() {
+        assert_eq!(normalize_tz_phone("0718474695"), "255718474695");
+        assert_eq!(normalize_tz_phone("+255 718 474 695"), "255718474695");
+        assert_eq!(normalize_tz_phone("718474695"), "255718474695");
+    }
+}
+
+impl Channels {
+    /// Like sms_checked: Ok only when the email provider accepted the message.
+    pub async fn email_checked(&self, to: &str, subject: &str, html: &str) -> Result<(), String> {
+        match self.email(to, subject, html).await {
+            Ok(r) if r.success => Ok(()),
+            Ok(r) => Err(r.error.unwrap_or_else(|| "Email rejected by provider".to_string())),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }

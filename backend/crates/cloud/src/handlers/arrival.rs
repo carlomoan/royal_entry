@@ -279,5 +279,7 @@ pub async fn send_arrival_sms(
         text = text.chars().take(157).collect::<String>() + "...";
     }
     let phone: String = guest.try_get("phone").unwrap_or_default();
-    let _ = state.channels.sms(&[phone], &text).await;
+    if let Err(e) = state.channels.sms_checked(&[phone], &text).await {
+        tracing::warn!(error = %e, "Arrival SMS was not delivered");
+    }
 }

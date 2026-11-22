@@ -125,7 +125,7 @@ pub async fn process_automatic_reminders(state: &Arc<AppState>) -> AppResult<u64
             } else if contact == "whatsapp" {
                 state.channels.whatsapp_text(&phone, &text).await.is_ok()
             } else {
-                state.channels.sms(&[phone.clone()], &text).await.is_ok()
+                state.channels.sms_checked(&[phone.clone()], &text).await.is_ok()
             };
 
             if delivered {

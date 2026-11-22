@@ -522,14 +522,14 @@ async fn notify_contact(
         let html = crate::services::channels::html_wrap(&text.replace('\n', "<br>"));
         if let Err(e) = state
             .channels
-            .email(email, &format!("{} — check-in passes", event.title), &html)
+            .email_checked(email, &format!("{} — check-in passes", event.title), &html)
             .await
         {
             tracing::warn!(booking_id = %booking.id, error = %e, "Failed to email booking passes");
         }
     } else if let Err(e) = state
         .channels
-        .sms(&[booking.contact_phone.clone()], &text)
+        .sms_checked(&[booking.contact_phone.clone()], &text)
         .await
     {
         tracing::warn!(booking_id = %booking.id, error = %e, "Failed to SMS booking passes");
