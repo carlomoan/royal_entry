@@ -248,7 +248,8 @@
 
 ### Unified channel configuration (2026-11-24)
 - ✅ `services/channels.rs` rewritten as one `ChannelConfig` loaded from `.env` and overlaid from `system_settings` (Settings UI). SMS = **NextSMS / Unitxt only** (Beem removed, optional failover); email = Resend or SMTP; Telegram Bot API; WhatsApp Cloud API. All send paths use the same `Channels` instance.
-- ✅ Settings UI: SMS Config (NextSMS/Unitxt + failover + sandbox), Email Config (new tab), WhatsApp Config, Telegram Config. Secrets are write-only and masked; sandbox flags are forced off in production.
+- ✅ Settings UI: SMS Config (NextSMS/Unitxt + failover + sandbox), Email Config (new tab), WhatsApp Config (Meta Cloud **or NextSMS**), Telegram Config. Secrets are write-only and masked; sandbox flags are forced off in production.
+- ✅ NextSMS API shapes verified against a local mock: SMS `POST /api/sms/v2/text/single` sends `to` as a single international-format string (`2557…`); WhatsApp `POST /api/whatsapp/v2/text/single` sends `to` as an array with `account`, `template`, `text` and `reference`. Phone normalisation keeps the `255` country code. Rejected sender IDs are reported with a hint to register `NEXTSMS_SENDER_ID`.
 
 ### Pass security — Controlled (2026-11-23)
 - ✅ `events.pass_security_level` = standard / controlled / maximum; **controlled is the default for corporate events**. Invitations now carry only the QR-free `/i/{token}` link — no entry token, QR image or check-in link. Entry credentials are sent only when a pass is issued.

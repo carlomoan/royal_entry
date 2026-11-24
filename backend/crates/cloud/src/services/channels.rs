@@ -71,6 +71,10 @@ pub struct ChannelConfig {
     pub whatsapp_token: String,
     pub whatsapp_phone_id: String,
     pub whatsapp_version: String,
+    /// `cloud` (Meta Cloud API) or `nextsms` (template-based WhatsApp gateway).
+    pub whatsapp_provider: String,
+    pub nextsms_whatsapp_account: String,
+    pub nextsms_whatsapp_template: String,
     pub sms_sandbox: bool,
     pub whatsapp_sandbox: bool,
 }
@@ -133,6 +137,9 @@ impl Default for ChannelConfig {
             } else {
                 env("WHATSAPP_API_VERSION")
             },
+            whatsapp_provider: env("WHATSAPP_PROVIDER"),
+            nextsms_whatsapp_account: env("NEXTSMS_WHATSAPP_ACCOUNT"),
+            nextsms_whatsapp_template: env("NEXTSMS_WHATSAPP_TEMPLATE"),
             sms_sandbox: env_bool("ENABLE_SMS_SANDBOX", false),
             whatsapp_sandbox: env_bool("ENABLE_WHATSAPP_SANDBOX", false),
         }
@@ -158,7 +165,8 @@ async fn overlay_from_db(config: &mut ChannelConfig, pool: &PgPool) {
          ('sms_provider','sms_failover','sms_provider_order','nextsms_api_token','nextsms_sender_id','nextsms_base_url', \
           'unitxt_api_token','unitxt_sender_id','unitxt_base_url','email_provider','resend_api_key','email_from', \
           'email_from_name','smtp_host','smtp_port','smtp_user','smtp_password','smtp_use_tls','telegram_bot_token', \
-          'whatsapp_access_token','whatsapp_phone_number_id','whatsapp_api_version','enable_sms_sandbox','enable_whatsapp_sandbox')",
+          'whatsapp_access_token','whatsapp_phone_number_id','whatsapp_api_version','whatsapp_provider', \
+          'nextsms_whatsapp_account','nextsms_whatsapp_template','enable_sms_sandbox','enable_whatsapp_sandbox')"
     )
     .fetch_all(pool)
     .await
@@ -199,6 +207,9 @@ async fn overlay_from_db(config: &mut ChannelConfig, pool: &PgPool) {
             "whatsapp_access_token" => { if let Some(v) = s { config.whatsapp_token = v; } }
             "whatsapp_phone_number_id" => { if let Some(v) = s { config.whatsapp_phone_id = v; } }
             "whatsapp_api_version" => { if let Some(v) = s { config.whatsapp_version = v; } }
+            "whatsapp_provider" => { if let Some(v) = s { config.whatsapp_provider = v.to_lowercase(); } }
+            "nextsms_whatsapp_account" => { if let Some(v) = s { config.nextsms_whatsapp_account = v; } }
+            "nextsms_whatsapp_template" => { if let Some(v) = s { config.nextsms_whatsapp_template = v; } }
             "enable_sms_sandbox" => { if let Some(v) = bool_value(&value) { config.sms_sandbox = v; } }
             "enable_whatsapp_sandbox" => { if let Some(v) = bool_value(&value) { config.whatsapp_sandbox = v; } }
             _ => {}
@@ -267,7 +278,13 @@ impl Channels {
     }
 
     fn whatsapp_ready(&self) -> bool {
-        !self.config.whatsapp_token.is_empty() && !self.config.whatsapp_phone_id.is_empty()
+        if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
+            !self.config.nextsms_token.is_empty()
+                && !self.config.nextsms_whatsapp_account.is_empty()
+                && !self.config.nextsms_whatsapp_template.is_empty()
+        } else {
+            !self.config.whatsapp_token.is_empty() && !self.config.whatsapp_phone_id.is_empty()
+        }
     }
 
     /// Configured SMS providers in preference order. Beem is intentionally
@@ -382,28 +399,28 @@ impl Channels {
     }
 
     async fn send_nextsms(&self, numbers: &[String], message: &str) -> AppResult<Vec<ProviderReceipt>> {
-        let to: Vec<String> = numbers.iter().map(|n| normalize_tz_phone(n)).collect();
-        let body = json!({ "from": self.config.nextsms_sender, "to": to, "text": message });
-        let response = self.client
-            .post(format!("{}/api/sms/v2/text/single", self.config.nextsms_base_url.trim_end_matches('/')))
-            .bearer_auth(&self.config.nextsms_token)
-            .header("Accept", "application/json")
-            .json(&body).send().await
-            .map_err(|e| AppError::ExternalApiError(format!("NextSMS request failed: {}", e.without_url())))?;
-        let status = response.status();
-        let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
-        if !status.is_success() {
-            let reason = payload.get("message").or_else(|| payload.get("error"))
-                .and_then(|v| v.as_str()).unwrap_or("request failed").to_string();
-            return Ok(to.iter().map(|_| ProviderReceipt::fail("nextsms", format!("NextSMS {}: {}", status, reason))).collect());
-        }
-        let messages = payload.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
-        let mut receipts = Vec::with_capacity(to.len());
-        for (i, number) in to.iter().enumerate() {
-            let entry = messages.iter().find(|m| m.get("to").and_then(|t| t.as_str())
-                .map(|t| t.trim_start_matches('+') == number.as_str()).unwrap_or(false))
-                .or_else(|| messages.get(i));
-            let Some(entry) = entry else {
+        // The v2 /text/single endpoint expects `to` as a single phone string,
+        // not an array. One request per recipient gives one receipt per number.
+        let mut receipts = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            let to = normalize_tz_phone(number);
+            let body = json!({ "from": self.config.nextsms_sender, "to": to, "text": message });
+            let response = self.client
+                .post(format!("{}/api/sms/v2/text/single", self.config.nextsms_base_url.trim_end_matches('/')))
+                .bearer_auth(&self.config.nextsms_token)
+                .header("Accept", "application/json")
+                .json(&body).send().await
+                .map_err(|e| AppError::ExternalApiError(format!("NextSMS request failed: {}", e.without_url())))?;
+            let status = response.status();
+            let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
+            if !status.is_success() {
+                let reason = payload.get("message").or_else(|| payload.get("error"))
+                    .and_then(|v| v.as_str()).unwrap_or("request failed").to_string();
+                receipts.push(ProviderReceipt::fail("nextsms", format!("NextSMS {}: {}", status, reason)));
+                continue;
+            }
+            let messages = payload.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+            let Some(entry) = messages.first() else {
                 receipts.push(ProviderReceipt::fail("nextsms", "No status returned".to_string()));
                 continue;
             };
@@ -417,7 +434,11 @@ impl Channels {
                 receipts.push(ProviderReceipt::ok("nextsms", id));
             } else {
                 let why = entry.pointer("/status/description").and_then(|v| v.as_str()).unwrap_or(name);
-                receipts.push(ProviderReceipt::fail("nextsms", format!("NextSMS rejected: {}", if why.is_empty() { "no message id" } else { why })));
+                let why = if why.is_empty() { "no message id" } else { why };
+                let hint = if why.to_ascii_lowercase().contains("sender id") {
+                    " — register NEXTSMS_SENDER_ID on your NextSMS account"
+                } else { "" };
+                receipts.push(ProviderReceipt::fail("nextsms", format!("NextSMS rejected: {why}{hint}")));
             }
         }
         Ok(receipts)
@@ -566,6 +587,11 @@ impl Channels {
         if self.config.whatsapp_sandbox || !self.whatsapp_ready() {
             return Ok(self.log_sandbox("whatsapp", to, message).await);
         }
+        if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
+            // NextSMS WhatsApp is template-based; the configured template is
+            // used for free-form text sends.
+            return self.send_nextsms_whatsapp(to, message, None).await;
+        }
         self.whatsapp_api(json!({
             "messaging_product": "whatsapp",
             "to": normalize_tz_phone(to),
@@ -583,12 +609,57 @@ impl Channels {
         if self.config.whatsapp_sandbox || !self.whatsapp_ready() {
             return Ok(self.log_sandbox("whatsapp", to, &format!("template {template_name}")).await);
         }
+        if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
+            let text = components.first()
+                .and_then(|c| c.get("text").and_then(|v| v.as_str()))
+                .unwrap_or(template_name);
+            return self.send_nextsms_whatsapp(to, text, Some(template_name)).await;
+        }
         self.whatsapp_api(json!({
             "messaging_product": "whatsapp",
             "to": normalize_tz_phone(to),
             "type": "template",
             "template": { "name": template_name, "language": { "code": "en" }, "components": components },
         })).await
+    }
+
+    /// NextSMS WhatsApp v2: POST {base}/api/whatsapp/v2/text/single.
+    /// Unlike Meta, `to` must be an array and `account` + `template` are required.
+    async fn send_nextsms_whatsapp(
+        &self,
+        to: &str,
+        message: &str,
+        template: Option<&str>,
+    ) -> AppResult<ProviderReceipt> {
+        let body = json!({
+            "to": [normalize_tz_phone(to)],
+            "account": self.config.nextsms_whatsapp_account,
+            "template": template.unwrap_or(&self.config.nextsms_whatsapp_template),
+            "text": message,
+            "reference": format!("re-{}", Uuid::new_v4().simple()),
+        });
+        let response = self.client
+            .post(format!("{}/api/whatsapp/v2/text/single", self.config.nextsms_base_url.trim_end_matches('/')))
+            .bearer_auth(&self.config.nextsms_token)
+            .header("Accept", "application/json")
+            .json(&body).send().await
+            .map_err(|e| AppError::WhatsappError(format!("NextSMS WhatsApp request failed: {}", e.without_url())))?;
+        let status = response.status();
+        let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
+        let has_errors = payload.get("errors").and_then(|v| v.as_object()).map(|m| !m.is_empty()).unwrap_or(false);
+        if status.is_success() && !has_errors {
+            let id = payload.pointer("/messages/0/id")
+                .and_then(|v| v.as_str())
+                .or_else(|| payload.get("messageId").and_then(|v| v.as_str()))
+                .map(String::from);
+            Ok(ProviderReceipt::ok("nextsms-whatsapp", id))
+        } else {
+            let reason = payload.get("message").and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| payload.pointer("/errors/template/0").and_then(|v| v.as_str()).map(String::from))
+                .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+            Ok(ProviderReceipt::fail("nextsms-whatsapp", reason))
+        }
     }
 
     async fn whatsapp_api(&self, body: serde_json::Value) -> AppResult<ProviderReceipt> {
@@ -635,13 +706,15 @@ pub fn html_wrap(text: &str) -> String {
     )
 }
 
-/// Tanzanian numbers are stored without the leading + in most imports.
+/// NextSMS/Unitxt expect international format without the leading `+`:
+/// `255712345678`. Accept `+255…`, `255…`, `0712…` and `712…` on input.
 fn normalize_tz_phone(phone: &str) -> String {
     let trimmed = phone.trim().replace([' ', '-'], "");
     if trimmed.is_empty() { return trimmed; }
-    if let Some(rest) = trimmed.strip_prefix("+") { return rest.to_string(); }
-    if let Some(rest) = trimmed.strip_prefix("255") { return rest.to_string(); }
-    if let Some(rest) = trimmed.strip_prefix("0") { return format!("255{rest}"); }
+    if let Some(rest) = trimmed.strip_prefix('+') { return rest.to_string(); }
+    if trimmed.starts_with("255") { return trimmed; }
+    if let Some(rest) = trimmed.strip_prefix('0') { return format!("255{rest}"); }
+    if trimmed.starts_with('7') { return format!("255{trimmed}"); }
     trimmed
 }
 
