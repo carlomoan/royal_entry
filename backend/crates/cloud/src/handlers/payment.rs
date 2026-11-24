@@ -71,6 +71,11 @@ pub async fn initiate_mpesa_payment(
         return Err(AppError::BadRequest("Invalid phone number".to_string()));
     }
 
+    if !MpesaService::is_configured() {
+        return Err(AppError::ChannelNotConfigured(
+            "M-Pesa payments are not enabled on this account yet".to_string(),
+        ));
+    }
     let mpesa = MpesaService::new(state.clone());
 
     // Build a short reference visible to customer on their M-Pesa screen

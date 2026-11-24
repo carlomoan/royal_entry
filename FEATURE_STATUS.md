@@ -116,7 +116,8 @@
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
 | **Payment CRUD** | List, filter payments | Payments table | ✅ |
-| **M-Pesa STK Push** | Initiate + callback (idempotent) | Initiate payment button | ✅ |
+| **M-Pesa STK Push** | Initiate + callback (idempotent); skipped cleanly when credentials are absent | Initiate payment button returns a clear "not enabled" message | ✅ (optional — enable when API credentials are available) |
+| **Other payment gateways** | Pluggable via `services/` — UniTxt/NextSMS-style channel pattern; Stripe and other mobile money gateways planned | — | ⚠️ (future) |
 | **Payment Status** | pending, completed, failed, cancelled | Status badges | ✅ |
 | **Subscription Invoicing** | `billing_invoices` + `generate_invoice_for_subscription()` | Billing page (subscription, invoices, pay) | ✅ |
 | **Recurring Invoice Generation** | `BillingService::generate_recurring_invoices()` (cron) | — | ✅ |

@@ -13,9 +13,17 @@ use crate::AppState;
 
 fn env(key: &str) -> AppResult<String> {
     std::env::var(key).map_err(|_| {
-        tracing::error!(key = key, "Missing required environment variable");
-        AppError::InternalServerError
+        tracing::warn!(key = key, "Missing required payment environment variable");
+        AppError::ChannelNotConfigured(format!("Payment gateway — set {key}"))
     })
+}
+
+/// M-Pesa is optional. When its credentials are absent the scheduler and the
+/// initiate endpoint skip it cleanly instead of failing every hour.
+pub fn is_configured() -> bool {
+    ["MPESA_CONSUMER_KEY", "MPESA_CONSUMER_SECRET", "MPESA_SHORTCODE", "MPESA_PASSKEY"]
+        .iter()
+        .all(|key| std::env::var(key).map(|v| !v.trim().is_empty()).unwrap_or(false))
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +135,10 @@ pub struct MpesaService {
 }
 
 impl MpesaService {
+    pub fn is_configured() -> bool {
+        super::mpesa::is_configured()
+    }
+
     pub fn new(_state: Arc<AppState>) -> Self {
         Self {
             client: Client::builder()

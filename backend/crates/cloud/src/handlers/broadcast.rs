@@ -213,9 +213,10 @@ pub async fn send_broadcast(
     let total_recipients = recipients.len() as i32;
 
     sqlx::query(
-        r#"INSERT INTO broadcast_campaigns (id, event_id, campaign_name, message, message_channel, target_audience, guest_category, status, total_recipients, successfully_sent, failed_count, sent_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing', $8, 0, 0, $9, $9)"#,
+        r#"INSERT INTO broadcast_campaigns (id, org_id, event_id, campaign_name, message, message_channel, target_audience, guest_category, status, total_recipients, successfully_sent, failed_count, sent_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'processing', $9, 0, 0, $10, $10)"#,
     )
     .bind(campaign_id)
+    .bind(org_id)
     .bind(event_id)
     .bind(campaign_name)
     .bind(&message)

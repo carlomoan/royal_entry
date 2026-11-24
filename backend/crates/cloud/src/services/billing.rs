@@ -165,6 +165,10 @@ impl BillingService {
 
     /// Retry failed payments with exponential backoff
     pub async fn retry_failed_payments(&self) -> AppResult<u64> {
+        if !crate::services::mpesa::is_configured() {
+            tracing::debug!("M-Pesa is not configured — skipping payment retries");
+            return Ok(0);
+        }
         let now = Utc::now();
 
         let failed_invoices = sqlx::query(

@@ -32,11 +32,13 @@ pub async fn process_automatic_reminders(state: &Arc<AppState>) -> AppResult<u64
     let rows = sqlx::query(
         r#"
         SELECT pt.id AS pledge_id, pt.guest_id, pt.event_id, pt.pledged_amount,
-               pt.amount_paid, pt.payment_deadline_at, pt.reminder_stages,
+               pt.amount_paid, pt.payment_deadline::TIMESTAMPTZ AS deadline_at,
+               pt.reminder_stages, e.organization_id AS org_id,
                g.full_name, g.phone, g.email, g.contact_method
         FROM pledge_tracker pt
         JOIN guests g ON g.id = pt.guest_id
-        WHERE pt.payment_deadline_at IS NOT NULL
+        JOIN events e ON e.id = pt.event_id
+        WHERE pt.payment_deadline IS NOT NULL
           AND pt.amount_paid < pt.pledged_amount
         "#,
     )
@@ -45,7 +47,7 @@ pub async fn process_automatic_reminders(state: &Arc<AppState>) -> AppResult<u64
 
     let mut sent = 0u64;
     for row in rows {
-        let deadline: DateTime<Utc> = match row.try_get("payment_deadline_at") {
+        let deadline: DateTime<Utc> = match row.try_get("deadline_at") {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -60,6 +62,7 @@ pub async fn process_automatic_reminders(state: &Arc<AppState>) -> AppResult<u64
         let phone: String = row.try_get("phone").unwrap_or_default();
         let email: Option<String> = row.try_get("email").ok();
         let contact: String = row.try_get("contact_method").unwrap_or_else(|_| "sms".to_string());
+        let org_id: uuid::Uuid = row.try_get("org_id").unwrap_or_default();
 
         for (stage, days_before) in STAGES {
             if stages.iter().any(|s| s == stage) {
@@ -138,7 +141,7 @@ pub async fn process_automatic_reminders(state: &Arc<AppState>) -> AppResult<u64
                 .await?;
                 let _ = crate::services::NotificationService::create_org(
                     state.db.pool(),
-                    state.config.app.frontend_url.parse::<uuid::Uuid>().unwrap_or_default(),
+                    org_id,
                     "pledge.reminder",
                     "Automatic reminder sent",
                     Some(&format!("{}: {}", name, stage)),
