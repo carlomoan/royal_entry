@@ -243,7 +243,14 @@ impl Channels {
             config.sms_sandbox = false;
             config.whatsapp_sandbox = false;
         }
-        Self::from_config(config, pool)
+        let channels = Self::from_config(config, pool);
+        tracing::info!(
+            sms_providers = ?channels.sms_backends(),
+            sms_sender_set = !channels.config.nextsms_sender.is_empty(),
+            sms_token_set = !channels.config.nextsms_token.is_empty(),
+            "SMS providers loaded"
+        );
+        channels
     }
 
     fn from_config(config: ChannelConfig, db: Option<PgPool>) -> Self {
