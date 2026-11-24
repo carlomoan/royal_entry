@@ -4,7 +4,19 @@ import { MessageSquare, Save, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Button, Input } from "@/components/ui";
+import { Card, Button, Input, Select } from "@/components/ui";
+
+const SANDBOX_WARNING =
+  "Sandbox records messages instead of delivering them. Never enable in production — the backend forces it off when ENVIRONMENT=production.";
+
+function asText(value: unknown, fallback = ""): string {
+  if (value === undefined || value === null || value === "********") return fallback;
+  return String(value);
+}
+
+function asBool(value: unknown): boolean {
+  return value === true || value === "true";
+}
 
 export default function SmsSection() {
   const qc = useQueryClient();
@@ -12,17 +24,29 @@ export default function SmsSection() {
     queryKey: ["system-settings"],
     queryFn: async () => (await api.get("/settings/system")).data.data,
   });
-  const [provider, setProvider] = useState("africas_talking");
-  const [apiKey, setApiKey] = useState("");
-  const [username, setUsername] = useState("");
-  const [fromName, setFromName] = useState("RoyalEntry");
+  const [provider, setProvider] = useState("");
+  const [nextsmsToken, setNextsmsToken] = useState("");
+  const [nextsmsSenderId, setNextsmsSenderId] = useState("");
+  const [nextsmsBaseUrl, setNextsmsBaseUrl] = useState("");
+  const [unitxtToken, setUnitxtToken] = useState("");
+  const [unitxtSenderId, setUnitxtSenderId] = useState("");
+  const [unitxtBaseUrl, setUnitxtBaseUrl] = useState("");
+  const [providerOrder, setProviderOrder] = useState("");
+  const [failover, setFailover] = useState(false);
+  const [sandbox, setSandbox] = useState(false);
 
   useEffect(() => {
-    if (settings?.sms_provider) setProvider(settings.sms_provider);
-    // Secrets come back masked — treat as write-only (blank keeps the saved key).
-    setApiKey(settings?.sms_api_key === "********" ? "" : (settings?.sms_api_key ?? ""));
-    if (settings?.sms_username) setUsername(settings.sms_username);
-    if (settings?.sms_from_name) setFromName(settings.sms_from_name);
+    setProvider(asText(settings?.sms_provider));
+    // Secrets come back masked — treat as write-only (blank keeps the saved value).
+    setNextsmsToken(asText(settings?.nextsms_api_token));
+    setNextsmsSenderId(asText(settings?.nextsms_sender_id));
+    setNextsmsBaseUrl(asText(settings?.nextsms_base_url));
+    setUnitxtToken(asText(settings?.unitxt_api_token));
+    setUnitxtSenderId(asText(settings?.unitxt_sender_id));
+    setUnitxtBaseUrl(asText(settings?.unitxt_base_url));
+    setProviderOrder(asText(settings?.sms_provider_order));
+    setFailover(asBool(settings?.sms_failover));
+    setSandbox(asBool(settings?.enable_sms_sandbox));
   }, [settings]);
 
   const saveMutation = useMutation({
@@ -35,19 +59,81 @@ export default function SmsSection() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">SMS Config</h1>
-        <p className="text-sm text-slate-500">Configure SMS gateway for broadcast and reminders</p>
+        <p className="text-sm text-slate-500">Configure SMS gateways for broadcast and reminders</p>
       </div>
       <Card title="SMS Gateway">
         {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
-          <div className="space-y-4">
-            <Input label="Provider" value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="africas_talking" />
-            <Input label="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKey ? "Enter SMS API key" : "Saved — leave blank to keep"} />
-            <Input label="Username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Sandbox username" />
-            <Input label="Sender / From Name" value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="RoyalEntry" />
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <Select label="Provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
+                <option value="">Auto</option>
+                <option value="nextsms">NextSMS</option>
+                <option value="unitxt">Unitxt</option>
+              </Select>
+              <p className="text-xs text-slate-500">Beem is no longer supported.</p>
+            </div>
+
+            <div className="space-y-4 rounded-lg border border-slate-200 p-4">
+              <h4 className="text-sm font-semibold text-slate-800">NextSMS</h4>
+              <Input
+                label="API Token"
+                type="password"
+                value={nextsmsToken}
+                onChange={(e) => setNextsmsToken(e.target.value)}
+                placeholder={nextsmsToken ? "Enter NextSMS API token" : "Saved — leave blank to keep"}
+              />
+              <Input label="Sender ID" value={nextsmsSenderId} onChange={(e) => setNextsmsSenderId(e.target.value)} placeholder="RoyalEntry" />
+              <Input label="Base URL" value={nextsmsBaseUrl} onChange={(e) => setNextsmsBaseUrl(e.target.value)} placeholder="https://nextsms.co.tz" />
+            </div>
+
+            <div className="space-y-4 rounded-lg border border-slate-200 p-4">
+              <h4 className="text-sm font-semibold text-slate-800">Unitxt</h4>
+              <Input
+                label="API Token"
+                type="password"
+                value={unitxtToken}
+                onChange={(e) => setUnitxtToken(e.target.value)}
+                placeholder={unitxtToken ? "Enter Unitxt API token" : "Saved — leave blank to keep"}
+              />
+              <Input label="Sender ID" value={unitxtSenderId} onChange={(e) => setUnitxtSenderId(e.target.value)} placeholder="RoyalEntry" />
+              <Input label="Base URL" value={unitxtBaseUrl} onChange={(e) => setUnitxtBaseUrl(e.target.value)} placeholder="https://unitxt.co.tz/api/v3" />
+            </div>
+
+            <div className="space-y-4 border-t border-slate-100 pt-4">
+              <Input
+                label="Provider Order"
+                value={providerOrder}
+                onChange={(e) => setProviderOrder(e.target.value)}
+                placeholder="nextsms,unitxt"
+                hint="Comma separated; used when Provider is Auto or failover is enabled."
+              />
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input type="checkbox" checked={failover} onChange={(e) => setFailover(e.target.checked)} className="h-4 w-4 rounded accent-gold-500" />
+                Enable failover to the next provider
+              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} className="h-4 w-4 rounded accent-gold-500" />
+                  Enable SMS sandbox
+                </label>
+                <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">{SANDBOX_WARNING}</p>
+              </div>
+            </div>
+
             <div className="flex justify-end">
               <Button onClick={() => {
-                const payload: Record<string, unknown> = { sms_provider: provider, sms_username: username, sms_from_name: fromName };
-                if (apiKey.trim()) payload.sms_api_key = apiKey;
+                const payload: Record<string, unknown> = {
+                  sms_provider: provider,
+                  nextsms_sender_id: nextsmsSenderId,
+                  nextsms_base_url: nextsmsBaseUrl,
+                  unitxt_sender_id: unitxtSenderId,
+                  unitxt_base_url: unitxtBaseUrl,
+                  sms_provider_order: providerOrder,
+                  sms_failover: failover,
+                  enable_sms_sandbox: sandbox,
+                };
+                if (nextsmsToken.trim()) payload.nextsms_api_token = nextsmsToken;
+                if (unitxtToken.trim()) payload.unitxt_api_token = unitxtToken;
                 saveMutation.mutate(payload);
               }} isLoading={saveMutation.isPending}>
                 <Save className="h-4 w-4" /> Save

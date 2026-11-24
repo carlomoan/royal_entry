@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Pencil, Trash2, CheckCircle2, Armchair, Lightbulb, X, Building2, Ticket,
-  RefreshCw, FileText, Wallet, Users, Printer,
+  RefreshCw, FileText, Wallet, Users, Printer, MailCheck, Link2, Send, Ban,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -54,7 +54,21 @@ type Booking = {
   passes_created: number;
   packages: BookingPackage[];
   tables: BookingTable[];
+  workflow_status: string;
+  registration_token: string | null;
+  contact_email_verified_at: string | null;
+  contact_email_is_free: boolean;
 };
+
+type BookingPass = {
+  guest_id: string;
+  full_name: string;
+  pass_state: string;
+  table_number: string | null;
+  package_name: string | null;
+};
+
+type BookingPassInfo = { passes: BookingPass[] };
 
 type SeatingSuggestion = {
   table_number: string;
@@ -147,12 +161,37 @@ const emptyBookingForm: BookingForm = {
   company_name: "", contact_person: "", contact_phone: "", contact_email: "", notes: "",
 };
 
+const WORKFLOW_STEPS = [
+  { key: "requested", label: "Requested", badgeClass: "bg-slate-100 text-slate-700" },
+  { key: "invoiced", label: "Invoiced", badgeClass: "bg-gold-100 text-gold-800" },
+  { key: "paid", label: "Paid", badgeClass: "bg-emerald-100 text-emerald-700" },
+  { key: "passes_issued", label: "Passes issued", badgeClass: "bg-navy-100 text-navy-900" },
+  { key: "names_registered", label: "Names registered", badgeClass: "bg-navy-100 text-navy-900" },
+  { key: "checked_in", label: "Checked in", badgeClass: "bg-emerald-100 text-emerald-700" },
+] as const;
+
+const workflowIndex = (status?: string | null) => {
+  const index = WORKFLOW_STEPS.findIndex((step) => step.key === status);
+  return index < 0 ? 0 : index;
+};
+
+const passStateStyle = (state: string) => {
+  switch (state) {
+    case "revoked": return "bg-rose-100 text-rose-700";
+    case "checked_in": return "bg-emerald-100 text-emerald-700";
+    case "issued": return "bg-emerald-100 text-emerald-700";
+    case "named": return "bg-navy-100 text-navy-900";
+    default: return "bg-gold-100 text-gold-800";
+  }
+};
+
 export default function CorporateTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["corporate-packages", eventId] });
     qc.invalidateQueries({ queryKey: ["corporate-bookings", eventId] });
+    qc.invalidateQueries({ queryKey: ["corporate-report", eventId] });
   };
 
   const { data: packages = [], isLoading: packagesLoading } = useQuery<Package[]>({
@@ -335,6 +374,111 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
     });
   };
 
+  /* ── Pass lifecycle ────────────────────────────────────────────────── */
+  const [passesTarget, setPassesTarget] = useState<Booking | null>(null);
+  const [reassignTarget, setReassignTarget] = useState<{ bookingId: string; pass: BookingPass } | null>(null);
+  const [reassignForm, setReassignForm] = useState({ full_name: "", phone: "", email: "" });
+
+  const { data: passInfo, isLoading: passesLoading } = useQuery<BookingPassInfo>({
+    queryKey: ["booking-passes", eventId, passesTarget?.id],
+    queryFn: async () =>
+      (await api.get(`/public/bookings/${passesTarget?.registration_token}`)).data.data ?? { passes: [] },
+    enabled: !!passesTarget?.registration_token,
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: (bookingId: string) =>
+      api.post(`/events/${eventId}/bookings/${bookingId}/send-verification`),
+    onSuccess: (r) => {
+      invalidate();
+      toast.success(r.data.message ?? "Verification email sent");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const issuePassesMutation = useMutation({
+    mutationFn: (bookingId: string) =>
+      api.post(`/events/${eventId}/bookings/${bookingId}/issue-passes`),
+    onSuccess: (r) => {
+      invalidate();
+      const created = r.data.data?.passes_created ?? 0;
+      toast.success(`${created} pass${created === 1 ? "" : "es"} created`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const copyRegistrationLink = async (token: string) => {
+    const url = `${window.location.origin}/b/${token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copied");
+    } catch {
+      toast.error(`Could not copy link — copy it manually: ${url}`);
+    }
+  };
+
+  const resendMutation = useMutation({
+    mutationFn: async (booking: Booking) => {
+      const token = booking.registration_token;
+      if (!token) throw new Error("Registration link is not available for this booking");
+      const info = (await api.get(`/public/bookings/${token}`)).data.data as BookingPassInfo;
+      const guestIds = (info?.passes ?? []).map((pass) => pass.guest_id);
+      if (guestIds.length === 0) throw new Error("No passes to resend yet");
+      return api.post(`/events/${eventId}/invitations/send`, { guest_ids: guestIds });
+    },
+    onSuccess: () => toast.success("Check-in credentials resent to the contact"),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: ({ bookingId, guestId }: { bookingId: string; guestId: string }) =>
+      api.post(`/events/${eventId}/bookings/${bookingId}/passes/${guestId}/revoke`),
+    onSuccess: (r, vars) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["booking-passes", eventId, vars.bookingId] });
+      toast.success(r.data.message ?? "Pass revoked");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const reassignMutation = useMutation({
+    mutationFn: ({ bookingId, guestId, payload }: {
+      bookingId: string;
+      guestId: string;
+      payload: { full_name: string; phone: string; email?: string };
+    }) => api.post(`/events/${eventId}/bookings/${bookingId}/passes/${guestId}/reassign`, payload),
+    onSuccess: (r, vars) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["booking-passes", eventId, vars.bookingId] });
+      setReassignTarget(null);
+      toast.success(r.data.message ?? "Pass reassigned");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const openReassignModal = (bookingId: string, pass: BookingPass) => {
+    setReassignForm({ full_name: pass.full_name, phone: "", email: "" });
+    setReassignTarget({ bookingId, pass });
+  };
+
+  const submitReassign = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!reassignTarget) return;
+    if (!reassignForm.full_name.trim() || !reassignForm.phone.trim()) {
+      toast.error("Full name and phone are required");
+      return;
+    }
+    reassignMutation.mutate({
+      bookingId: reassignTarget.bookingId,
+      guestId: reassignTarget.pass.guest_id,
+      payload: {
+        full_name: reassignForm.full_name.trim(),
+        phone: reassignForm.phone.trim(),
+        email: reassignForm.email.trim() || undefined,
+      },
+    });
+  };
+
   /* ── Tables ────────────────────────────────────────────────────────── */
   const [tableTarget, setTableTarget] = useState<Booking | null>(null);
   const [tableForm, setTableForm] = useState({ table_number: "", package_id: "" });
@@ -441,6 +585,16 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
         <div className="min-w-0">
           <p className="font-semibold text-slate-900">{b.company_name}</p>
           <p className="mt-0.5 text-xs text-slate-500">{b.contact_person} · {b.contact_phone}</p>
+          {(b.contact_email_is_free || !!b.contact_email_verified_at) && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {b.contact_email_is_free && (
+                <Badge label="Free-mail contact" className="!normal-case bg-amber-100 text-amber-800" />
+              )}
+              {!!b.contact_email_verified_at && (
+                <Badge label="Email verified" className="!normal-case bg-emerald-100 text-emerald-700" />
+              )}
+            </div>
+          )}
         </div>
       ),
     },
@@ -461,8 +615,32 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
       render: (b) => <span className={b.balance > 0 ? "font-semibold text-rose-600" : "font-semibold text-emerald-600"}>{formatTsh(b.balance)}</span>,
     },
     {
-      key: "status", label: "Status",
-      render: (b) => <Badge label={b.confirmed_at ? "confirmed" : "pending"} variant={b.confirmed_at ? "green" : "pending"} />,
+      key: "workflow_status", label: "Workflow",
+      render: (b) => {
+        const index = workflowIndex(b.workflow_status);
+        const step = WORKFLOW_STEPS[index];
+        return (
+          <div className="min-w-[130px] space-y-1.5">
+            <Badge label={step.label} className={`!normal-case ${step.badgeClass}`} />
+            <div
+              className="flex gap-0.5"
+              title={WORKFLOW_STEPS.map((s) => s.label).join(" → ")}
+            >
+              {WORKFLOW_STEPS.map((s, i) => (
+                <span
+                  key={s.key}
+                  className={`h-1 flex-1 rounded-full ${
+                    i < index ? "bg-gold-400" : i === index ? "bg-navy-800" : "bg-slate-200"
+                  }`}
+                />
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400">
+              {b.confirmed_at ? "Payment confirmed" : "Payment pending"}
+            </p>
+          </div>
+        );
+      },
     },
     { key: "passes_created", label: "Passes", render: (b) => <span className="text-slate-700">{b.passes_created}</span> },
     {
@@ -486,6 +664,46 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
       key: "actions", label: " ",
       render: (b) => (
         <div className="flex flex-wrap items-center gap-1">
+          <Button
+            size="sm" variant="ghost"
+            className="text-sky-700"
+            disabled={!!b.contact_email_verified_at || !b.contact_email}
+            title={b.contact_email_verified_at ? "Email already verified" : !b.contact_email ? "Add a contact email first" : "Send verification email"}
+            onClick={() => verifyMutation.mutate(b.id)}
+            isLoading={verifyMutation.isPending && verifyMutation.variables === b.id}
+          ><MailCheck className="h-3.5 w-3.5" /> Verify email</Button>
+          {(b.workflow_status === "paid" || b.workflow_status === "requested") && (
+            <Button
+              size="sm" variant="ghost"
+              className="text-navy-800"
+              onClick={() => issuePassesMutation.mutate(b.id)}
+              isLoading={issuePassesMutation.isPending && issuePassesMutation.variables === b.id}
+              title="Issue passes for this booking"
+            ><Ticket className="h-3.5 w-3.5" /> Issue passes</Button>
+          )}
+          {!!b.registration_token && (
+            <>
+              <Button
+                size="sm" variant="ghost"
+                className="text-gold-700"
+                onClick={() => copyRegistrationLink(b.registration_token as string)}
+                title="Copy registration link"
+              ><Link2 className="h-3.5 w-3.5" /> Registration link</Button>
+              <Button
+                size="sm" variant="ghost"
+                className="text-violet-700"
+                onClick={() => resendMutation.mutate(b)}
+                isLoading={resendMutation.isPending && resendMutation.variables?.id === b.id}
+                title="Resend check-in credentials to the contact"
+              ><Send className="h-3.5 w-3.5" /> Resend</Button>
+              <Button
+                size="sm" variant="ghost"
+                className="text-slate-700"
+                onClick={() => setPassesTarget(b)}
+                title="View and manage passes"
+              ><Users className="h-3.5 w-3.5" /> Passes</Button>
+            </>
+          )}
           <Button
             size="sm" variant="ghost"
             className="text-emerald-700"
@@ -935,6 +1153,103 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* ── Passes modal ─────────────────────────────────────────────── */}
+      <Modal
+        isOpen={!!passesTarget}
+        onClose={() => setPassesTarget(null)}
+        title={`Passes — ${passesTarget?.company_name ?? ""}`}
+        size="lg"
+      >
+        {passesTarget && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 p-3">
+              <p className="text-xs text-slate-600">
+                {passesTarget.passes_created} pass{passesTarget.passes_created === 1 ? "" : "es"} for this booking
+              </p>
+              <Button
+                size="sm" variant="ghost"
+                onClick={() => resendMutation.mutate(passesTarget)}
+                isLoading={resendMutation.isPending}
+                disabled={!passInfo?.passes?.length}
+              ><Send className="h-3.5 w-3.5" /> Resend credentials</Button>
+            </div>
+            {passesLoading ? (
+              <p className="py-6 text-center text-sm text-slate-500">Loading passes…</p>
+            ) : !(passInfo?.passes?.length) ? (
+              <p className="py-6 text-center text-sm text-slate-400">No passes issued yet.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                {passInfo.passes.map((pass) => (
+                  <li key={pass.guest_id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900">{pass.full_name}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {pass.package_name ?? "Package —"}
+                        {pass.table_number ? ` · Table ${pass.table_number}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge label={pass.pass_state} className={passStateStyle(pass.pass_state)} />
+                      <Button
+                        size="sm" variant="ghost"
+                        className="text-rose-600"
+                        disabled={pass.pass_state === "revoked"}
+                        onClick={() => {
+                          if (window.confirm(`Revoke the pass for ${pass.full_name}?`)) {
+                            revokeMutation.mutate({ bookingId: passesTarget.id, guestId: pass.guest_id });
+                          }
+                        }}
+                        isLoading={revokeMutation.isPending && revokeMutation.variables?.guestId === pass.guest_id}
+                      ><Ban className="h-3.5 w-3.5" /> Revoke</Button>
+                      <Button
+                        size="sm" variant="ghost"
+                        className="text-navy-800"
+                        onClick={() => openReassignModal(passesTarget.id, pass)}
+                      ><Pencil className="h-3.5 w-3.5" /> Reassign</Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Reassign pass modal ──────────────────────────────────────── */}
+      <Modal
+        isOpen={!!reassignTarget}
+        onClose={() => setReassignTarget(null)}
+        title={`Reassign pass — ${reassignTarget?.pass.full_name ?? ""}`}
+      >
+        <form onSubmit={submitReassign} className="space-y-4">
+          <Input
+            label="Full name"
+            value={reassignForm.full_name}
+            onChange={(e) => setReassignForm({ ...reassignForm, full_name: e.target.value })}
+            placeholder="Attendee full name"
+            required
+          />
+          <Input
+            label="Phone"
+            value={reassignForm.phone}
+            onChange={(e) => setReassignForm({ ...reassignForm, phone: e.target.value })}
+            placeholder="07xxxxxxxx"
+            required
+          />
+          <Input
+            label="Email (optional)"
+            type="email"
+            value={reassignForm.email}
+            onChange={(e) => setReassignForm({ ...reassignForm, email: e.target.value })}
+            placeholder="name@example.com"
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={() => setReassignTarget(null)}>Cancel</Button>
+            <Button type="submit" isLoading={reassignMutation.isPending}><Pencil className="h-4 w-4" /> Reassign pass</Button>
+          </div>
+        </form>
       </Modal>
 
       {/* ── Add table modal ──────────────────────────────────────────── */}

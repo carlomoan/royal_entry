@@ -23,6 +23,13 @@ impl EventRepository {
         let now = Utc::now();
 
         // Parse dates
+        let security_level = req.pass_security_level.clone().unwrap_or_else(|| {
+            if req.event_mode.as_deref() == Some("corporate") {
+                "controlled".to_string()
+            } else {
+                "standard".to_string()
+            }
+        });
         let event_date = NaiveDate::parse_from_str(&req.event_date, "%Y-%m-%d")
             .map_err(|_| crate::error::AppError::BadRequest("Invalid event_date format, use YYYY-MM-DD".to_string()))?;
 
@@ -42,6 +49,7 @@ impl EventRepository {
                 otp_mode, otp_channels, pledge_deadline_at, min_pledge_per_person,
                 min_pledge_plus_one, payment_instructions,
                 main_characters, guest_count_expected, rsvp_deadline,
+                pass_security_level, is_demo, name_cutoff_at, auto_issue_passes,
                 status, approval_status, send_save_the_date, created_at, updated_at
             )
             VALUES (
@@ -50,7 +58,8 @@ impl EventRepository {
                 $17, $18, COALESCE($19, 'feature_phone_only'),
                 COALESCE($20, ARRAY['sms','whatsapp','email']),
                 $21, $22, $23, $24,
-                $25, $26, $27, 'draft', 'pending', COALESCE($28, TRUE), $29, $29
+                $25, $26, $27, $30, COALESCE($31, FALSE), $32, COALESCE($33, TRUE),
+                'draft', 'pending', COALESCE($28, TRUE), $29, $29
             )
             RETURNING *
             "#
@@ -84,6 +93,10 @@ impl EventRepository {
         .bind(&rsvp_deadline)
         .bind(&req.send_save_the_date)
         .bind(now)
+        .bind(security_level.as_str())
+        .bind(req.is_demo)
+        .bind(req.name_cutoff_at.as_ref().map(|s| s.parse::<DateTime<Utc>>()).transpose().map_err(|_| crate::error::AppError::BadRequest("Invalid name_cutoff_at".to_string()))?)
+        .bind(req.auto_issue_passes)
         .fetch_one(pool)
         .await?;
 
@@ -197,6 +210,10 @@ impl EventRepository {
                 guest_count_expected = COALESCE($24, guest_count_expected),
                 rsvp_deadline = $25,
                 send_save_the_date = COALESCE($26, send_save_the_date),
+                pass_security_level = COALESCE($28, pass_security_level),
+                is_demo = COALESCE($29, is_demo),
+                name_cutoff_at = COALESCE($30, name_cutoff_at),
+                auto_issue_passes = COALESCE($31, auto_issue_passes),
                 updated_at = $27
             WHERE id = $1
             RETURNING *
@@ -229,6 +246,10 @@ impl EventRepository {
         .bind(&rsvp_deadline)
         .bind(&req.send_save_the_date)
         .bind(now)
+        .bind(&req.pass_security_level)
+        .bind(req.is_demo)
+        .bind(req.name_cutoff_at.as_ref().map(|s| s.parse::<DateTime<Utc>>()).transpose().map_err(|_| crate::error::AppError::BadRequest("Invalid name_cutoff_at".to_string()))?)
+        .bind(req.auto_issue_passes)
         .fetch_one(pool)
         .await?;
 

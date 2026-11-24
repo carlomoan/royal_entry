@@ -170,10 +170,14 @@ async fn fetch_team(
 /// Setting keys that hold secrets — never returned to the browser in full.
 const SECRET_KEYS: &[&str] = &[
     "sms_api_key",
+    "nextsms_api_token",
+    "unitxt_api_token",
+    "resend_api_key",
+    "smtp_password",
     "whatsapp_access_token",
+    "telegram_bot_token",
     "tax_tra_api_key",
     "tax_tra_secret_key",
-    "telegram_bot_token",
 ];
 
 /// Sentinel returned instead of a stored secret value.

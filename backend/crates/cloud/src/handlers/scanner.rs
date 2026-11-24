@@ -33,6 +33,7 @@ pub struct SendOtpRequest {
 pub struct VerifyOtpRequest {
     pub short_link: String,
     pub code: String,
+    pub gate: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,6 +239,38 @@ pub async fn send_otp(
         ));
     };
 
+    // Make the OTP preview visible in the event's Messages view, with the
+    // code attached so it can be read without a live SMS provider.
+    match via {
+        "sms" => {
+            state
+                .channels
+                // Never persist a real OTP code — even a sandbox preview must
+                // not become a bearer credential.
+                .annotate_last_sandbox(&phone, "sms", event_id, guest_id, None, Some("******"))
+                .await;
+        }
+        "email" => {
+            if let Some(to) = email.as_deref() {
+                state
+                    .channels
+                    .record_preview(
+                        event_id,
+                        guest_id,
+                        "email",
+                        to,
+                        Some(&subject),
+                        "Your check-in code is ******. It expires in 10 minutes.",
+                        None,
+                        Some("******"),
+                        None,
+                    )
+                    .await;
+            }
+        }
+        _ => {}
+    }
+
     tracing::info!(guest_id = %guest_id, channel = via, "OTP sent");
     Ok(Json(json!({
         "success": true,
@@ -293,6 +326,11 @@ pub async fn verify_otp(
     if guest.guest_id != guest_id {
         return Err(AppError::BadRequest("Invalid or expired OTP".to_string()));
     }
+    if guest.pass_state == "revoked" {
+        return Err(AppError::BadRequest(
+            "This pass has been revoked and can no longer be used at the gate".to_string(),
+        ));
+    }
     if guest.entries_used >= i64::from(guest.party_size.max(1)) {
         return Err(AppError::DuplicateScan);
     }
@@ -305,6 +343,7 @@ pub async fn verify_otp(
         scanner_user_id,
         "otp",
         Some(format!("OTP verified: {}", payload.code)),
+        payload.gate.as_deref(),
     )
     .await?;
 
@@ -435,6 +474,10 @@ struct ScanGuest {
     party_size: i32,
     device_type: String,
     card_issued_at: Option<DateTime<Utc>>,
+    pass_state: String,
+    booking_id: Option<Uuid>,
+    last_scan_at: Option<DateTime<Utc>>,
+    last_gate: Option<String>,
     company_name: Option<String>,
     package_name: Option<String>,
     entries_used: i64,
@@ -449,8 +492,11 @@ async fn load_scan_guest(
         r#"
         SELECT i.id AS invitation_id, g.id AS guest_id, g.full_name, g.phone,
                g.guest_category, g.table_number, g.seat_number, g.party_size,
-               g.device_type, g.card_issued_at, b.company_name, p.name AS package_name,
-               (SELECT COUNT(*) FROM entry_scans es WHERE es.guest_id = g.id)::BIGINT AS entries_used
+               g.device_type, g.card_issued_at, g.pass_state, g.booking_id,
+               b.company_name, p.name AS package_name,
+               (SELECT COUNT(*) FROM entry_scans es WHERE es.guest_id = g.id)::BIGINT AS entries_used,
+               (SELECT scanned_at FROM entry_scans es WHERE es.guest_id = g.id ORDER BY scanned_at DESC LIMIT 1) AS last_scan_at,
+               (SELECT gate FROM entry_scans es WHERE es.guest_id = g.id ORDER BY scanned_at DESC LIMIT 1) AS last_gate
         FROM invitations i
         JOIN guests g ON g.id = i.guest_id
         LEFT JOIN bookings b ON b.id = g.booking_id
@@ -475,6 +521,10 @@ async fn load_scan_guest(
         party_size: row.try_get("party_size").unwrap_or(1),
         device_type: row.try_get("device_type").unwrap_or_default(),
         card_issued_at: row.try_get("card_issued_at").ok().flatten(),
+        pass_state: row.try_get("pass_state").unwrap_or_else(|_| "unnamed".into()),
+        booking_id: row.try_get("booking_id").ok(),
+        last_scan_at: row.try_get("last_scan_at").ok().flatten(),
+        last_gate: row.try_get("last_gate").ok().flatten(),
         company_name: row.try_get("company_name").ok(),
         package_name: row.try_get("package_name").ok(),
         entries_used: row.try_get("entries_used").unwrap_or(0),
@@ -506,7 +556,12 @@ async fn ensure_card_active(
     ))
 }
 
-fn otp_required_for(event: &Event, device_type: &str) -> bool {
+fn otp_required_for(event: &Event, device_type: &str, corporate_pass: bool) -> bool {
+    // Controlled/Maximum corporate passes always require OTP, regardless of
+    // the event's general otp_mode. A forwarded QR is useless without it.
+    if corporate_pass && matches!(event.pass_security_level.as_str(), "controlled" | "maximum") {
+        return true;
+    }
     match event.otp_mode.as_str() {
         "all" => true,
         "feature_phone_only" => device_type == "feature_phone",
@@ -538,6 +593,7 @@ async fn perform_check_in(
     scanner_user_id: Uuid,
     scan_source: &str,
     notes: Option<String>,
+    gate: Option<&str>,
 ) -> AppResult<CheckInResponse> {
     let scanned_at = Utc::now();
     let entries_used = guest.entries_used + 1;
@@ -546,9 +602,9 @@ async fn perform_check_in(
         r#"
         INSERT INTO entry_scans (
             id, event_id, guest_id, invitation_id, scanned_by_user_id,
-            scanned_at, scan_source, notes
+            scanned_at, scan_source, notes, gate
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
     .bind(Uuid::new_v4())
@@ -559,6 +615,7 @@ async fn perform_check_in(
     .bind(scanned_at)
     .bind(scan_source)
     .bind(notes)
+    .bind(gate)
     .execute(state.db.pool())
     .await?;
 
@@ -624,12 +681,35 @@ pub async fn check_in_guest(
         .await?
         .ok_or(AppError::InvitationNotFound)?;
 
+    if guest.pass_state == "revoked" {
+        return Err(AppError::BadRequest(
+            "This pass has been revoked and can no longer be used at the gate".to_string(),
+        ));
+    }
     if guest.entries_used >= i64::from(guest.party_size.max(1)) {
-        return Err(AppError::DuplicateScan);
+        let when = guest
+            .last_scan_at
+            .map(|t| t.format("%H:%M").to_string())
+            .unwrap_or_else(|| "an earlier scan".to_string());
+        let gate = guest.last_gate.clone().unwrap_or_else(|| "the gate".to_string());
+        return Err(AppError::AlreadyUsedAt(format!("at {when}, {gate}")));
     }
     ensure_card_active(&state, &event, &guest).await?;
 
-    if otp_required_for(&event, &guest.device_type)
+    // Unnamed corporate passes may be used until the name cutoff; after it the
+    // usher must capture the attendee's name before the entry is accepted.
+    if guest.pass_state == "unnamed" && guest.booking_id.is_some() {
+        if let Some(cutoff) = event.name_cutoff_at {
+            if chrono::Utc::now() > cutoff {
+                return Err(AppError::BadRequest(
+                    "Name registration deadline passed. Capture the attendee name before check-in."
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if otp_required_for(&event, &guest.device_type, guest.booking_id.is_some())
         && !has_verified_otp(&state, event_id, guest.guest_id).await?
     {
         return Err(AppError::OtpRequired);
@@ -646,7 +726,15 @@ pub async fn check_in_guest(
         }
     });
 
-    let response = perform_check_in(&state, &guest, scanner_user_id, &scan_source, notes).await?;
+    let response = perform_check_in(
+        &state,
+        &guest,
+        scanner_user_id,
+        &scan_source,
+        notes,
+        payload.gate.as_deref(),
+    )
+    .await?;
 
     Ok((
         StatusCode::OK,
@@ -687,7 +775,7 @@ pub async fn override_check_in(
         operator_id,
         payload.reason.trim()
     );
-    let response = perform_check_in(&state, &guest, operator_id, "override", Some(notes)).await?;
+    let response = perform_check_in(&state, &guest, operator_id, "override", Some(notes), None).await?;
 
     tracing::warn!(event_id = %event_id, guest_id = %guest.guest_id, operator_id = %operator_id, "Manual check-in override used");
     Ok(Json(json!({ "success": true, "data": response })))
@@ -754,4 +842,60 @@ pub async fn scan_stats(
         "success": true,
         "data": response,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CaptureNameRequest {
+    pub short_link: String,
+    pub full_name: String,
+    pub phone: Option<String>,
+}
+
+/// POST /events/{eid}/scan/capture-name — after the name cutoff, the usher
+/// captures the attendee's identity for an unnamed pass before check-in.
+pub async fn capture_name(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(payload): Json<CaptureNameRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let actor_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
+    if payload.full_name.trim().is_empty() {
+        return Err(AppError::ValidationError("Attendee name is required".to_string()));
+    }
+    let short_link = normalize_short_link(&payload.short_link);
+    let guest = load_scan_guest(&state, event_id, &short_link)
+        .await?
+        .ok_or(AppError::InvitationNotFound)?;
+    if guest.booking_id.is_none() || guest.pass_state != "unnamed" {
+        return Err(AppError::BadRequest("This pass does not need name capture".to_string()));
+    }
+    sqlx::query(
+        r#"UPDATE guests SET full_name = $1, phone = COALESCE($2, phone),
+               pass_state = 'named', named_at = NOW(), updated_at = NOW()
+           WHERE id = $3"#,
+    )
+    .bind(payload.full_name.trim())
+    .bind(payload.phone.as_deref())
+    .bind(guest.guest_id)
+    .execute(state.db.pool())
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO pass_audit
+               (id, event_id, booking_id, guest_id, action, actor_id, actor_role, details)
+           VALUES ($1, $2, $3, $4, 'gate_name_captured', $5, $6, $7)"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(event_id)
+    .bind(guest.booking_id)
+    .bind(guest.guest_id)
+    .bind(actor_id)
+    .bind(&claims.role)
+    .bind(json!({"full_name": payload.full_name, "review_required": true}))
+    .execute(state.db.pool())
+    .await?;
+    let _ = event; // ownership already asserted
+    Ok(Json(json!({ "success": true, "message": "Name captured — entry logged for review" })))
 }

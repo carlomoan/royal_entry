@@ -62,6 +62,9 @@ pub enum AppError {
     #[error("Identity confirmation required")]
     OtpRequired,
 
+    #[error("Pass already used: {0}")]
+    AlreadyUsedAt(String),
+
     // ========================================================================
     // Authorization Errors
     // ========================================================================
@@ -259,6 +262,11 @@ impl IntoResponse for AppError {
                 StatusCode::PRECONDITION_REQUIRED,
                 "OTP_REQUIRED",
                 "Identity confirmation required. Send a one-time code to the guest.".to_string(),
+            ),
+            AppError::AlreadyUsedAt(detail) => (
+                StatusCode::CONFLICT,
+                "ALREADY_USED",
+                format!("Already used {detail}"),
             ),
             AppError::InvalidQrCode => (
                 StatusCode::BAD_REQUEST,

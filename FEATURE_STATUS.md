@@ -105,8 +105,9 @@
 | **Unified Channels** | `services/channels.rs` — Beem SMS, SMTP/Resend email, Telegram, WhatsApp Cloud | Channel config in Settings | ✅ |
 | **Message Audit Logs** | `message_logs` table + handlers | Delivery logs page | ✅ |
 | **Message Templates** | `message_templates` table + CRUD | Templates page | ✅ |
-| **SMS Integration** | Beem (`BEEM_*`) | — | ✅ (needs live credentials) |
-| **WhatsApp Integration** | WhatsApp Cloud API (`WHATSAPP_*`) | — | ✅ (needs live credentials) |
+| **SMS Integration** | Beem/UniTxt/Africa's Talking; `ENABLE_SMS_SANDBOX=true` logs previews to `sandbox_messages` | Messages tab shows recipient, token and QR link | ✅ (sandbox works; live needs credentials) |
+| **WhatsApp Integration** | WhatsApp Cloud API; `ENABLE_WHATSAPP_SANDBOX=true` logs previews | Messages tab shows recipient, token and QR link | ✅ (sandbox works; live needs credentials) |
+| **Public QR endpoint** | `GET /public/invitations/{code}/qr` — no auth, points to `/g/{token}` | Used on invitation and check-in card pages | ✅ |
 | **Email Integration** | SMTP (Outlook) via `Channels` | — | ✅ (needs app password) |
 | **Telegram Integration** | Bot API + webhook | — | ✅ (needs token + setWebhook) |
 
@@ -245,9 +246,25 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Unified channel configuration (2026-11-24)
+- ✅ `services/channels.rs` rewritten as one `ChannelConfig` loaded from `.env` and overlaid from `system_settings` (Settings UI). SMS = **NextSMS / Unitxt only** (Beem removed, optional failover); email = Resend or SMTP; Telegram Bot API; WhatsApp Cloud API. All send paths use the same `Channels` instance.
+- ✅ Settings UI: SMS Config (NextSMS/Unitxt + failover + sandbox), Email Config (new tab), WhatsApp Config, Telegram Config. Secrets are write-only and masked; sandbox flags are forced off in production.
+
+### Pass security — Controlled (2026-11-23)
+- ✅ `events.pass_security_level` = standard / controlled / maximum; **controlled is the default for corporate events**. Invitations now carry only the QR-free `/i/{token}` link — no entry token, QR image or check-in link. Entry credentials are sent only when a pass is issued.
+- ✅ Named passes: contact verifies email by link, then registers each attendee's name/phone/email at `/b/{token}`; credentials go directly to the attendee. Free-mail contact addresses are flagged. Revoke and reassign invalidate the old QR and are written to `pass_audit`.
+- ✅ Gate: controlled corporate passes always require OTP; revoked passes are rejected; duplicate scans report the original time and gate; after the name cutoff the usher captures the name and the entry is logged for review.
+- ✅ Booking workflow states (Requested → Invoiced → Paid → Passes issued → Names registered → Checked in) with manual/auto Issue passes. Message inspection is platform-admin only, demo-events only, and masks tokens/OTP codes; sandbox flags are forced off in production.
+- ✅ Migrations now run up to **0041** (pass security, audit, gate labels); verified on a fresh database copy (41/41).
+
+### Messaging sandbox & event tabs (2026-11-23)
+- ✅ `ENABLE_SMS_SANDBOX` / `ENABLE_WHATSAPP_SANDBOX` now record every outbound message in `sandbox_messages` (recipient, body, QR link, entry token, OTP code) so all three channels can be tested without live credentials. Email previews are recorded too, alongside real Resend delivery.
+- ✅ Invitations carry both the entry token and the QR/check-in link on every channel; public QR endpoint `GET /public/invitations/{code}/qr` needs no auth and points to `/g/{token}`.
+- ✅ Event detail tabs reordered for operational flow: Overview → Guests → Packages & Bookings → Michango → Messages → Broadcast → Staff → Gate dashboard → Scanner. New Messages tab shows sandbox previews with channel filter.
+
 ### Arrival messages & migrations
 - ✅ Venue QR `/w/{event}` page, editor in event Overview, auto-shown on the guest's own card after check-in, SMS to feature phones.
-- ✅ Migrations now run up to **0039**: 0032 checkin card template, 0033 tax rate float, 0034 invitation/pledge template, 0035 event modes & card issuing, 0036 arrival messages & reminders, 0037 corporate packages/bookings, 0038 event open tables, 0039 booking invoices & parking variants. **sqlx migration versions must be unique** — a duplicate version causes `VersionMismatch(N)` on startup.
+- ✅ Migrations now run up to **0040**: 0040 sandbox message previews. Previously: 0032 tax rate float, 0033 checkin card template, 0034 invitation/pledge template, 0035 event modes & card issuing, 0036 arrival messages & reminders, 0037 corporate packages/bookings, 0038 event open tables, 0039 booking invoices & parking variants. **sqlx migration versions must be unique** — a duplicate version causes `VersionMismatch(N)` on startup. The same error also means a checksum mismatch; commit `23fd632` swapped 0032/0033 to match production, so an older local DB needs its `_sqlx_migrations` ledger repaired (never rename the files back).
 
 ---
 

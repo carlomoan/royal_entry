@@ -60,7 +60,7 @@ export default function PublicInvitationPage() {
   }
 
   const { event, guest, invitation: inv } = invitation;
-  const qrUrl = `${api.defaults.baseURL}/events/${event.id}/invitations/${inv.id}/qr`;
+  const qrUrl = `${api.defaults.baseURL}/public/invitations/${inv.short_link}/qr`;
   const hasRsvp = guest.rsvp_status && guest.rsvp_status !== "pending";
 
   return (

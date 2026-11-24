@@ -5,8 +5,8 @@ use crate::{
 };
 
 /// Legacy SMS channel used by the broadcast dispatcher's registry. SMS is now
-/// handled by the unified `Channels` (Beem) in `services/channels.rs`; this
-/// channel reports not-configured so the placeholder dispatcher doesn't crash.
+/// handled by the unified `Channels` (NextSMS/Unitxt) in `services/channels.rs`;
+/// this channel reports not-configured so the placeholder dispatcher doesn't crash.
 pub struct SmsChannel;
 
 impl SmsChannel {
@@ -23,7 +23,7 @@ impl MessageChannel for SmsChannel {
             success: false,
             provider_message_id: None,
             error_message: Some(
-                "SMS is handled by the unified Channels (Beem) — legacy channel not wired".to_string(),
+                "SMS is handled by the unified Channels (NextSMS/Unitxt) — legacy channel not wired".to_string(),
             ),
             raw_response: None,
         })

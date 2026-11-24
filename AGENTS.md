@@ -48,11 +48,17 @@ startup via sqlx (currently up to `0039`). Notable: `0006` (settings/audit),
 `0025` (card template visibility), `0026` (invoice voided_at), `0027` (invoice
 tax), `0028` (telegram_chat_id + email templates), `0029` (org_subscriptions
 notes fix), `0030` (account security), `0031` (guest email verification),
-`0032` (checkin card template), `0033` (tax rate float), `0034` (invitation/
+`0032` (tax rate float), `0033` (checkin card template), `0034` (invitation/
 pledge template), `0035` (event modes & card issuing), `0036` (arrival messages
 & reminders), `0037` (corporate packages/bookings), `0038` (event open tables),
-`0039` (booking invoices & parking variants). **sqlx migration versions must be
+`0039` (booking invoices & parking variants), `0040` (sandbox message previews), `0041` (pass security: controlled level, named passes, audit, gate labels). **sqlx migration versions must be
 unique** — a duplicate version fails startup with `VersionMismatch(N)`.
+
+`VersionMismatch(N)` also means the applied checksum in `_sqlx_migrations` no
+longer matches the file. Commit `23fd632` swapped the 0032/0033 filenames to
+match production; an older local DB can still have the reverse order. Repair
+the **local ledger only** (both schema changes are already present, so swapping
+the metadata is safe) — never rename the files back, or production will break.
 
 ## Key conventions
 
@@ -68,6 +74,11 @@ unique** — a duplicate version fails startup with `VersionMismatch(N)`.
 - Offline-first: `frontend-next/src/lib/offline.ts` (mutation queue) +
   `frontend-next/src/lib/cache.ts` (GET read cache) + `scannerOffline.ts`
   (offline scanning). Works in browser and the Tauri desktop app.
+- Outbound channels are configured in one place: `services/channels.rs`.
+  Env values are the base layer; the Settings UI overrides them via
+  `system_settings` (same keys, lowercase). SMS providers are **NextSMS and
+  Unitxt only** (Beem removed); email is Resend or SMTP; Telegram and WhatsApp
+  Cloud API are configured the same way. See `backend/.env.example`.
 - Secrets are write-only: `GET /settings/system` masks `sms_api_key`,
   `whatsapp_access_token`, `tax_tra_api_key`, `tax_tra_secret_key`,
   `telegram_bot_token` as `********`. Never expose them via `NEXT_PUBLIC_*`.

@@ -270,3 +270,75 @@ pub async fn public_invitation_card(
         }
     })))
 }
+
+/// Send the actual entry credential (check-in link + token) to a guest whose
+/// pass has been issued. This is deliberately separate from invitations: an
+/// invitation carries no entry rights.
+pub async fn send_checkin_credentials(
+    state: &Arc<AppState>,
+    event: &crate::models::event::Event,
+    guest_id: Uuid,
+) -> AppResult<bool> {
+    let guest = sqlx::query_as::<_, crate::models::guest::Guest>(
+        "SELECT * FROM guests WHERE id = $1",
+    )
+    .bind(guest_id)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or(AppError::GuestNotFound)?;
+
+    let invitation = crate::handlers::invitations::ensure_invitation(state.db.pool(), guest_id).await?;
+    let link = format!(
+        "{}/g/{}",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        invitation.short_link
+    );
+    let token = crate::models::invitation::generate_human_friendly_code(&invitation.id);
+    let body = format!(
+        "Dear {name},\n\nYour check-in card for {title} is ready.\n\nCheck-in card: {link}\nEntry code: {code}\n\nShow the QR code or quote the entry code at the gate. Do not forward this message.\n\nRoyalEntry",
+        name = guest.full_name,
+        title = event.title,
+        link = link,
+        code = token,
+    );
+    let qr_url = format!(
+        "{}/api/v1/public/invitations/{}/qr",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        invitation.short_link
+    );
+
+    let delivered = if let Some(email) = guest.email.as_deref().filter(|e| !e.is_empty()) {
+        let html = crate::services::channels::html_wrap(&body.replace('\n', "<br>"));
+        state
+            .channels
+            .email(email, &format!("Your check-in card — {}", event.title), &html)
+            .await
+            .is_ok()
+    } else if !guest.phone.trim().is_empty() {
+        state
+            .channels
+            .sms(&[guest.phone.clone()], &body)
+            .await
+            .map(|r| r.iter().any(|x| x.success))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    state
+        .channels
+        .record_preview(
+            event.id,
+            guest_id,
+            if guest.email.is_some() { "email" } else { "sms" },
+            guest.email.as_deref().unwrap_or(&guest.phone),
+            Some(&format!("Your check-in card — {}", event.title)),
+            &body,
+            Some(&qr_url),
+            Some(&token),
+            None,
+        )
+        .await;
+
+    Ok(delivered)
+}

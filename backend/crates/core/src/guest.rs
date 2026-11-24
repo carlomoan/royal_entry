@@ -29,6 +29,9 @@ pub struct Guest {
     pub party_size: i32,
     pub seat_number: Option<String>,
     pub card_issued_at: Option<DateTime<Utc>>,
+    pub pass_state: String,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub named_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,6 +54,7 @@ pub struct GuestResponse {
     pub party_size: i32,
     pub seat_number: Option<String>,
     pub card_issued_at: Option<DateTime<Utc>>,
+    pub pass_state: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -72,6 +76,7 @@ impl From<Guest> for GuestResponse {
             party_size: guest.party_size,
             seat_number: guest.seat_number,
             card_issued_at: guest.card_issued_at,
+            pass_state: guest.pass_state,
             created_at: guest.created_at,
         }
     }

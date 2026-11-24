@@ -22,6 +22,7 @@ pub struct CheckInRequest {
     pub short_link: String,
     pub scan_source: Option<String>,
     pub notes: Option<String>,
+    pub gate: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

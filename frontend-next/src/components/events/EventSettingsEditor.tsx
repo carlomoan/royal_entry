@@ -19,6 +19,10 @@ type SettingsForm = {
   min_pledge_plus_one: string;
   payment_instructions: string;
   parking_instructions: string;
+  pass_security_level: string;
+  auto_issue_passes: boolean;
+  name_cutoff_at: string;
+  is_demo: boolean;
 };
 
 const EMPTY_FORM: SettingsForm = {
@@ -33,6 +37,10 @@ const EMPTY_FORM: SettingsForm = {
   min_pledge_plus_one: "",
   payment_instructions: "",
   parking_instructions: "",
+  pass_security_level: "standard",
+  auto_issue_passes: true,
+  name_cutoff_at: "",
+  is_demo: false,
 };
 
 const CHANNELS = ["sms", "whatsapp", "email"] as const;
@@ -90,6 +98,10 @@ export default function EventSettingsEditor({ eventId }: { eventId: string }) {
       min_pledge_plus_one: event.min_pledge_plus_one != null ? String(event.min_pledge_plus_one) : "",
       payment_instructions: event.payment_instructions ?? "",
       parking_instructions: event.parking_instructions ?? "",
+      pass_security_level: event.pass_security_level ?? "standard",
+      auto_issue_passes: event.auto_issue_passes ?? true,
+      name_cutoff_at: toLocalInput(event.name_cutoff_at),
+      is_demo: event.is_demo ?? false,
     });
   }, [summary?.event]);
 
@@ -170,6 +182,10 @@ export default function EventSettingsEditor({ eventId }: { eventId: string }) {
       min_pledge_plus_one: form.min_pledge_plus_one === "" ? null : Number(form.min_pledge_plus_one),
       payment_instructions: form.payment_instructions || null,
       parking_instructions: form.parking_instructions || null,
+      pass_security_level: form.pass_security_level,
+      auto_issue_passes: form.auto_issue_passes,
+      name_cutoff_at: form.name_cutoff_at ? new Date(form.name_cutoff_at).toISOString() : null,
+      is_demo: form.is_demo,
     });
   };
 
@@ -315,6 +331,66 @@ export default function EventSettingsEditor({ eventId }: { eventId: string }) {
             <p className="mt-3 flex items-start gap-2 text-xs text-slate-500">
               <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-sky-500" />
               Feature-phone guests always receive their code by SMS, regardless of the channel order above.
+            </p>
+          </div>
+        </section>
+
+        {/* Pass security */}
+        <section className="space-y-3 border-t border-slate-100 pt-5">
+          <div>
+            <h4 className="text-sm font-bold text-navy-950">Pass security</h4>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Controls how strictly a guest must prove identity before a pass can be used at the gate.
+            </p>
+          </div>
+          <Select
+            label="Security level"
+            value={form.pass_security_level}
+            onChange={(e) => set("pass_security_level", e.target.value)}
+            className="max-w-xl"
+          >
+            <option value="standard">Standard — token and QR, OTP optional</option>
+            <option value="controlled">Controlled — named passes, single use, OTP for all — default for corporate</option>
+            <option value="maximum">Maximum — named passes, live QR and ID check at gate</option>
+          </Select>
+
+          <div className="space-y-1">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.auto_issue_passes}
+                onChange={(e) => set("auto_issue_passes", e.target.checked)}
+                className="h-4 w-4 accent-gold-500"
+              />
+              Auto-issue passes
+            </label>
+            <p className="pl-6 text-xs text-slate-400">
+              When off, use the Issue passes button on each booking.
+            </p>
+          </div>
+
+          <Input
+            label="Name cutoff (optional)"
+            type="datetime-local"
+            value={form.name_cutoff_at}
+            onChange={(e) => set("name_cutoff_at", e.target.value)}
+            className="max-w-sm"
+            hint="After this time, unnamed passes require the usher to capture a name."
+          />
+
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.is_demo}
+                onChange={(e) => set("is_demo", e.target.checked)}
+                className="h-4 w-4 accent-gold-500"
+              />
+              Demo event
+            </label>
+            <p className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              Demo events expose masked message previews to platform admins. Never enable on production events.
             </p>
           </div>
         </section>

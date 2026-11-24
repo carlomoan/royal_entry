@@ -15,6 +15,11 @@ pub fn build_public_invitation_url(frontend_url: &str, scan_code: &str) -> Strin
     format!("{}/g/{}", frontend_url.trim_end_matches('/'), scan_code,)
 }
 
+/// QR-free invitation page. Safe to forward: it carries no entry credential.
+pub fn build_invitation_url(frontend_url: &str, token: &str) -> String {
+    format!("{}/i/{}", frontend_url.trim_end_matches('/'), token,)
+}
+
 /// Generate a human-friendly check-in code that's easy to type and remember
 /// Format: WORD1-WORD2-NUMBER (e.g., "ROYAL-GUEST-1234")
 pub fn generate_human_friendly_code(uuid: &Uuid) -> String {

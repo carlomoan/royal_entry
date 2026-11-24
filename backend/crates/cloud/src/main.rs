@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         config: config.clone(),
         db: db.clone(),
-        channels: royalentry_cloud::services::Channels::from_env(),
+        channels: royalentry_cloud::services::Channels::from_env_with_db(Some(db.pool().clone())).await,
         rate_limiter: royalentry_cloud::middleware::RateLimiter::new(60, 60),
     });
 
@@ -164,10 +164,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     scheduler.start().await.unwrap();
     tracing::info!("Billing scheduler started");
 
+    let sandbox_pool = db.pool().clone();
     let app_state = Arc::new(AppState {
         config: config.clone(),
         db,
-        channels: royalentry_cloud::services::Channels::from_env(),
+        channels: royalentry_cloud::services::Channels::from_env_with_db(Some(sandbox_pool)).await,
         rate_limiter: royalentry_cloud::middleware::RateLimiter::new(60, 60),
     });
 

@@ -111,7 +111,7 @@ pub async fn list_my_invoices(
     .await?;
 
     let outstanding_tsh: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(amount_tsh), 0) FROM billing_invoices
+        "SELECT COALESCE(SUM(amount_tsh), 0)::BIGINT FROM billing_invoices
          WHERE organization_id = $1 AND status IN ('open', 'overdue')",
     )
     .bind(org_id)

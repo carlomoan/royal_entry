@@ -6,7 +6,7 @@ import { useRouter } from "next/router";
 import {
   ArrowLeft, ScanLine, UserCheck, Clock, QrCode, MessageSquare,
   MessageCircle, CheckCircle2, XCircle, ShieldCheck, Loader2, Zap,
-  AlertTriangle, ShieldAlert,
+  AlertTriangle, ShieldAlert, MapPin,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -20,6 +20,16 @@ import jsQR from "jsqr";
 
 type ScanMode = "qr" | "sms";
 
+type ScanResult = {
+  status: "ok" | "fail" | "warn" | null;
+  message: string;
+  company?: string;
+  packageName?: string;
+  entry?: string;
+};
+
+type ScanPayload = { short_link: string; scan_source: string; gate: string };
+
 export default function ScannerPage() {
   const router = useRouter();
   const id = router.query.id as string;
@@ -32,9 +42,24 @@ export default function ScannerPage() {
   const lastLinkRef = useRef<string>("");
   const [scanInterval, setScanInterval] = useState<NodeJS.Timeout | null>(null);
 
+  // Gate label is attached to every scan so duplicate messages name the entry point.
+  const [gate, setGate] = useState<string>(() =>
+    typeof window !== "undefined"
+      ? localStorage.getItem("royalentry_gate_label") || "Gate 1"
+      : "Gate 1"
+  );
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("royalentry_gate_label", gate);
+    }
+  }, [gate]);
+  // Delayed camera auto-submits use a ref so they always send the latest label.
+  const gateRef = useRef(gate);
+  useEffect(() => { gateRef.current = gate; }, [gate]);
+
   // QR mode state
   const [code, setCode] = useState("");
-  const [result, setResult] = useState<{ status: "ok" | "fail" | null; message: string }>({ status: null, message: "" });
+  const [result, setResult] = useState<ScanResult>({ status: null, message: "" });
 
   // SMS OTP mode state
   const [link, setLink] = useState("");
@@ -46,6 +71,11 @@ export default function ScannerPage() {
   const [showOverride, setShowOverride] = useState(false);
   const [overrideLink, setOverrideLink] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
+
+  // Inline name capture after the corporate name-registration cutoff
+  const [captureLink, setCaptureLink] = useState<string | null>(null);
+  const [captureName, setCaptureName] = useState("");
+  const [capturePhone, setCapturePhone] = useState("");
 
   // Live QR scanning from camera stream using jsQR
   useEffect(() => {
@@ -110,10 +140,11 @@ export default function ScannerPage() {
 
   /* ── QR check-in ─────────────────────────────────────────────────────── */
   const checkInMutation = useMutation({
-    mutationFn: (payload: { short_link: string; scan_source: string }) =>
+    mutationFn: (payload: ScanPayload) =>
       api.post(`/events/${id}/scan`, {
         short_link: payload.short_link,
         scan_source: payload.scan_source,
+        gate: payload.gate,
       }),
     onSuccess: (r: any) => {
       const d = r.data?.data ?? {};
@@ -129,19 +160,24 @@ export default function ScannerPage() {
       ].filter(Boolean).join(", ");
       const locPart = location ? ` · ${location}` : "";
       const cls = category ? ` · ${category}` : "";
-      const entryPart =
+      const entryText =
         d.entries_used != null && d.party_size != null
-          ? ` · Entry ${d.entries_used} of ${d.party_size} on this card`
+          ? `Entry ${d.entries_used} of ${d.party_size} on this card`
           : "";
+      const entryPart = entryText ? ` · ${entryText}` : "";
       const affiliation = [d.company_name, d.package_name].filter(Boolean).join(" · ");
       const affiliationPart = affiliation ? ` · ${affiliation}` : "";
       const suffix = r.data?.queued_offline ? " (offline — will sync)" : "";
       setResult({
         status: "ok",
         message: `Welcome, ${guest}! Checked in successfully.${cls}${locPart}${entryPart}${affiliationPart}${suffix}`,
+        company: d.company_name ?? undefined,
+        packageName: d.package_name ?? undefined,
+        entry: entryText || undefined,
       });
       toast.success(`Welcome, ${guest}!${suffix}`);
       setCode("");
+      setCaptureLink(null);
 
       // ✅ Haptic feedback for mobile success
       if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
@@ -151,6 +187,9 @@ export default function ScannerPage() {
     onError: (e: any) => {
       const status = e?.response?.status;
       const errorCode = e?.response?.data?.error?.code;
+      const backendMsg: string =
+        e?.response?.data?.error?.message ?? "Check-in failed.";
+
       if (status === 428 || errorCode === "OTP_REQUIRED") {
         // Backend requires identity confirmation — hand off to the OTP flow.
         const msg = "Identity confirmation required — send a one-time code to this guest.";
@@ -163,10 +202,38 @@ export default function ScannerPage() {
         toast.error(msg);
         return;
       }
-      const msg =
-        status === 409 ? "QR code already used or guest already checked in." :
-        status === 404 ? "Invalid QR code. Guest not found." :
-        e?.response?.data?.error?.message ?? "Check-in failed.";
+
+      // Corporate name cutoff: capture the identity at the gate, then retry.
+      if (backendMsg.includes("Name registration deadline passed")) {
+        setCaptureLink(lastLinkRef.current);
+        setCaptureName("");
+        setCapturePhone("");
+        setResult({ status: "warn", message: backendMsg });
+        toast.error(backendMsg);
+        if (navigator.vibrate) navigator.vibrate(300);
+        return;
+      }
+
+      // Duplicate scan — the backend message includes the time and gate of first use.
+      if (errorCode === "ALREADY_USED" || status === 409) {
+        const msg = errorCode === "ALREADY_USED"
+          ? backendMsg
+          : "QR code already used or guest already checked in.";
+        setResult({ status: "warn", message: msg });
+        toast.error(msg);
+        if (navigator.vibrate) navigator.vibrate(300);
+        return;
+      }
+
+      // Revoked corporate pass — must never be admitted at the gate.
+      if (status === 400 && /revoked/i.test(backendMsg)) {
+        setResult({ status: "fail", message: backendMsg });
+        toast.error(backendMsg);
+        if (navigator.vibrate) navigator.vibrate(300);
+        return;
+      }
+
+      const msg = status === 404 ? "Invalid QR code. Guest not found." : backendMsg;
       setResult({ status: "fail", message: msg });
       toast.error(msg);
 
@@ -174,6 +241,45 @@ export default function ScannerPage() {
       if (navigator.vibrate) navigator.vibrate(300);
     },
   });
+
+  /* ── Inline name capture (after the name-registration cutoff) ─────────── */
+  const captureNameMutation = useMutation({
+    mutationFn: (payload: { short_link: string; full_name: string; phone: string }) =>
+      api.post(`/events/${id}/scan/capture-name`, {
+        short_link: payload.short_link,
+        full_name: payload.full_name,
+        phone: payload.phone,
+      }),
+    onSuccess: (_r, variables) => {
+      toast.success("Name captured — entry logged for review");
+      setCaptureLink(null);
+      setCaptureName("");
+      setCapturePhone("");
+      setResult({ status: null, message: "" });
+      // The pass now has a name — retry the original QR scan exactly once.
+      checkInMutation.mutate({
+        short_link: variables.short_link,
+        scan_source: "qr",
+        gate: gateRef.current,
+      });
+    },
+    onError: (e: any) => {
+      const msg = e?.response?.data?.error?.message ?? "Could not capture name.";
+      setResult({ status: "fail", message: msg });
+      toast.error(msg);
+    },
+  });
+
+  const handleCaptureName = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!captureLink) return;
+    if (!captureName.trim()) { toast.error("Please enter the attendee's full name"); return; }
+    captureNameMutation.mutate({
+      short_link: captureLink,
+      full_name: captureName.trim(),
+      phone: capturePhone.trim(),
+    });
+  };
 
   const startCamera = async () => {
     try {
@@ -225,11 +331,11 @@ export default function ScannerPage() {
         return;
       }
       markOfflineArrival(id, link, guest.full_name);
-      checkInMutation.mutate({ short_link: link, scan_source: "qr_offline" });
+      checkInMutation.mutate({ short_link: link, scan_source: "qr_offline", gate: gateRef.current });
       return;
     }
 
-    checkInMutation.mutate({ short_link: link, scan_source: "qr" });
+    checkInMutation.mutate({ short_link: link, scan_source: "qr", gate: gateRef.current });
   };
 
   /* ── SMS link OTP flow ───────────────────────────────────────────────── */
@@ -255,6 +361,7 @@ export default function ScannerPage() {
       api.post(`/events/${id}/scan/otp/verify`, {
         short_link: payload.short_link,
         code: payload.code,
+        gate: gateRef.current,
       }),
     onSuccess: (r: any) => {
       const guest = r.data.data?.guest_name ?? "guest";
@@ -366,6 +473,22 @@ export default function ScannerPage() {
       </div>
 
       <div className="space-y-4 p-4 md:p-6">
+        {/* Gate label — recorded on every check-in */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <MapPin className="h-4 w-4 flex-shrink-0 text-gold-600" />
+          <label htmlFor="gate-label" className="text-xs font-bold uppercase tracking-wide text-slate-500">
+            Gate
+          </label>
+          <Input
+            id="gate-label"
+            value={gate}
+            onChange={(e) => setGate(e.target.value)}
+            placeholder="Gate 1"
+            className="w-32 py-1.5 text-sm font-semibold"
+          />
+          <span className="text-xs text-slate-400">Recorded on every check-in</span>
+        </div>
+
         {/* Offline indicator */}
         {offline && (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -480,18 +603,68 @@ export default function ScannerPage() {
                   </Button>
                 </div>
 
-                {result.status && (
-                  <div className={cn(
-                    "flex items-start gap-3 rounded-xl border p-4 text-base font-semibold shadow-sm",
-                    result.status === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"
-                  )}>
-                    {result.status === "ok"
-                      ? <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0" />
-                      : <XCircle className="mt-0.5 h-6 w-6 flex-shrink-0" />}
-                    <span className="leading-tight">{result.message}</span>
-                  </div>
-                )}
               </form>
+
+              {result.status && (
+                <div className={cn(
+                  "mt-4 flex items-start gap-3 rounded-xl border p-4 text-base font-semibold shadow-sm",
+                  result.status === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : result.status === "warn" ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-rose-200 bg-rose-50 text-rose-800"
+                )}>
+                  {result.status === "ok"
+                    ? <CheckCircle2 className="mt-0.5 h-6 w-6 flex-shrink-0" />
+                    : result.status === "warn"
+                    ? <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0" />
+                    : <XCircle className="mt-0.5 h-6 w-6 flex-shrink-0" />}
+                  <div className="min-w-0 break-words">
+                    <p className="leading-tight">{result.message}</p>
+                    {result.status === "ok" && (result.company || result.packageName || result.entry) && (
+                      <div className="mt-2 space-y-1 border-t border-emerald-200 pt-2 text-sm font-medium">
+                        {result.company && <p>Company: {result.company}</p>}
+                        {result.packageName && <p>Package: {result.packageName}</p>}
+                        {result.entry && <p>{result.entry}</p>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {captureLink && (
+                <form
+                  onSubmit={handleCaptureName}
+                  className="mt-4 space-y-3 rounded-xl border border-amber-300 bg-amber-50/60 p-4"
+                >
+                  <div className="flex items-start gap-2 text-sm text-amber-900">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <p className="font-semibold">
+                      Name registration deadline passed. Capture the attendee name before check-in.
+                    </p>
+                  </div>
+                  <Input
+                    label="Full name"
+                    placeholder="Attendee full name"
+                    value={captureName}
+                    onChange={(e) => setCaptureName(e.target.value)}
+                    className="bg-white"
+                  />
+                  <Input
+                    label="Phone (optional)"
+                    placeholder="Attendee phone"
+                    value={capturePhone}
+                    onChange={(e) => setCapturePhone(e.target.value)}
+                    className="bg-white"
+                  />
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    isLoading={captureNameMutation.isPending}
+                    className="w-full border-amber-400 py-3 text-base font-bold text-amber-800 hover:bg-amber-100"
+                  >
+                    Capture name and retry check-in
+                  </Button>
+                </form>
+              )}
             </Card>
           )}
 

@@ -3,8 +3,10 @@
 // Public invitation page (/i/<token>) — QR-free, safe to forward. Shows the
 // invitation card, event details, pledge/payment instructions and parking.
 // ==============================================================================
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { useRouter } from "next/router";
+import toast from "react-hot-toast";
 import {
   ArrowLeft, CalendarDays, MapPin, Clock, Heart, Wallet, CarFront,
   Printer, Loader2, AlertCircle,
@@ -15,6 +17,19 @@ import { Button, Card, Badge } from "@/components/ui";
 export default function PublicInvitationPage() {
   const router = useRouter();
   const token = router.query.token as string | undefined;
+  const qc = useQueryClient();
+  const [pledgeAmount, setPledgeAmount] = useState("");
+
+  const pledgeMutation = useMutation({
+    mutationFn: (amount: number) =>
+      api.post(`/public/invitations/${encodeURIComponent(token!)}/pledge`, { pledged_amount: amount }),
+    onSuccess: (r: any) => {
+      toast.success(r.data.data?.message ?? "Pledge confirmed");
+      setPledgeAmount("");
+      qc.invalidateQueries({ queryKey: ["public-invitation-card", token] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Could not confirm pledge"),
+  });
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["public-invitation-card", token],
@@ -126,6 +141,41 @@ export default function PublicInvitationPage() {
                   <p className="whitespace-pre-wrap">{data.payment_instructions}</p>
                 </div>
               )}
+              <form
+                className="mt-4 rounded-lg border border-gold-200 bg-white p-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const amount = Number(pledgeAmount);
+                  if (!Number.isFinite(amount) || amount <= 0) {
+                    toast.error("Enter a valid pledge amount");
+                    return;
+                  }
+                  pledgeMutation.mutate(Math.round(amount));
+                }}
+              >
+                <label htmlFor="pledge-amount" className="block text-sm font-semibold text-slate-800">
+                  Confirm your pledge (TZS)
+                </label>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    id="pledge-amount"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={pledgeAmount}
+                    onChange={(e) => setPledgeAmount(e.target.value)}
+                    placeholder={String(data.min_pledge_per_person ?? 50000)}
+                    className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-gold-500 focus:ring-2 focus:ring-gold-100"
+                  />
+                  <Button type="submit" size="sm" isLoading={pledgeMutation.isPending}>
+                    <Heart className="mr-1 h-4 w-4" /> Confirm pledge
+                  </Button>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  You can change this before any payment is recorded. The family reviews your check-in card after confirmation.
+                </p>
+              </form>
             </div>
 
             {data.parking_instructions && (

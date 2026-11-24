@@ -247,28 +247,10 @@ pub async fn send_invitations(
         return Err(AppError::BadRequest("No guests to invite".to_string()));
     }
 
-    // Fetch the event's invitation card template (explicit, event-assigned, or
-    // the org's most recent active template as a fallback).
-    let template_data = if let Some(template_id) = payload.template_id {
-        sqlx::query("SELECT theme_config, background_file_id FROM card_templates WHERE id = $1")
-            .bind(template_id)
-            .fetch_optional(state.db.pool())
-            .await?
-    } else if let Some(template_id) = event.card_template_id {
-        sqlx::query("SELECT theme_config, background_file_id FROM card_templates WHERE id = $1")
-            .bind(template_id)
-            .fetch_optional(state.db.pool())
-            .await?
-    } else {
-        // Try to get the most recent active template for this org
-        sqlx::query("SELECT theme_config, background_file_id FROM card_templates WHERE org_id = $1 AND is_active = TRUE ORDER BY created_at DESC LIMIT 1")
-            .bind(org_id)
-            .fetch_optional(state.db.pool())
-            .await?
-    };
-
+    // Invitations never embed a card image with a QR — the card is only
+    // rendered when the pass is issued and sent as a check-in credential.
     let frontend_url = state.config.app.frontend_url.clone();
-    let messaging = MessagingService::new();
+    let messaging = MessagingService::with_channels(state.channels.clone());
     let mut sent = 0_i64;
     let mut failed = 0_i64;
     let mut errors = Vec::new();
@@ -285,9 +267,10 @@ pub async fn send_invitations(
                 None => ensure_invitation(state.db.pool(), guest.id).await?,
             };
 
-        // The guest-facing link goes to their public invitation page (card + QR),
-        // not the scanner.
-        let check_in_link = crate::models::invitation::build_public_invitation_url(
+        // Invitations are NOT entry credentials. They only link to the QR-free
+        // invitation page; the check-in card/token is released separately when
+        // the pass is issued (after payment / family approval).
+        let invitation_link = crate::models::invitation::build_invitation_url(
             &frontend_url,
             &invitation.short_link,
         );
@@ -302,103 +285,18 @@ pub async fn send_invitations(
             }
         });
 
-        // Generate QR code
-        let qr_png = render_qr_png(&check_in_link).unwrap_or_default();
-
-        // Build render data
-        let mut render_data = std::collections::HashMap::new();
-        render_data.insert("EVENT_TITLE".to_string(), event.title.clone());
-        render_data.insert(
-            "EVENT_DATE".to_string(),
-            event.event_date.format("%A, %d %B %Y").to_string(),
-        );
-        render_data.insert(
-            "EVENT_START_TIME".to_string(),
-            event.event_time.clone().unwrap_or_default(),
-        );
-        render_data.insert(
-            "EVENT_VENUE".to_string(),
-            event.venue_name.clone().unwrap_or_default(),
-        );
-        render_data.insert(
-            "EVENT_ADDRESS".to_string(),
-            event.venue_address.clone().unwrap_or_default(),
-        );
-        render_data.insert(
-            "EVENT_CHARACTERS".to_string(),
-            event.main_characters.clone().unwrap_or_default(),
-        );
-        render_data.insert("GUEST_NAME".to_string(), guest.full_name.clone());
-        render_data.insert(
-            "GUEST_CATEGORY".to_string(),
-            guest.guest_category.clone().unwrap_or_default(),
-        );
-        render_data.insert(
-            "GUEST_TABLE".to_string(),
-            guest.table_number.clone().unwrap_or_default(),
-        );
-
-        // Render personalized card if template exists
-        let card_png = if let Some(ref template_row) = template_data {
-            let theme_config_json: serde_json::Value =
-                template_row.try_get("theme_config").unwrap_or(json!({}));
-            let background_file_id: Option<String> =
-                template_row.try_get("background_file_id").ok().flatten();
-
-            if let Ok(theme_config) = parse_theme_config(&theme_config_json) {
-                // Load background image if available
-                let background_bytes = if let Some(ref file_id) = background_file_id {
-                    sqlx::query("SELECT path FROM files WHERE id = $1")
-                        .bind(file_id)
-                        .fetch_optional(state.db.pool())
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|row| row.try_get::<String, _>("path").ok())
-                        .and_then(|path| std::fs::read(path).ok())
-                } else {
-                    None
-                };
-
-                render_card(
-                    &theme_config,
-                    background_bytes.as_deref(),
-                    &qr_png,
-                    &render_data,
-                )
-                .ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Build message with event details + suggested pledge range.
+        // No token, QR or check-in link here — only the invitation page.
+        let card_png: Option<Vec<u8>> = None;
         let pledge_range = pledge_range_for(guest.guest_category.as_deref());
-        let message_body = if channel == "whatsapp" || channel == "email" {
-            format!(
-                "Dear {name},\n\nYou are cordially invited to {title} on {date} at {venue}.\n\nWe welcome your pledge (contribution) of {range} to support this event.\n\nYour personalized invitation card is attached. Show the QR code at the event entrance for check-in.\n\nCheck-in link: {link}\n\nRoyalEntry",
-                name = guest.full_name,
-                title = event.title,
-                date = event.event_date.format("%B %d, %Y"),
-                venue = event.venue_name.as_deref().unwrap_or("the venue"),
-                range = pledge_range,
-                link = check_in_link,
-            )
-        } else {
-            let human_code =
-                crate::models::invitation::generate_human_friendly_code(&invitation.id);
-            format!(
-                "Dear {name},\n\nYou are invited to {title} on {date} at {venue}.\n\nPledge (contribution): {range}\n\nYour check-in code: {code}\nShow this code at the entrance.\n\nRoyalEntry",
-                name = guest.full_name,
-                title = event.title,
-                date = event.event_date.format("%B %d, %Y"),
-                venue = event.venue_name.as_deref().unwrap_or("the venue"),
-                range = pledge_range,
-                code = human_code,
-            )
-        };
+        let message_body = format!(
+            "Dear {name},\n\nYou are cordially invited to {title} on {date} at {venue}.\n\nPledge (contribution): {range}\n\nView your invitation: {link}\n\nYour check-in card will be sent separately once it is issued.\n\nRoyalEntry",
+            name = guest.full_name,
+            title = event.title,
+            date = event.event_date.format("%B %d, %Y"),
+            venue = event.venue_name.as_deref().unwrap_or("the venue"),
+            range = pledge_range,
+            link = invitation_link,
+        );
 
         let destination = if channel == "email" {
             guest.email.as_deref().ok_or_else(|| {
@@ -422,7 +320,7 @@ pub async fn send_invitations(
                         "event_time": event.event_time.clone().unwrap_or_default(),
                         "venue": event.venue_name.clone().unwrap_or_default(),
                         "venue_address": event.venue_address.clone().unwrap_or_default(),
-                        "check_in_link": check_in_link,
+                        "check_in_link": invitation_link,
                         "organization_name": "RoyalEntry",
                         "pledge_range": pledge_range,
                     }),
@@ -461,6 +359,33 @@ pub async fn send_invitations(
         } else {
             messaging.send(channel, destination, &message_body).await?
         };
+
+        // Invitation previews never contain entry credentials.
+        let provider_id = attempts
+            .iter()
+            .find(|a| a.success)
+            .and_then(|a| a.provider_message_id.as_deref());
+        if channel == "email" {
+            state
+                .channels
+                .record_preview(
+                    event.id,
+                    guest.id,
+                    "email",
+                    destination,
+                    Some(&format!("You're Invited to {}", event.title)),
+                    &message_body,
+                    None,
+                    None,
+                    provider_id,
+                )
+                .await;
+        } else {
+            state
+                .channels
+                .annotate_last_sandbox(destination, channel, event.id, guest.id, None, None)
+                .await;
+        }
 
         let ok = attempts.iter().any(|a| a.success);
 

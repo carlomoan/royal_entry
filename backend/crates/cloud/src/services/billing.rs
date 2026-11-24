@@ -24,7 +24,7 @@ pub struct BillingService {
 impl BillingService {
     pub fn new(state: Arc<AppState>) -> Self {
         let mpesa = crate::services::mpesa::MpesaService::new(state.clone());
-        let messaging = MessagingService::new();
+        let messaging = MessagingService::with_channels(state.channels.clone());
         Self { state, mpesa, messaging }
     }
 

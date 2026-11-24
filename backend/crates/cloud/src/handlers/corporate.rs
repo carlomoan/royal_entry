@@ -56,6 +56,19 @@ fn user_id_from(claims: &Claims) -> AppResult<Uuid> {
     Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)
 }
 
+/// Free-mail domains are flagged for corporate bookings: a company should use
+/// its own domain so the contact identity can be trusted.
+fn is_free_email(email: Option<&str>) -> bool {
+    let Some(email) = email else { return false };
+    let domain = email.rsplit('@').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        domain.as_str(),
+        "gmail.com" | "googlemail.com" | "outlook.com" | "hotmail.com" | "live.com"
+            | "yahoo.com" | "yahoo.co.uk" | "icloud.com" | "aol.com" | "mail.com"
+            | "proton.me" | "protonmail.com"
+    )
+}
+
 // ── Packages ─────────────────────────────────────────────────────────────────
 
 pub async fn list_packages(
@@ -337,8 +350,9 @@ pub async fn create_booking(
         r#"
         INSERT INTO bookings
             (id, event_id, company_name, contact_person, contact_phone, contact_email,
-             payment_reference, notes, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             payment_reference, notes, created_by, registration_token,
+             workflow_status, contact_email_is_free)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'requested', $11)
         RETURNING *
         "#,
     )
@@ -347,10 +361,12 @@ pub async fn create_booking(
     .bind(payload.company_name.trim())
     .bind(payload.contact_person.trim())
     .bind(payload.contact_phone.trim())
-    .bind(payload.contact_email)
+    .bind(payload.contact_email.as_deref())
     .bind(payload.payment_reference)
     .bind(payload.notes)
     .bind(user_id)
+    .bind(Uuid::new_v4().simple().to_string())
+    .bind(is_free_email(payload.contact_email.as_deref()))
     .fetch_one(state.db.pool())
     .await?;
 
@@ -468,8 +484,8 @@ async fn create_passes(
                 INSERT INTO guests
                     (id, event_id, full_name, phone, email, table_number, guest_category,
                      device_type, contact_method, party_size, booking_id, package_id,
-                     card_issued_at, notes)
-                VALUES ($1, $2, $3, $4, $5, $6, 'VIP', 'smartphone', $7, 1, $8, $9, NOW(), $10)
+                     card_issued_at, pass_state, notes)
+                VALUES ($1, $2, $3, $4, $5, $6, 'VIP', 'smartphone', $7, 1, $8, $9, NOW(), 'issued', $10)
                 "#,
             )
             .bind(guest_id)
@@ -569,6 +585,7 @@ pub async fn confirm_booking(
             proof_file_id = COALESCE($3, proof_file_id),
             notes = COALESCE($4, notes),
             confirmed_at = COALESCE(confirmed_at, NOW()),
+            workflow_status = 'paid',
             updated_at = NOW()
         WHERE id = $5 AND event_id = $6
         RETURNING *
@@ -583,11 +600,26 @@ pub async fn confirm_booking(
     .fetch_one(state.db.pool())
     .await?;
 
-    let (passes_created, links) = if was_confirmed {
+    let (passes_created, links) = if was_confirmed || !event.auto_issue_passes {
         (0, Vec::new())
     } else {
         create_passes(&state, &event, &booking).await?
     };
+    if passes_created > 0 {
+        sqlx::query("UPDATE bookings SET workflow_status = 'passes_issued', updated_at = NOW() WHERE id = $1")
+            .bind(booking_id)
+            .execute(state.db.pool())
+            .await?;
+        sqlx::query(
+            "INSERT INTO pass_audit (id, event_id, booking_id, action, details) VALUES ($1,$2,$3,'passes_issued',$4)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(event_id)
+        .bind(booking_id)
+        .bind(json!({"passes": passes_created}))
+        .execute(state.db.pool())
+        .await?;
+    }
     if passes_created > 0 {
         // Email/SMS delivery can be slow or unavailable. Never hold the API
         // response open for it — the passes are already committed.
@@ -1357,4 +1389,177 @@ pub async fn corporate_report(
         by_table,
     };
     Ok(Json(json!({ "success": true, "data": report })))
+}
+
+// ── Pass lifecycle actions ───────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ReassignPassRequest {
+    pub full_name: String,
+    pub phone: String,
+    pub email: Option<String>,
+}
+
+async fn audit_pass(
+    state: &Arc<AppState>,
+    event_id: Uuid,
+    booking_id: Uuid,
+    guest_id: Option<Uuid>,
+    actor_id: Uuid,
+    actor_role: &str,
+    action: &str,
+    details: serde_json::Value,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO pass_audit
+            (id, event_id, booking_id, guest_id, action, actor_id, actor_role, details)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(event_id)
+    .bind(booking_id)
+    .bind(guest_id)
+    .bind(action)
+    .bind(actor_id)
+    .bind(actor_role)
+    .bind(details)
+    .execute(state.db.pool())
+    .await?;
+    Ok(())
+}
+
+/// POST /events/{eid}/bookings/{bid}/issue-passes — manual release of passes
+/// when the event is configured for manual issuing.
+pub async fn issue_passes(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, booking_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
+    let booking = sqlx::query_as::<_, Booking>(
+        "SELECT * FROM bookings WHERE id = $1 AND event_id = $2",
+    )
+    .bind(booking_id)
+    .bind(event_id)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or(AppError::NotFound("Booking not found".into()))?;
+    if booking.confirmed_at.is_none() {
+        return Err(AppError::BadRequest(
+            "Payment must be confirmed before passes can be issued".into(),
+        ));
+    }
+
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM guests WHERE booking_id = $1")
+        .bind(booking_id)
+        .fetch_one(state.db.pool())
+        .await?;
+    let (created, links) = if existing == 0 {
+        create_passes(&state, &event, &booking).await?
+    } else {
+        (0, Vec::new())
+    };
+    sqlx::query(
+        "UPDATE bookings SET workflow_status = 'passes_issued', updated_at = NOW() WHERE id = $1",
+    )
+    .bind(booking_id)
+    .execute(state.db.pool())
+    .await?;
+    audit_pass(
+        &state, event_id, booking_id, None, actor_id, &claims.role,
+        "passes_issued_manually", json!({"created": created}),
+    )
+    .await?;
+    if created > 0 {
+        let notify_state = state.clone();
+        let notify_event = event.clone();
+        let notify_booking = booking.clone();
+        let notify_links = links.clone();
+        tokio::spawn(async move {
+            notify_contact(&notify_state, &notify_event, &notify_booking, created, &notify_links)
+                .await;
+        });
+    }
+    Ok(Json(json!({ "success": true, "data": { "passes_created": created } })))
+}
+
+/// POST /events/{eid}/bookings/{bid}/passes/{gid}/revoke
+pub async fn revoke_pass(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, booking_id, guest_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let belongs: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM guests WHERE id = $1 AND booking_id = $2)",
+    )
+    .bind(guest_id)
+    .bind(booking_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    if !belongs {
+        return Err(AppError::NotFound("Pass not found".into()));
+    }
+    sqlx::query(
+        "UPDATE guests SET pass_state = 'revoked', revoked_at = NOW(), card_issued_at = NULL, updated_at = NOW() WHERE id = $1",
+    )
+    .bind(guest_id)
+    .execute(state.db.pool())
+    .await?;
+    audit_pass(
+        &state, event_id, booking_id, Some(guest_id), actor_id, &claims.role,
+        "pass_revoked", json!({"reason": "organizer action"}),
+    )
+    .await?;
+    Ok(Json(json!({ "success": true, "message": "Pass revoked — its QR no longer works" })))
+}
+
+/// POST /events/{eid}/bookings/{bid}/passes/{gid}/reassign
+pub async fn reassign_pass(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, booking_id, guest_id)): Path<(Uuid, Uuid, Uuid)>,
+    Json(payload): Json<ReassignPassRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
+    let belongs: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM guests WHERE id = $1 AND booking_id = $2)",
+    )
+    .bind(guest_id)
+    .bind(booking_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    if !belongs {
+        return Err(AppError::NotFound("Pass not found".into()));
+    }
+    if payload.full_name.trim().is_empty() || payload.phone.trim().is_empty() {
+        return Err(AppError::ValidationError("Name and phone are required".into()));
+    }
+    sqlx::query(
+        r#"UPDATE guests SET full_name = $1, phone = $2, email = $3,
+               pass_state = 'issued', revoked_at = NULL, named_at = NOW(),
+               card_issued_at = COALESCE(card_issued_at, NOW()), updated_at = NOW()
+           WHERE id = $4"#,
+    )
+    .bind(payload.full_name.trim())
+    .bind(payload.phone.trim())
+    .bind(payload.email.as_deref())
+    .bind(guest_id)
+    .execute(state.db.pool())
+    .await?;
+    audit_pass(
+        &state, event_id, booking_id, Some(guest_id), actor_id, &claims.role,
+        "pass_reassigned", json!({"full_name": payload.full_name, "phone": payload.phone}),
+    )
+    .await?;
+    let _ = crate::handlers::card_issuing::send_checkin_credentials(&state, &event, guest_id).await;
+    Ok(Json(json!({ "success": true, "message": "Pass reassigned and new credentials sent" })))
 }

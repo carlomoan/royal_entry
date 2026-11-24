@@ -14,6 +14,7 @@ import { Card, Badge, Button, StatCard, Modal, Input, Select } from "@/component
 import ArrivalMessagesEditor from "@/components/events/ArrivalMessagesEditor";
 import EventSettingsEditor from "@/components/events/EventSettingsEditor";
 import CorporateTab from "@/components/events/CorporateTab";
+import MessagesTab from "@/components/events/MessagesTab";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -179,10 +180,11 @@ export default function EventDetailPage() {
         {[
           { key: "overview", label: "Overview", icon: Zap },
           { key: "guests", label: "Guests", icon: Users },
+          { key: "corporate", label: "Packages & Bookings", icon: LayoutDashboard },
           { key: "michango", label: "Michango", icon: Banknote },
+          { key: "messages", label: "Messages", icon: MessageSquare },
           { key: "broadcast", label: "Broadcast", icon: Radio },
           { key: "staff", label: "Staff", icon: Users },
-          { key: "corporate", label: "Packages & Bookings", icon: LayoutDashboard },
         ]
           .filter((tab) => tab.key !== "corporate" || event?.event_mode === "corporate")
           .map(({ key, label, icon: Icon }) => (
@@ -195,17 +197,18 @@ export default function EventDetailPage() {
             <Icon className="h-4 w-4" /> {label}
           </button>
         ))}
-        <button
-          onClick={() => router.push(`/events/${id}/scanner`)}
-          className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"
-        >
-          <ScanLine className="h-4 w-4" /> Scanner
-        </button>
+        <span className="mx-1 hidden h-6 w-px self-center bg-slate-200 sm:block" aria-hidden="true" />
         <button
           onClick={() => router.push(`/events/${id}/gate-dashboard`)}
           className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"
         >
           <LayoutDashboard className="h-4 w-4" /> Gate dashboard
+        </button>
+        <button
+          onClick={() => router.push(`/events/${id}/scanner`)}
+          className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"
+        >
+          <ScanLine className="h-4 w-4" /> Scanner
         </button>
       </div>
 
@@ -331,6 +334,7 @@ export default function EventDetailPage() {
       {activeTab === "staff" && <EventStaffTab eventId={id} />}
       {activeTab === "broadcast" && <BroadcastTab eventId={id} />}
       {activeTab === "michango" && <MichangoTab eventId={id} />}
+      {activeTab === "messages" && <MessagesTab eventId={id} isDemo={!!event.is_demo} />}
       {activeTab === "corporate" && <CorporateTab eventId={id} />}
     </div>
   );

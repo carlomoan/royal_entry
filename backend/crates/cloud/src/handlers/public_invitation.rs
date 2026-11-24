@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
+    response::IntoResponse,
     Json,
 };
+use image::ImageEncoder;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
@@ -30,6 +33,9 @@ struct PublicInvitationRow {
     guest_phone: String,
     guest_email: Option<String>,
     table_number: Option<String>,
+    seat_number: Option<String>,
+    party_size: i32,
+    card_issued_at: Option<DateTime<Utc>>,
     guest_category: Option<String>,
     plus_one_allowed: bool,
     contact_method: String,
@@ -78,6 +84,9 @@ pub struct PublicGuestMeta {
     pub phone: String,
     pub email: Option<String>,
     pub table_number: Option<String>,
+    pub seat_number: Option<String>,
+    pub party_size: i32,
+    pub card_issued_at: Option<DateTime<Utc>>,
     pub guest_category: Option<String>,
     pub plus_one_allowed: bool,
     pub contact_method: String,
@@ -148,6 +157,9 @@ async fn fetch_public_invitation(
             g.phone AS guest_phone,
             g.email AS guest_email,
             g.table_number,
+            g.seat_number,
+            g.party_size,
+            g.card_issued_at,
             g.guest_category,
             g.plus_one_allowed,
             g.contact_method,
@@ -212,6 +224,9 @@ async fn to_public_payload(state: &Arc<AppState>, row: PublicInvitationRow) -> P
             phone: row.guest_phone,
             email: row.guest_email,
             table_number: row.table_number,
+            seat_number: row.seat_number,
+            party_size: row.party_size,
+            card_issued_at: row.card_issued_at,
             guest_category: row.guest_category,
             plus_one_allowed: row.plus_one_allowed,
             contact_method: row.contact_method,
@@ -316,4 +331,147 @@ pub async fn submit_public_rsvp(
         "message": "RSVP updated",
         "data": to_public_payload(&state, fresh).await,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitPublicPledgeRequest {
+    pub pledged_amount: i64,
+}
+
+/// POST /api/v1/public/invitations/{code}/pledge — a guest confirms their
+/// pledge from the QR-free invitation page. No login required; the token is
+/// the capability. Existing pledges can only be changed before any payment.
+pub async fn submit_public_pledge(
+    State(state): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    Json(payload): Json<SubmitPublicPledgeRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if payload.pledged_amount <= 0 {
+        return Err(AppError::ValidationError(
+            "Pledge amount must be greater than zero".to_string(),
+        ));
+    }
+    if payload.pledged_amount > 1_000_000_000 {
+        return Err(AppError::ValidationError(
+            "Pledge amount is too large".to_string(),
+        ));
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT g.id AS guest_id, g.event_id, g.full_name, e.organization_id,
+               e.pledge_deadline_at
+        FROM invitations i
+        JOIN guests g ON g.id = i.guest_id
+        JOIN events e ON e.id = g.event_id
+        WHERE i.short_link = $1 AND e.deleted_at IS NULL
+        "#,
+    )
+    .bind(&code)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or(AppError::InvitationNotFound)?;
+
+    let guest_id: Uuid = row.try_get("guest_id")?;
+    let event_id: Uuid = row.try_get("event_id")?;
+    let guest_name: String = row.try_get("full_name").unwrap_or_default();
+    let org_id: Uuid = row.try_get("organization_id")?;
+    let deadline: Option<DateTime<Utc>> = row.try_get("pledge_deadline_at").ok();
+
+    let existing_paid: Option<i64> = sqlx::query_scalar(
+        "SELECT amount_paid FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
+    )
+    .bind(event_id)
+    .bind(guest_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    if existing_paid.map(|paid| paid > 0).unwrap_or(false) {
+        return Err(AppError::Conflict(
+            "This pledge already has payments recorded. Contact the organizer to change it."
+                .to_string(),
+        ));
+    }
+
+    let deadline_date = deadline.map(|d| d.date_naive());
+    let pledge_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO pledge_tracker
+            (id, event_id, guest_id, pledged_amount, amount_paid, payment_status,
+             payment_deadline, notes)
+        VALUES ($1, $2, $3, $4, 0, 'pending', $5, 'Confirmed by guest on invitation page')
+        ON CONFLICT (event_id, guest_id) DO UPDATE SET
+            pledged_amount = EXCLUDED.pledged_amount,
+            payment_deadline = COALESCE(EXCLUDED.payment_deadline, pledge_tracker.payment_deadline),
+            payment_status = 'pending',
+            updated_at = NOW()
+        RETURNING id
+        "#,
+    )
+    .bind(pledge_id)
+    .bind(event_id)
+    .bind(guest_id)
+    .bind(payload.pledged_amount)
+    .bind(deadline_date)
+    .fetch_one(state.db.pool())
+    .await?;
+
+    let _ = crate::services::NotificationService::create_org(
+        state.db.pool(),
+        org_id,
+        "pledge.confirmed",
+        "Guest confirmed a pledge",
+        Some(&format!(
+            "{} pledged TZS {} from their invitation page",
+            guest_name, payload.pledged_amount
+        )),
+        Some(&format!("/events/{event_id}")),
+        Some(json!({"event_id": event_id, "guest_id": guest_id})),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "success": true,
+        "data": {
+            "pledged_amount": payload.pledged_amount,
+            "payment_deadline": deadline_date.map(|d| d.to_string()),
+            "message": "Pledge confirmed. The family will review your check-in card."
+        }
+    })))
+}
+
+/// GET /api/v1/public/invitations/{code}/qr — public QR PNG for a guest's
+/// check-in card. The QR payload is the `/g/<token>` card URL, which the
+/// scanner resolves back to the short link.
+pub async fn public_invitation_qr(
+    State(state): State<Arc<AppState>>,
+    Path(code): Path<String>,
+) -> AppResult<axum::response::Response> {
+    let invitation = sqlx::query_as::<_, crate::models::invitation::Invitation>(
+        "SELECT * FROM invitations WHERE short_link = $1",
+    )
+    .bind(&code)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or(AppError::InvitationNotFound)?;
+
+    let url = format!(
+        "{}/g/{}",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        invitation.short_link
+    );
+    let qr = qrcode::QrCode::new(url.as_bytes())
+        .map_err(|_| AppError::QrGenerationError("Could not encode check-in URL".to_string()))?;
+    let image = qr.render::<image::Luma<u8>>().min_dimensions(300, 300).build();
+    let mut png: Vec<u8> = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&image, image.width(), image.height(), image::ColorType::L8.into())
+        .map_err(|_| AppError::QrGenerationError("Could not encode PNG".to_string()))?;
+
+    use axum::http::header;
+    let headers = axum::http::HeaderMap::from_iter([
+        (header::CONTENT_TYPE, "image/png".parse().unwrap()),
+        (header::CACHE_CONTROL, "public, max-age=300".parse().unwrap()),
+    ]);
+    Ok((headers, png).into_response())
 }

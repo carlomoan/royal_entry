@@ -227,7 +227,7 @@ pub async fn send_broadcast(
     .execute(state.db.pool())
     .await?;
 
-    let messaging = MessagingService::new();
+    let messaging = MessagingService::with_channels(state.channels.clone());
     let mut sent = 0_i32;
     let mut failed = 0_i32;
 

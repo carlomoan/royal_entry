@@ -189,7 +189,7 @@ pub async fn get_summary(
     assert_event_ownership(&state, event_id, org_id).await?;
 
     let row = sqlx::query(
-        r#"SELECT COUNT(*) AS total_pledgers, COALESCE(SUM(pledged_amount), 0) AS total_pledged_tsh, COALESCE(SUM(amount_paid), 0) AS total_collected_tsh, COALESCE(SUM(GREATEST(pledged_amount - amount_paid, 0)), 0) AS total_outstanding_tsh, COUNT(*) FILTER (WHERE payment_status = 'pending') AS pending_count, COUNT(*) FILTER (WHERE payment_status = 'partial') AS partial_count, COUNT(*) FILTER (WHERE payment_status = 'paid') AS paid_count, COUNT(*) FILTER (WHERE payment_status = 'overdue') AS overdue_count FROM pledge_tracker WHERE event_id = $1"#,
+        r#"SELECT COUNT(*) AS total_pledgers, COALESCE(SUM(pledged_amount), 0)::BIGINT AS total_pledged_tsh, COALESCE(SUM(amount_paid), 0)::BIGINT AS total_collected_tsh, COALESCE(SUM(GREATEST(pledged_amount - amount_paid, 0)), 0)::BIGINT AS total_outstanding_tsh, COUNT(*) FILTER (WHERE payment_status = 'pending') AS pending_count, COUNT(*) FILTER (WHERE payment_status = 'partial') AS partial_count, COUNT(*) FILTER (WHERE payment_status = 'paid') AS paid_count, COUNT(*) FILTER (WHERE payment_status = 'overdue') AS overdue_count FROM pledge_tracker WHERE event_id = $1"#,
     )
     .bind(event_id)
     .fetch_one(state.db.pool())
@@ -427,7 +427,7 @@ pub async fn send_reminders(
     .fetch_all(state.db.pool())
     .await?;
 
-    let messaging = MessagingService::new();
+    let messaging = MessagingService::with_channels(state.channels.clone());
     let mut sent = 0_i64;
     let mut failed = 0_i64;
 

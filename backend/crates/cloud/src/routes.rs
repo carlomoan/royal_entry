@@ -4,9 +4,9 @@
 use crate::{
     files,
     handlers::{
-        audit, auth, billing, broadcast, corporate, event, event_assignment, guest, invitations,
-        michango, notifications, payment, platform, public_invitation, qr_code, rbac, reports,
-        scanner, settings, templates, verify_token, webhooks,
+        audit, auth, billing, booking_registration, broadcast, corporate, event, event_assignment,
+        guest, invitations, messages, michango, notifications, payment, platform, public_invitation,
+        qr_code, rbac, reports, scanner, settings, templates, verify_token, webhooks,
     },
     logs,
     middleware::{
@@ -85,6 +85,26 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/public/invitations/{token}/card",
             get(crate::handlers::card_issuing::public_invitation_card),
+        )
+        .route(
+            "/api/v1/public/invitations/{code}/pledge",
+            post(public_invitation::submit_public_pledge),
+        )
+        .route(
+            "/api/v1/public/invitations/{code}/qr",
+            get(public_invitation::public_invitation_qr),
+        )
+        .route(
+            "/api/v1/public/bookings/{token}",
+            get(booking_registration::booking_info),
+        )
+        .route(
+            "/api/v1/public/bookings/{token}/verify",
+            get(booking_registration::verify_contact_email),
+        )
+        .route(
+            "/api/v1/public/bookings/{token}/names",
+            post(booking_registration::register_names),
         )
         .route(
             "/api/v1/public/w/{event_id}",
@@ -197,6 +217,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "events:read",
         )));
 
+    // Credential previews are platform-admin only, never account-scoped.
+    let message_inspection_routes = Router::new()
+        .route(
+            "/api/v1/events/{eid}/messages",
+            get(messages::list_event_messages),
+        )
+        .layer(middleware::from_fn(require_platform_admin_middleware));
+
     let corporate_write_routes = Router::new()
         .route(
             "/api/v1/events/{eid}/packages",
@@ -217,6 +245,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/events/{eid}/bookings/{id}/tables",
             post(corporate::add_table),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/issue-passes",
+            post(corporate::issue_passes),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/passes/{gid}/revoke",
+            post(corporate::revoke_pass),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/passes/{gid}/reassign",
+            post(corporate::reassign_pass),
         )
         .route(
             "/api/v1/events/{eid}/bookings/{id}/tables/{tid}",
@@ -246,6 +286,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/events/{eid}/bookings/{id}/invoice",
             post(corporate::generate_booking_invoice),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/send-verification",
+            post(booking_registration::send_verification),
         )
         .layer(middleware::from_fn(require_permission_middleware(
             "payments:write",
@@ -419,6 +463,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/events/{eid}/scan/override",
             post(scanner::override_check_in),
+        )
+        .route(
+            "/api/v1/events/{eid}/scan/capture-name",
+            post(scanner::capture_name),
         )
         .layer(middleware::from_fn(require_permission_middleware(
             "scanner:write",
@@ -726,6 +774,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(corporate_read_routes)
         .merge(corporate_write_routes)
         .merge(corporate_payment_routes)
+        .merge(message_inspection_routes)
         .merge(guest_routes)
         .merge(invitation_routes)
         .merge(scanner_routes)

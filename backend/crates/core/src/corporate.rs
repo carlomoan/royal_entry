@@ -36,6 +36,11 @@ pub struct Booking {
     pub confirmed_at: Option<DateTime<Utc>>,
     pub notes: Option<String>,
     pub created_by: Option<Uuid>,
+    pub workflow_status: String,
+    pub registration_token: Option<String>,
+    pub contact_email_verified_at: Option<DateTime<Utc>>,
+    pub contact_verification_token: Option<String>,
+    pub contact_email_is_free: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

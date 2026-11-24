@@ -1,7 +1,7 @@
 "use client";
 import {
   SlidersHorizontal, Palette, FileText, ShieldCheck, Webhook, ScrollText,
-  Sparkles, MessageCircle, MessageSquare, Send, Landmark,
+  Sparkles, MessageCircle, MessageSquare, Send, Landmark, Mail,
 } from "lucide-react";
 import SettingsTabs from "@/components/settings/SettingsTabs";
 import TaxSection from "@/components/settings/sections/TaxSection";
@@ -15,6 +15,7 @@ import WhatsAppSection from "@/components/settings/sections/WhatsAppSection";
 import SmsSection from "@/components/settings/sections/SmsSection";
 import AiSection from "@/components/settings/sections/AiSection";
 import TelegramSection from "@/components/settings/sections/TelegramSection";
+import EmailSection from "@/components/settings/sections/EmailSection";
 
 export default function PlatformSettingsPage() {
   const tabs = [
@@ -27,6 +28,7 @@ export default function PlatformSettingsPage() {
     { id: "audit", label: "Audit Logs", icon: ScrollText, content: <AuditSection /> },
     { id: "whatsapp", label: "WhatsApp Config", icon: MessageCircle, content: <WhatsAppSection /> },
     { id: "sms", label: "SMS Config", icon: MessageSquare, content: <SmsSection /> },
+    { id: "email", label: "Email Config", icon: Mail, content: <EmailSection /> },
     { id: "ai", label: "AI Integration", icon: Sparkles, content: <AiSection /> },
     { id: "telegram", label: "Telegram Config", icon: Send, content: <TelegramSection /> },
   ];
