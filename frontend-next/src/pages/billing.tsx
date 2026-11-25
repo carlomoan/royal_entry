@@ -11,6 +11,8 @@ import api from "@/lib/api";
 import { Card, Badge, Button, StatCard, Modal, Input } from "@/components/ui";
 import { formatTZS, formatDate } from "@/lib/utils";
 import ReceiptDocument from "@/components/billing/ReceiptDocument";
+import { useAuth } from "@/lib/auth";
+import { isPlatformAdmin } from "@/lib/roles";
 
 /* Local datetime formatter (DB timestamps are ISO strings) */
 const fmtDateTime = (v?: string | null) =>
@@ -29,6 +31,8 @@ const INVOICE_BADGE: Record<string, "green" | "blue" | "rose" | "slate"> = {
 
 export default function BillingPage() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const platformAdmin = isPlatformAdmin(user?.role);
   const [payInvoice, setPayInvoice] = useState<any | null>(null);
   const [viewInvoice, setViewInvoice] = useState<any | null>(null);
   const [phone, setPhone] = useState("");
@@ -99,6 +103,20 @@ export default function BillingPage() {
         <h1 className="text-2xl font-bold text-slate-900">Billing</h1>
         <p className="text-sm text-slate-500">Your subscription, invoices and payments — live from your account</p>
       </div>
+
+      {platformAdmin && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-navy-200 bg-navy-50 p-4">
+          <div className="text-sm text-navy-900">
+            <p className="font-semibold">Platform billing view</p>
+            <p className="mt-0.5 text-xs text-navy-700">
+              Subscriptions belong to tenant accounts. Use the platform payments page for all-tenant revenue and invoices.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => window.location.assign("/platform/payments")}>
+            Open platform payments
+          </Button>
+        </div>
+      )}
 
       {/* Outstanding banner (only when DB says there is debt) */}
       {outstanding > 0 && (

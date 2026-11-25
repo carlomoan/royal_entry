@@ -147,6 +147,18 @@ impl Default for ChannelConfig {
 }
 
 
+/// sandbox_messages.channel has a CHECK constraint. Never pass an arbitrary
+/// channel name (e.g. "both") through — map it to a valid value.
+fn safe_channel(channel: &str) -> &'static str {
+    match channel.to_ascii_lowercase().as_str() {
+        "sms" => "sms",
+        "whatsapp" => "whatsapp",
+        "email" => "email",
+        "telegram" => "telegram",
+        _ => "sms",
+    }
+}
+
 fn str_value(v: &serde_json::Value) -> Option<String> {
     v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -366,7 +378,7 @@ impl Channels {
                    (id,event_id,guest_id,channel,recipient,subject,body,qr_url,token,provider_id)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
         )
-        .bind(Uuid::new_v4()).bind(event_id).bind(guest_id).bind(channel).bind(recipient)
+        .bind(Uuid::new_v4()).bind(event_id).bind(guest_id).bind(safe_channel(channel)).bind(recipient)
         .bind(subject).bind(body).bind(qr_url).bind(token).bind(provider_id)
         .execute(pool).await;
         if let Err(e) = result { tracing::warn!(error = %e, "Failed to record message preview"); }
@@ -378,7 +390,7 @@ impl Channels {
             let _ = sqlx::query(
                 "INSERT INTO sandbox_messages (id,channel,recipient,body,provider_id) VALUES ($1,$2,$3,$4,$5)",
             )
-            .bind(Uuid::new_v4()).bind(channel).bind(to).bind(body).bind(&id)
+            .bind(Uuid::new_v4()).bind(safe_channel(channel)).bind(to).bind(body).bind(&id)
             .execute(pool).await;
         }
         tracing::info!(channel, recipient = to, provider_id = %id, "Sandbox message recorded");

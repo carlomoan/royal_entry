@@ -44,7 +44,10 @@ const PLATFORM_NAV: NavSection[] = [
   },
   {
     title: "Insights",
-    items: [{ href: "/platform/payments", icon: CreditCard, label: "Payments" }],
+    items: [
+      { href: "/platform/payments", icon: CreditCard, label: "Payments" },
+      { href: "/billing", icon: CreditCard, label: "Billing" },
+    ],
   },
 ];
 

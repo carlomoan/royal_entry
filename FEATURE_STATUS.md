@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Billing, roles & DB hardening (2026-11-25)
+- ✅ Billing link added to the platform sidebar; platform admins see a banner pointing to platform-wide payments since subscriptions are tenant-scoped. Account roles keep their existing Billing/Payments links.
+- ✅ Invoice paths verified end-to-end (create, mark paid, PDF, booking invoice) with no DB errors. Hardened `pass_security_level` validation, sandbox channel values, `tax_rate_percent` casts and payment-method normalisation. A 27-endpoint smoke test returned zero 5xx and zero database-error log lines.
+
 ### WhatsApp check-in preview & PDF (2026-11-24)
 - ✅ Editable WhatsApp `checkin_card` template (channel_kind='whatsapp') with variables `{{guest_name}}`, `{{entry_code}}`, `{{check_in_link}}`, `{{qr_url}}`, `{{pdf_url}}`, `{{event_title}}`. Check-in delivery renders this template before sending.
 - ✅ Check-in card PDF: `GET /events/{eid}/guests/{gid}/card/pdf` (auth) and public `GET /public/invitations/{code}/card/pdf` for WhatsApp/email recipients. Falls back to a plain QR image when no card template is assigned. New `/events/{id}/whatsapp-preview` page shows the template editor, live rendered message and an embedded PDF preview.
