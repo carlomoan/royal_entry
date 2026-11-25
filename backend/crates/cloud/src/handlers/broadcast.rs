@@ -3,7 +3,7 @@
 // ==============================================================================
 use std::sync::Arc;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Extension, Json,
 };
@@ -277,4 +277,58 @@ pub async fn send_broadcast(
             "data": { "sent": sent, "failed": failed, "campaign_id": campaign_id }
         })),
     ))
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct MessageHistoryItem {
+    pub id: Uuid,
+    pub campaign_id: Uuid,
+    pub campaign_name: Option<String>,
+    pub guest_id: Uuid,
+    pub guest_name: String,
+    pub guest_phone: String,
+    pub channel: String,
+    pub status: String,
+    pub provider_message_id: Option<String>,
+    pub error_message: Option<String>,
+    pub delivered_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct HistoryQuery {
+    pub limit: Option<i64>,
+    pub channel: Option<String>,
+}
+
+/// GET /events/{eid}/message-history — every broadcast delivery across all
+/// channels, newest first. Used by the Broadcast page's history table.
+pub async fn list_message_history(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Query(query): Query<HistoryQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let limit = query.limit.unwrap_or(200).clamp(1, 500);
+    let items = sqlx::query_as::<_, MessageHistoryItem>(
+        r#"
+        SELECT bd.id, bd.campaign_id, bc.campaign_name, bd.guest_id,
+               g.full_name AS guest_name, g.phone AS guest_phone,
+               bd.channel, bd.status, bd.provider_message_id, bd.error_message,
+               bd.delivered_at
+        FROM broadcast_deliveries bd
+        JOIN broadcast_campaigns bc ON bc.id = bd.campaign_id
+        JOIN guests g ON g.id = bd.guest_id
+        WHERE bc.event_id = $1 AND ($2::TEXT IS NULL OR bd.channel = $2)
+        ORDER BY bd.delivered_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(event_id)
+    .bind(query.channel.as_deref())
+    .bind(limit)
+    .fetch_all(state.db.pool())
+    .await?;
+    Ok(Json(json!({ "success": true, "data": items })))
 }

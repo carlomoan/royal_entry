@@ -150,3 +150,26 @@ impl TemplateService {
         Ok(vars.into_iter().collect())
     }
 }
+
+/// Render an SMS template saved from the SMS Templates UI. Returns None when
+/// no template with that name exists, so callers can fall back to built-in text.
+pub async fn render_sms_template(
+    pool: &sqlx::PgPool,
+    org_id: uuid::Uuid,
+    name: &str,
+    vars: &Value,
+) -> Option<String> {
+    let body: Option<String> = sqlx::query_scalar(
+        "SELECT body FROM message_templates WHERE org_id = $1 AND channel_kind = 'sms' AND name = $2",
+    )
+    .bind(org_id)
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let body = body?;
+    let mut hbs = Handlebars::new();
+    hbs.set_strict_mode(false); // missing variables render as empty, never fail a send
+    hbs.render_template(&body, vars).ok()
+}

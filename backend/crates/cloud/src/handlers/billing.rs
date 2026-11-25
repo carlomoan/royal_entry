@@ -97,7 +97,8 @@ pub async fn list_my_invoices(
     let invoices = sqlx::query_as::<_, MyInvoice>(
         r#"
         SELECT bi.id, bi.invoice_number, sp.name AS plan_name, bi.amount_tsh,
-               bi.tax_rate_percent, bi.tax_amount_tsh, bi.tax_inclusive, bi.status,
+               bi.tax_rate_percent::DOUBLE PRECISION AS tax_rate_percent,
+               bi.tax_amount_tsh, bi.tax_inclusive, bi.status,
                bi.issued_at, bi.due_at, bi.paid_at, bi.notes
         FROM billing_invoices bi
         LEFT JOIN service_plans sp ON sp.id = bi.plan_id
@@ -262,7 +263,8 @@ pub async fn download_invoice_pdf(
 
     let row = sqlx::query(
         r#"
-        SELECT bi.invoice_number, bi.amount_tsh, bi.tax_amount_tsh, bi.tax_rate_percent,
+        SELECT bi.invoice_number, bi.amount_tsh, bi.tax_amount_tsh,
+               bi.tax_rate_percent::DOUBLE PRECISION AS tax_rate_percent,
                bi.tax_inclusive, bi.status, bi.issued_at, bi.due_at,
                sp.name AS plan_name, o.display_name AS org_name
         FROM billing_invoices bi

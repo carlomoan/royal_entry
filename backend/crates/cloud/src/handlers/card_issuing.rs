@@ -9,6 +9,7 @@ use axum::{
     extract::{Path, State},
     Extension, Json,
 };
+use chrono::{DateTime, Utc};
 use serde_json::json;
 use sqlx::Row;
 use std::sync::Arc;
@@ -307,38 +308,201 @@ pub async fn send_checkin_credentials(
         invitation.short_link
     );
 
-    let delivered = if let Some(email) = guest.email.as_deref().filter(|e| !e.is_empty()) {
-        let html = crate::services::channels::html_wrap(&body.replace('\n', "<br>"));
-        state
-            .channels
-            .email(email, &format!("Your check-in card — {}", event.title), &html)
-            .await
-            .is_ok()
-    } else if !guest.phone.trim().is_empty() {
-        state
-            .channels
-            .sms(&[guest.phone.clone()], &body)
-            .await
-            .map(|r| r.iter().any(|x| x.success))
-            .unwrap_or(false)
-    } else {
-        false
-    };
+    // Feature phones cannot open WhatsApp or email: SMS only. Smartphones get
+    // WhatsApp first, then email, then SMS as the last resort.
+    let vars = json!({
+        "guest_name": guest.full_name,
+        "event_title": event.title,
+        "check_in_link": link,
+        "entry_code": token,
+        "qr_url": qr_url,
+    });
+    let sms_body = crate::services::templates::render_sms_template(
+        state.db.pool(), event.organization_id, "checkin_card", &vars,
+    )
+    .await
+    .unwrap_or_else(|| format!(
+        "{} — your check-in card for {} is ready. Open {} or quote code {}. Do not forward.",
+        guest.full_name, event.title, link, token
+    ));
 
-    state
-        .channels
-        .record_preview(
-            event.id,
-            guest_id,
-            if guest.email.is_some() { "email" } else { "sms" },
-            guest.email.as_deref().unwrap_or(&guest.phone),
-            Some(&format!("Your check-in card — {}", event.title)),
-            &body,
-            Some(&qr_url),
-            Some(&token),
-            None,
-        )
-        .await;
+    let subject = format!("Your check-in card — {}", event.title);
+    let email = guest.email.as_deref().filter(|e| !e.trim().is_empty());
+    let phone = guest.phone.trim();
+    let feature_phone = guest.device_type == "feature_phone";
+    let mut used_channel: Option<&str> = None;
+    let mut recipient = String::new();
+    let mut delivered = false;
+
+    if !feature_phone && !phone.is_empty() && state.channels.is_whatsapp_ready() {
+        let receipt = state.channels.whatsapp_text(phone, &sms_body).await;
+        if receipt.as_ref().map(|r| r.success).unwrap_or(false) {
+            delivered = true;
+            used_channel = Some("whatsapp");
+            recipient = phone.to_string();
+        } else if let Err(e) = receipt {
+            tracing::warn!(guest_id = %guest_id, error = %e, "WhatsApp check-in delivery failed, trying email");
+        }
+    }
+
+    if !delivered {
+        if let Some(to) = email {
+            if state.channels.is_email_ready() {
+                let html = crate::services::channels::html_wrap(&body.replace('\n', "<br>"));
+                if state.channels.email(to, &subject, &html).await
+                    .map(|r| r.success).unwrap_or(false)
+                {
+                    delivered = true;
+                    used_channel = Some("email");
+                    recipient = to.to_string();
+                }
+            }
+        }
+    }
+
+    if !delivered && !phone.is_empty() && state.channels.is_sms_ready() {
+        let receipts = state.channels.sms(&[phone.to_string()], &sms_body).await;
+        if receipts.as_ref().map(|rs| rs.iter().any(|r| r.success)).unwrap_or(false) {
+            delivered = true;
+            used_channel = Some("sms");
+            recipient = phone.to_string();
+        }
+    }
+
+    if let Some(channel) = used_channel {
+        state.channels.record_preview(
+            event.id, guest_id, channel, &recipient, Some(&subject),
+            &sms_body, Some(&qr_url), Some(&token), None,
+        ).await;
+    }
 
     Ok(delivered)
+}
+
+/// POST /events/{eid}/guests/{gid}/send-checkin — issue (if eligible) and send
+/// the check-in card/token to one guest via WhatsApp → Email → SMS.
+pub async fn send_checkin_to_guest(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, guest_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let event = crate::repository::event_repository::EventRepository::get_by_id(state.db.pool(), event_id)
+        .await?
+        .ok_or(AppError::EventNotFound)?;
+    if event.organization_id != org_id {
+        return Err(AppError::Forbidden);
+    }
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM guests WHERE id = $1 AND event_id = $2)",
+    )
+    .bind(guest_id)
+    .bind(event_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    if !exists {
+        return Err(AppError::GuestNotFound);
+    }
+
+    let issued: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT card_issued_at FROM guests WHERE id = $1",
+    )
+    .bind(guest_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    if issued.is_none() {
+        if !is_eligible_for_card(state.db.pool(), &event, guest_id).await? {
+            return Err(AppError::BadRequest(
+                "Check-in card is not available yet — complete the pledge or ask the family to approve it."
+                    .to_string(),
+            ));
+        }
+        sqlx::query("UPDATE guests SET card_issued_at = NOW(), updated_at = NOW() WHERE id = $1")
+            .bind(guest_id)
+            .execute(state.db.pool())
+            .await?;
+    }
+
+    let delivered = send_checkin_credentials(&state, &event, guest_id).await?;
+    Ok(Json(json!({
+        "success": true,
+        "data": {
+            "guest_id": guest_id,
+            "delivered": delivered,
+            "message": if delivered { "Check-in details sent" } else { "Card issued, but no channel could deliver it" }
+        }
+    })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BulkSendCheckinRequest {
+    pub guest_ids: Vec<Uuid>,
+}
+
+/// POST /events/{eid}/guests/send-checkin — bulk delivery for selected guests.
+pub async fn send_checkin_bulk(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(payload): Json<BulkSendCheckinRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let event = crate::repository::event_repository::EventRepository::get_by_id(state.db.pool(), event_id)
+        .await?
+        .ok_or(AppError::EventNotFound)?;
+    if event.organization_id != org_id {
+        return Err(AppError::Forbidden);
+    }
+    if payload.guest_ids.is_empty() {
+        return Err(AppError::ValidationError("No guests selected".to_string()));
+    }
+
+    let mut sent = 0;
+    let mut failed = 0;
+    let mut errors = Vec::new();
+    for guest_id in &payload.guest_ids {
+        let eligible: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM guests WHERE id = $1 AND event_id = $2)",
+        )
+        .bind(guest_id)
+        .bind(event_id)
+        .fetch_one(state.db.pool())
+        .await?;
+        if !eligible {
+            failed += 1;
+            continue;
+        }
+        let issued: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT card_issued_at FROM guests WHERE id = $1",
+        )
+        .bind(guest_id)
+        .fetch_one(state.db.pool())
+        .await?;
+        if issued.is_none() {
+            if !is_eligible_for_card(state.db.pool(), &event, *guest_id).await? {
+                failed += 1;
+                errors.push(format!("{}: card not available yet", guest_id));
+                continue;
+            }
+            sqlx::query("UPDATE guests SET card_issued_at = NOW(), updated_at = NOW() WHERE id = $1")
+                .bind(guest_id)
+                .execute(state.db.pool())
+                .await?;
+        }
+        match send_checkin_credentials(&state, &event, *guest_id).await {
+            Ok(true) => sent += 1,
+            Ok(false) => {
+                failed += 1;
+                errors.push(format!("{}: no channel delivered", guest_id));
+            }
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("{}: {}", guest_id, e));
+            }
+        }
+    }
+    Ok(Json(json!({
+        "success": true,
+        "data": { "sent": sent, "failed": failed, "errors": errors }
+    })))
 }

@@ -262,7 +262,13 @@ fn normalize_subscription_status(status: &str) -> AppResult<String> {
 
 fn normalize_payment_method(payment_method: Option<&str>) -> String {
     let normalized = payment_method.unwrap_or("manual").trim().to_ascii_lowercase();
-    if normalized.is_empty() { "manual".to_string() } else { normalized }
+    // payments.payment_method has a CHECK constraint — never pass an arbitrary
+    // value through, or confirming a subscription payment fails with a DB error.
+    match normalized.as_str() {
+        "mpesa" | "card" | "bank_transfer" | "manual" => normalized,
+        "bank" | "bank transfer" => "bank_transfer".to_string(),
+        _ => "manual".to_string(),
+    }
 }
 
 fn billing_duration(interval: &str) -> Duration {
@@ -304,7 +310,8 @@ async fn fetch_invoices(
     let invoices = sqlx::query_as::<_, PlatformInvoiceResponse>(
         r#"
         SELECT bi.id, bi.invoice_number, sp.name AS plan_name, bi.amount_tsh,
-               bi.tax_rate_percent, bi.tax_amount_tsh, bi.tax_inclusive, bi.status,
+               bi.tax_rate_percent::DOUBLE PRECISION AS tax_rate_percent,
+               bi.tax_amount_tsh, bi.tax_inclusive, bi.status,
                bi.issued_at, bi.due_at, bi.paid_at, bi.period_start, bi.period_end, bi.notes
         FROM billing_invoices bi
         LEFT JOIN service_plans sp ON sp.id = bi.plan_id

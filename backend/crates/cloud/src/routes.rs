@@ -128,6 +128,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/events/{id}", put(event::update_event))
         .route("/api/v1/events/{id}", delete(event::delete_event))
         .route("/api/v1/events/{id}/activate", post(event::activate_event))
+        .route("/api/v1/events/{id}/deactivate", post(event::deactivate_event))
         .route(
             "/api/v1/events/{id}/submit",
             post(event::submit_event_for_approval),
@@ -340,17 +341,31 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )));
 
     // ── Message template routes ────────────────────────────────────────────────
-    let message_template_routes = Router::new()
+    // Templates are used by broadcasts, so broadcast permissions gate them.
+    let message_template_read_routes = Router::new()
         .route(
             "/api/v1/message-templates",
-            get(msg_templates::list_message_templates).post(msg_templates::create_message_template),
+            get(msg_templates::list_message_templates),
         )
         .route(
             "/api/v1/message-templates/{id}/preview",
             post(msg_templates::preview_message_template),
         )
         .layer(middleware::from_fn(require_permission_middleware(
-            "templates:read",
+            "broadcast:read",
+        )));
+
+    let message_template_write_routes = Router::new()
+        .route(
+            "/api/v1/message-templates",
+            post(msg_templates::create_message_template),
+        )
+        .route(
+            "/api/v1/message-templates/{id}",
+            put(msg_templates::update_message_template).delete(msg_templates::delete_message_template),
+        )
+        .layer(middleware::from_fn(require_permission_middleware(
+            "broadcast:write",
         )));
 
     // ── Message log routes ─────────────────────────────────────────────────────
@@ -402,6 +417,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/events/{eid}/guests/{id}/withdraw-approval",
             post(crate::handlers::card_issuing::withdraw_approval),
+        )
+        .route(
+            "/api/v1/events/{eid}/guests/{id}/send-checkin",
+            post(crate::handlers::card_issuing::send_checkin_to_guest),
+        )
+        .route(
+            "/api/v1/events/{eid}/guests/send-checkin",
+            post(crate::handlers::card_issuing::send_checkin_bulk),
         )
         .route(
             "/api/v1/events/{eid}/arrival-messages",
@@ -484,6 +507,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(michango::get_summary),
         )
         .route(
+            "/api/v1/events/{eid}/michango/bulk",
+            post(michango::create_pledges_bulk),
+        )
+        .route(
             "/api/v1/events/{eid}/michango/{id}/payment",
             post(michango::record_payment),
         )
@@ -508,6 +535,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/events/{eid}/broadcasts/{id}/deliveries",
             get(broadcast::list_broadcast_deliveries),
+        )
+        .route(
+            "/api/v1/events/{eid}/message-history",
+            get(broadcast::list_message_history),
         )
         .layer(middleware::from_fn(require_permission_middleware(
             "broadcast:read",
@@ -767,7 +798,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(card_write_routes)
         .merge(file_routes)
         .merge(file_read_routes)
-        .merge(message_template_routes)
+        .merge(message_template_read_routes)
+        .merge(message_template_write_routes)
         .merge(log_routes)
         .merge(staff_read_routes)
         .merge(staff_write_routes)

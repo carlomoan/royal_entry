@@ -275,6 +275,19 @@ impl Channels {
         names
     }
 
+    /// True when a channel can actually deliver (sandbox counts as ready).
+    pub fn is_sms_ready(&self) -> bool {
+        self.config.sms_sandbox || !self.sms_backends().is_empty()
+    }
+
+    pub fn is_email_ready(&self) -> bool {
+        self.email_ready()
+    }
+
+    pub fn is_whatsapp_ready(&self) -> bool {
+        self.config.whatsapp_sandbox || self.whatsapp_ready()
+    }
+
     fn email_ready(&self) -> bool {
         match self.config.email_provider.as_str() {
             "smtp" => !self.config.smtp_host.is_empty(),

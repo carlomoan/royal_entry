@@ -82,7 +82,9 @@ pub async fn update_event(
     let event = EventRepository::get_by_id(state.db.pool(), event_id).await?.ok_or(AppError::EventNotFound)?;
     if event.organization_id != org_id { return Err(AppError::Forbidden); }
     if event.status == "active" || event.status == "completed" {
-        return Err(AppError::BadRequest("Cannot update an active or completed event".to_string()));
+        return Err(AppError::BadRequest(
+            "Deactivate this event before editing its details, then activate it again".to_string(),
+        ));
     }
 
     // Referenced card templates must be able to render actual guest cards.
@@ -463,5 +465,50 @@ pub async fn send_save_the_date(
         "success": true,
         "data": EventResponse::from(updated),
         "message": "Save-the-date sent successfully"
+    })))
+}
+
+/// POST /api/v1/events/{id}/deactivate — return a live event to an editable
+/// state. Guests, passes and scans are preserved; only the status changes.
+pub async fn deactivate_event(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let event = EventRepository::get_by_id(state.db.pool(), event_id)
+        .await?
+        .ok_or(AppError::EventNotFound)?;
+    if event.organization_id != org_id {
+        return Err(AppError::Forbidden);
+    }
+    if event.status != "active" {
+        return Err(AppError::BadRequest("Only an active event can be deactivated".to_string()));
+    }
+
+    let restored_status = if event.approval_status == "approved" { "approved" } else { "draft" };
+    let updated = sqlx::query_as::<_, crate::models::event::Event>(
+        "UPDATE events SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *",
+    )
+    .bind(event_id)
+    .bind(restored_status)
+    .fetch_one(state.db.pool())
+    .await?;
+
+    let _ = crate::services::NotificationService::create_org(
+        state.db.pool(),
+        org_id,
+        "event.deactivated",
+        "Event deactivated for editing",
+        Some(&format!("'{}' is no longer live. Edit it, then activate it again.", event.title)),
+        Some(&format!("/events/{event_id}")),
+        Some(json!({"event_id": event_id})),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "success": true,
+        "data": EventResponse::from(updated),
+        "message": "Event deactivated. You can now edit its details and activate it again."
     })))
 }

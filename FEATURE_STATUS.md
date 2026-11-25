@@ -247,6 +247,19 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Guest pledges & check-in delivery (2026-11-24)
+- ✅ Add Pledge modal now accepts multiple selected guests with one amount/due date/notes via `POST /events/{eid}/michango/bulk` (existing pledges skipped).
+- ✅ Explicit check-in delivery: `POST /events/{eid}/guests/{id}/send-checkin` and bulk `POST /events/{eid}/guests/send-checkin`. Issues the card when eligible and sends the QR/token via WhatsApp → Email → SMS (feature phones SMS only). Invitations remain QR-free with no entry rights.
+
+### Event edit workflow (2026-11-24)
+- ✅ Active events can be deactivated (`POST /events/{id}/deactivate`) into `approved`/`draft`, edited (parking, family pledges, pass security, OTP, templates, etc.), then reactivated (`POST /events/{id}/activate`). Guests, passes and scans are preserved. The event detail page has Deactivate/Activate buttons and an amber info banner; edits while live are rejected with a clear message.
+
+### Messaging templates & history (2026-11-24)
+- ✅ SMS Templates page (`/sms-templates`) with CRUD, variable chips, GSM-7/Unicode segment counter and preview. Templates named `invitation` and `checkin_card` override the built-in SMS text. Message-template routes now use broadcast permissions and include update/delete.
+- ✅ Check-in credentials try **WhatsApp → Email → SMS** for smartphones; feature phones get SMS only. Each attempt is recorded in the message preview log.
+- ✅ Broadcast page shows unified message history across all channels via `GET /events/{eid}/message-history` with channel filter and stats.
+- ✅ Invoice reads cast `tax_rate_percent::DOUBLE PRECISION` so they work whether or not migration 0032 ran; subscription payment methods are normalised to the DB CHECK values.
+
 ### Unified channel configuration (2026-11-24)
 - ✅ `services/channels.rs` rewritten as one `ChannelConfig` loaded from `.env` and overlaid from `system_settings` (Settings UI). SMS = **NextSMS / Unitxt only** (Beem removed, optional failover); email = Resend or SMTP; Telegram Bot API; WhatsApp Cloud API. All send paths use the same `Channels` instance.
 - ✅ Settings UI: SMS Config (NextSMS/Unitxt + failover + sandbox), Email Config (new tab), WhatsApp Config (Meta Cloud **or NextSMS**), Telegram Config. Secrets are write-only and masked; sandbox flags are forced off in production.

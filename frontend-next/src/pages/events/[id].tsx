@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowUpRight, Banknote, Radio, ScanLine, Users, Zap, QrCode, FileText, Mail,
   UserPlus, Upload, Download, FileUp, Plus, Trash2, CheckSquare, Square, MoreVertical,
   MessageSquare, Smartphone, Copy, ExternalLink, AlertCircle, Send, Bell, CheckCircle, Pencil,
-  Palette, LayoutDashboard
+  Palette, LayoutDashboard, RefreshCw, Power, PowerOff, Info
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -100,6 +100,22 @@ export default function EventDetailPage() {
     onError: (e: any) => toast.error(e?.message ?? "Failed"),
   });
 
+  const deactivateMutation = useMutation({
+    mutationFn: () => api.post(`/events/${id}/deactivate`),
+    onSuccess: (r: any) => {
+      qc.invalidateQueries({ queryKey: ["event-summary", id] });
+      toast.success(r?.data?.message ?? "Event deactivated");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.response?.data?.message ?? e?.message ?? "Failed to deactivate event"),
+  });
+
+  const activateMutation = useMutation({
+    // Empty object body so axios sends Content-Type: application/json.
+    mutationFn: () => api.post(`/events/${id}/activate`, {}),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["event-summary", id] }); toast.success("Event activated"); },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.response?.data?.message ?? e?.message ?? "Failed to activate event"),
+  });
+
   const downloadReport = () => {
     api.get(`/events/${id}/report/pdf`, { responseType: "blob" }).then((r: any) => {
       const url = window.URL.createObjectURL(r.data);
@@ -156,10 +172,26 @@ export default function EventDetailPage() {
                 <Mail className="h-4 w-4" /> Save the Date
               </Button>
             )}
-            {event.status === "active" && (
-              <Button onClick={() => completeMutation.mutate()} isLoading={completeMutation.isPending} variant="primary" size="sm">
-                Complete Event
+            {event.status !== "active" && event.status !== "completed" && (
+              <Button onClick={() => activateMutation.mutate()} isLoading={activateMutation.isPending} variant="outline" size="sm">
+                <Power className="h-4 w-4" /> Activate
               </Button>
+            )}
+            {event.status === "active" && (
+              <>
+                <Button
+                  onClick={() => deactivateMutation.mutate()}
+                  isLoading={deactivateMutation.isPending}
+                  variant="outline"
+                  size="sm"
+                  className="border-amber-400 text-amber-700 hover:bg-amber-50 focus:ring-amber-100"
+                >
+                  <PowerOff className="h-4 w-4" /> Deactivate
+                </Button>
+                <Button onClick={() => completeMutation.mutate()} isLoading={completeMutation.isPending} variant="primary" size="sm">
+                  Complete Event
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -215,6 +247,12 @@ export default function EventDetailPage() {
       {/* Content */}
       {activeTab === "overview" && (
         <>
+          {event.status === "active" && (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+              <p>This event is live. To change its details, deactivate it first, edit, then activate it again.</p>
+            </div>
+          )}
           <div className="grid gap-6 lg:grid-cols-2">
             <Card title="Event Details">
             <div className="space-y-3">
@@ -314,7 +352,7 @@ export default function EventDetailPage() {
               </div>
               {event.status === "active" || event.status === "completed" ? (
                 <p className="text-xs text-amber-600">
-                  This event is {event.status} — the card designs can no longer be changed.
+                  Deactivate this event to change card designs, then activate it again.
                 </p>
               ) : (
                 <p className="text-xs text-slate-400">
@@ -359,6 +397,27 @@ function formatTsh(amount: number): string {
 // ============================================================================
 // BROADCAST TAB
 // ============================================================================
+interface MessageHistoryItem {
+  id: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  guest_id: string | null;
+  guest_name: string;
+  guest_phone: string | null;
+  channel: string;
+  status: "sent" | "failed";
+  provider_message_id: string | null;
+  error_message: string | null;
+  delivered_at: string;
+}
+
+const MESSAGE_CHANNEL_BADGE: Record<string, string> = {
+  sms: "bg-sky-100 text-sky-700",
+  whatsapp: "bg-emerald-100 text-emerald-700",
+  email: "bg-amber-100 text-amber-700",
+  telegram: "bg-violet-100 text-violet-700",
+};
+
 function BroadcastTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
   const [composeOpen, setComposeOpen] = useState(false);
@@ -369,6 +428,7 @@ function BroadcastTab({ eventId }: { eventId: string }) {
   const [templateId, setTemplateId] = useState("");
   const [cardTemplateId, setCardTemplateId] = useState("");
   const [expandedBroadcast, setExpandedBroadcast] = useState<string | null>(null);
+  const [channelFilter, setChannelFilter] = useState("");
 
   const { data: messageTemplates = [] } = useQuery({
     queryKey: ["message-templates"],
@@ -389,6 +449,55 @@ function BroadcastTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/broadcasts/${expandedBroadcast}/deliveries`)).data.data,
     enabled: !!expandedBroadcast,
   });
+
+  const { data: messageHistory = [], isLoading: historyLoading } = useQuery({
+    queryKey: ["message-history", eventId, channelFilter],
+    queryFn: async () => {
+      const res = await api.get<{ data: MessageHistoryItem[] }>(
+        `/events/${eventId}/message-history?channel=${channelFilter}&limit=200`
+      );
+      return res.data.data ?? [];
+    },
+    refetchInterval: 30000,
+  });
+
+  const historyStats = {
+    total: messageHistory.length,
+    sent: messageHistory.filter((m) => m.status === "sent").length,
+    failed: messageHistory.filter((m) => m.status === "failed").length,
+    channels: new Set(messageHistory.map((m) => m.channel).filter(Boolean)).size,
+  };
+
+  const historyColumns: ColumnDef<MessageHistoryItem>[] = [
+    {
+      key: "delivered_at",
+      label: "Time",
+      sortable: true,
+      render: (m) => (
+        <span className="block break-words text-slate-600">
+          {formatDate(m.delivered_at)}{" "}
+          <span className="text-slate-400">
+            {new Date(m.delivered_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        </span>
+      ),
+    },
+    { key: "campaign_name", label: "Campaign", render: (m) => <span className="block break-words font-medium text-slate-800">{m.campaign_name ?? "—"}</span> },
+    {
+      key: "guest_name",
+      label: "Guest",
+      render: (m) => (
+        <span className="block break-words text-slate-700">
+          {m.guest_name}
+          {m.guest_phone && <span className="block break-words text-xs text-slate-400">{m.guest_phone}</span>}
+        </span>
+      ),
+    },
+    { key: "channel", label: "Channel", render: (m) => <Badge label={m.channel} variant="slate" className={MESSAGE_CHANNEL_BADGE[m.channel.toLowerCase()]} /> },
+    { key: "status", label: "Status", render: (m) => <Badge label={m.status} variant={m.status === "sent" ? "green" : "rose"} /> },
+    { key: "provider_message_id", label: "Provider ID", render: (m) => <span className="block break-words font-mono text-xs text-slate-600">{m.provider_message_id ?? "—"}</span> },
+    { key: "error_message", label: "Error", render: (m) => <span className={cn("block break-words text-xs", m.error_message ? "text-rose-600" : "text-slate-400")}>{m.error_message ?? "—"}</span> },
+  ];
 
   const sendMutation = useMutation({
     mutationFn: (payload: any) => Promise.all(payload.channels.map((channel: string) => api.post(`/events/${eventId}/broadcast`, { ...payload, channel }))),
@@ -482,6 +591,59 @@ function BroadcastTab({ eventId }: { eventId: string }) {
         </div>
       )}
 
+      <div className="mt-6 border-t border-slate-100 pt-6">
+        <Card
+          title="Message history"
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={channelFilter}
+                onChange={(e) => setChannelFilter(e.target.value)}
+                className="w-36 py-1.5 text-xs"
+                aria-label="Filter message history by channel"
+              >
+                <option value="">All</option>
+                <option value="sms">SMS</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">Email</option>
+                <option value="telegram">Telegram</option>
+              </Select>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => qc.invalidateQueries({ queryKey: ["message-history", eventId, channelFilter] })}
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </Button>
+            </div>
+          }
+        >
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard title="Total messages" value={historyStats.total} icon={MessageSquare} color="blue" />
+            <StatCard title="Sent" value={historyStats.sent} icon={CheckCircle} color="green" />
+            <StatCard title="Failed" value={historyStats.failed} icon={AlertCircle} color="red" />
+            <StatCard title="Channels used" value={historyStats.channels} icon={Radio} color="gold" />
+          </div>
+          <div className="mt-5">
+            {historyLoading ? (
+              <p className="py-8 text-center text-sm text-slate-500">Loading message history...</p>
+            ) : (
+              <DataTable
+                data={messageHistory}
+                columns={historyColumns}
+                pageSize={200}
+                showCheckboxes={false}
+                showSearch={false}
+                showFilters={false}
+                sortField="delivered_at"
+                sortDir="desc"
+                emptyMessage="No messages sent yet. Compose a broadcast above to see its history here."
+              />
+            )}
+          </div>
+        </Card>
+      </div>
+
       <Modal isOpen={composeOpen} onClose={() => setComposeOpen(false)} title="Compose Broadcast" size="lg">
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -555,6 +717,41 @@ function BroadcastTab({ eventId }: { eventId: string }) {
   );
 }
 
+// Check-in card delivery: issues the card when eligible, then tries
+// WhatsApp -> Email -> SMS (feature phones receive SMS only).
+function useSendCheckinMutations(eventId: string) {
+  const qc = useQueryClient();
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["guests-for-pledge", eventId] });
+    qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
+  };
+
+  const sendCheckinMutation = useMutation({
+    mutationFn: (guestId: string) => api.post(`/events/${eventId}/guests/${guestId}/send-checkin`),
+    onSuccess: (r: any) => {
+      invalidate();
+      toast.success(r?.data?.data?.message ?? r?.data?.message ?? "Check-in details sent");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to send check-in details"),
+  });
+
+  const sendCheckinBulkMutation = useMutation({
+    mutationFn: (guestIds: string[]) => api.post(`/events/${eventId}/guests/send-checkin`, { guest_ids: guestIds }),
+    onSuccess: (r: any) => {
+      invalidate();
+      const result = r?.data?.data ?? {};
+      toast.success(`Check-in details sent to ${result.sent ?? 0} guest(s)${result.failed ? `, ${result.failed} failed` : ""}`);
+      if (Array.isArray(result.errors) && result.errors.length > 0) {
+        toast.error(<span className="break-words">{result.errors.join("; ")}</span>);
+      }
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to send check-in details"),
+  });
+
+  return { sendCheckinMutation, sendCheckinBulkMutation };
+}
+
 // ============================================================================
 // MICHANGO TAB
 // ============================================================================
@@ -563,7 +760,8 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState<string | null>(null);
-  const [selectedGuestId, setSelectedGuestId] = useState("");
+  const [selectedPledgeGuestIds, setSelectedPledgeGuestIds] = useState<string[]>([]);
+  const [pledgeGuestSearch, setPledgeGuestSearch] = useState("");
   const [pledgeAmount, setPledgeAmount] = useState("");
   const [pledgeDueDate, setPledgeDueDate] = useState("");
   const [pledgeNotes, setPledgeNotes] = useState("");
@@ -571,6 +769,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const [defaultPledgeAmount, setDefaultPledgeAmount] = useState(50000);
   const [cardGuest, setCardGuest] = useState<any | null>(null);
   const [cardQrUrl, setCardQrUrl] = useState<string | null>(null);
+  const { sendCheckinMutation } = useSendCheckinMutations(eventId);
 
   const CATEGORY_PLEDGE_DEFAULTS: Record<string, number> = {
     "VVIP": 200000, "VIP": 100000, "Platinum": 250000, "Gold": 150000,
@@ -606,16 +805,22 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const totalOutstanding = summary?.total_outstanding_tsh ?? 0;
   const totalPledgesCount = summary?.total_pledgers ?? 0;
 
-  const addPledgeMutation = useMutation({
-    mutationFn: (payload: any) => api.post(`/events/${eventId}/michango`, payload),
-    onSuccess: () => {
+  const bulkPledgeMutation = useMutation({
+    mutationFn: (payload: { pledges: Array<{ guest_id: string; pledged_amount: number; payment_deadline?: string | null; notes?: string | null }> }) =>
+      api.post(`/events/${eventId}/michango/bulk`, payload),
+    onSuccess: (r: any) => {
       qc.invalidateQueries({ queryKey: ["michango", eventId] });
       qc.invalidateQueries({ queryKey: ["michango-summary", eventId] });
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
+      qc.invalidateQueries({ queryKey: ["guests-for-pledge", eventId] });
+      const result = r?.data?.data ?? {};
+      toast.success(`Created ${result.created ?? 0} pledge(s)${result.skipped ? `, skipped ${result.skipped}` : ""}`);
+      if (Array.isArray(result.errors) && result.errors.length > 0) {
+        toast.error(<span className="break-words">{result.errors.join("; ")}</span>);
+      }
       resetPledgeForm();
-      toast.success("Pledge added successfully");
     },
-    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to add pledge"),
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to add pledges"),
   });
 
   const exemptGuestMutation = useMutation({
@@ -706,57 +911,71 @@ function MichangoTab({ eventId }: { eventId: string }) {
 
   const resetPledgeForm = () => {
     setAddOpen(false);
-    setSelectedGuestId("");
+    setSelectedPledgeGuestIds([]);
+    setPledgeGuestSearch("");
     setPledgeAmount("");
     setPledgeDueDate("");
     setPledgeNotes("");
     setIsPledgeExempt(false);
   };
 
-  const handleGuestChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const guestId = e.target.value;
-    setSelectedGuestId(guestId);
-    if (guestId) {
-      const guest = guests.find((g: any) => g.id === guestId);
-      if (guest) {
-        const category = guest.guest_category || "Regular";
-        const detectedAmount = CATEGORY_PLEDGE_DEFAULTS[category] ?? 50000;
-        if (detectedAmount === 0) {
-          setIsPledgeExempt(true);
-          setPledgeAmount("0");
-        } else {
-          setIsPledgeExempt(false);
-          setPledgeAmount(detectedAmount.toString());
-        }
-      }
-    } else {
-      setPledgeAmount("");
+  const handleGuestToggle = (guestId: string) => {
+    const next = selectedPledgeGuestIds.includes(guestId)
+      ? selectedPledgeGuestIds.filter((id) => id !== guestId)
+      : [...selectedPledgeGuestIds, guestId];
+    setSelectedPledgeGuestIds(next);
+
+    // The category hint/default only makes sense for a single guest.
+    if (next.length !== 1) {
       setIsPledgeExempt(false);
+      if (pledgeAmount === "0") setPledgeAmount("");
+      return;
     }
+    const guest = guests.find((g: any) => g.id === next[0]);
+    if (!guest) return;
+    const detectedAmount = CATEGORY_PLEDGE_DEFAULTS[guest.guest_category || "Regular"] ?? 50000;
+    setIsPledgeExempt(detectedAmount === 0);
+    setPledgeAmount(detectedAmount.toString());
   };
 
   const handleAddPledge = (e: React.FormEvent) => {
     e.preventDefault();
+    if (selectedPledgeGuestIds.length === 0) {
+      toast.error("Select at least one guest");
+      return;
+    }
     if (isPledgeExempt) {
-      exemptGuestMutation.mutate(selectedGuestId);
-    } else {
-      const amountTsh = parseInt(pledgeAmount, 10);
-      if (isNaN(amountTsh) || amountTsh <= 0) {
-        toast.error("Please enter a valid pledge amount in TZS");
+      if (selectedPledgeGuestIds.length !== 1) {
+        toast.error("Pledge exemption applies to one guest at a time");
         return;
       }
-      addPledgeMutation.mutate({
-        guest_id: selectedGuestId,
+      exemptGuestMutation.mutate(selectedPledgeGuestIds[0]);
+      return;
+    }
+    const amountTsh = parseInt(pledgeAmount, 10);
+    if (isNaN(amountTsh) || amountTsh <= 0) {
+      toast.error("Please enter a valid pledge amount in TZS");
+      return;
+    }
+    bulkPledgeMutation.mutate({
+      pledges: selectedPledgeGuestIds.map((guestId) => ({
+        guest_id: guestId,
         pledged_amount: amountTsh,
         payment_deadline: pledgeDueDate || null,
         notes: pledgeNotes || null,
-      });
-    }
+      })),
+    });
   };
 
   const progress = totalPledged > 0 ? (totalPaid / totalPledged) * 100 : 0;
   const availableGuests = guests.filter((g: any) => !g.pledge_exempt);
-  const selectedGuest = guests.find((g: any) => g.id === selectedGuestId);
+  const needle = pledgeGuestSearch.trim().toLowerCase();
+  const filteredAvailableGuests = availableGuests.filter((g: any) =>
+    !needle || [g.full_name, g.phone, g.guest_category].some((value) => String(value ?? "").toLowerCase().includes(needle))
+  );
+  const selectedGuest = selectedPledgeGuestIds.length === 1
+    ? guests.find((g: any) => g.id === selectedPledgeGuestIds[0])
+    : undefined;
   const paymentPledge = pledges.find((pledge: any) => pledge.id === paymentOpen);
   const detectedCategory = selectedGuest?.guest_category || "Regular";
   const detectedDefault = CATEGORY_PLEDGE_DEFAULTS[detectedCategory] ?? 50000;
@@ -823,8 +1042,8 @@ function MichangoTab({ eventId }: { eventId: string }) {
                 <div key={p.id} className="rounded-lg border border-slate-200 p-4">
                   <div className="mb-2 flex items-start justify-between gap-4">
                     <div>
-                      <p className="font-semibold text-slate-900">{p.guest_name}</p>
-                      <p className="text-sm text-slate-600">
+                      <p className="font-semibold text-slate-900 break-words">{p.guest_name}</p>
+                      <p className="text-sm text-slate-600 break-words">
                         Pledged: {formatTsh(pledgedAmount)}
                         {p.payment_deadline && ` · Due ${formatDate(p.payment_deadline)}`}
                       </p>
@@ -861,6 +1080,16 @@ function MichangoTab({ eventId }: { eventId: string }) {
                         </Button>
                       )}
 
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-gold-300 text-gold-700 hover:bg-gold-50"
+                        onClick={() => sendCheckinMutation.mutate(p.guest_id)}
+                        isLoading={sendCheckinMutation.isPending}
+                        title="Send check-in details (card eligibility is validated by the server)"
+                      >
+                        <Send className="h-4 w-4 mr-1.5" /> Send card
+                      </Button>
                       <Button size="sm" variant="outline" className="border-gold-300 text-gold-700 hover:bg-gold-50" onClick={() => router.push(`/events/${eventId}/guest/${p.guest_id}`)}>
                         <QrCode className="h-4 w-4 mr-1.5" /> View Card
                       </Button>
@@ -889,16 +1118,39 @@ function MichangoTab({ eventId }: { eventId: string }) {
       <Modal isOpen={addOpen} onClose={resetPledgeForm} title="Add Pledge" size="md">
         <form onSubmit={handleAddPledge} className="space-y-4">
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">Select Guest *</label>
-            <select value={selectedGuestId} onChange={handleGuestChange} required className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20">
-              <option value="">Choose a guest...</option>
-              {availableGuests.map((g: any) => (
-                <option key={g.id} value={g.id}>{g.full_name} ({g.phone}) - {g.guest_category || "Regular"}</option>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <label className="block text-sm font-medium text-slate-700">Select Guests *</label>
+              <span className="text-xs text-slate-500">{selectedPledgeGuestIds.length} selected</span>
+            </div>
+            <input
+              type="text"
+              value={pledgeGuestSearch}
+              onChange={(e) => setPledgeGuestSearch(e.target.value)}
+              placeholder="Search name, phone or category"
+              className="mb-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20"
+            />
+            <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+              {filteredAvailableGuests.length === 0 ? (
+                <p className="p-3 text-sm text-slate-500">No guests match your search.</p>
+              ) : filteredAvailableGuests.map((g: any) => (
+                <label key={g.id} className="flex cursor-pointer items-start gap-3 p-2.5 hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={selectedPledgeGuestIds.includes(g.id)}
+                    onChange={() => handleGuestToggle(g.id)}
+                    className="mt-0.5 h-4 w-4 rounded accent-gold-500"
+                  />
+                  <span className="min-w-0 text-sm break-words">
+                    <span className="font-medium text-slate-900">{g.full_name}</span>
+                    <span className="block text-xs text-slate-500">{g.phone} · {g.guest_category || "Regular"}</span>
+                  </span>
+                </label>
               ))}
-            </select>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">Select one or more guests. The amount below applies to every selected guest.</p>
           </div>
-          {selectedGuestId && (
-            <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600 border border-slate-200">
+          {selectedGuest && (
+            <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600 border border-slate-200 break-words">
               <span className="font-semibold">Detected Category:</span> {detectedCategory}
               <br />
               <span className="font-semibold">Default Pledge:</span> TZS {detectedDefault.toLocaleString()}
@@ -922,10 +1174,20 @@ function MichangoTab({ eventId }: { eventId: string }) {
               <input type="text" value={pledgeNotes} onChange={(e) => setPledgeNotes(e.target.value)} placeholder="Optional" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
             </div>
           </div>
+          <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <input
+              type="checkbox"
+              checked={isPledgeExempt}
+              disabled={selectedPledgeGuestIds.length !== 1}
+              onChange={(e) => setIsPledgeExempt(e.target.checked)}
+              className="h-4 w-4 rounded accent-gold-500"
+            />
+            <span className="text-sm font-medium text-slate-700">Mark as pledge exempt (single guest only)</span>
+          </label>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" type="button" onClick={resetPledgeForm}>Cancel</Button>
-            <Button type="submit" isLoading={addPledgeMutation.isPending || exemptGuestMutation.isPending} variant={isPledgeExempt ? "outline" : "primary"}>
-              {isPledgeExempt ? "Mark as Exempt" : "Add Pledge"}
+            <Button type="submit" isLoading={bulkPledgeMutation.isPending || exemptGuestMutation.isPending} variant={isPledgeExempt ? "outline" : "primary"}>
+              {isPledgeExempt ? "Mark as Exempt" : selectedPledgeGuestIds.length > 1 ? `Add ${selectedPledgeGuestIds.length} Pledges` : "Add Pledge"}
             </Button>
           </div>
         </form>
@@ -1002,6 +1264,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
 // ============================================================================
 function GuestsTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
+  const { sendCheckinBulkMutation } = useSendCheckinMutations(eventId);
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -1246,6 +1509,19 @@ function GuestsTab({ eventId }: { eventId: string }) {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_invitation")}><Mail className="h-3.5 w-3.5" /> Send Pledge Card</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              isLoading={sendCheckinBulkMutation.isPending}
+              onClick={() => sendCheckinBulkMutation.mutate(Array.from(selectedGuests), {
+                onSuccess: () => {
+                  qc.invalidateQueries({ queryKey: ["guests", eventId] });
+                  setSelectedGuests(new Set());
+                },
+              })}
+            >
+              <Send className="h-3.5 w-3.5" /> Send check-in details
+            </Button>
             <Button size="sm" variant="outline" onClick={() => handleBulkAction("generate_links")}><QrCode className="h-3.5 w-3.5" /> Generate Links</Button>
             {hasSentInvitations && <Button size="sm" variant="outline" onClick={() => handleBulkAction("send_reminder")}><Bell className="h-3.5 w-3.5" /> Send Reminder</Button>}
             <Button size="sm" variant="ghost" onClick={() => setSelectedGuests(new Set())}>Clear selection</Button>

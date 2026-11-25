@@ -67,6 +67,7 @@ const ACCOUNT_NAV: NavSection[] = [
       { href: "/usage", icon: Gauge, label: "Usage & Limits", permission: "events:read" },
       { href: "/reports", icon: BarChart3, label: "Reports", permission: "reports:read" },
       { href: "/templates", icon: FileText, label: "Message Templates", permission: "templates:read" },
+      { href: "/sms-templates", icon: MessageSquare, label: "SMS Templates", permission: "templates:read" },
       { href: "/logs", icon: ScrollText, label: "Delivery Logs", permission: "audit:read" },
       { href: "/cards", icon: Palette, label: "Card Templates", permission: "cards:read" },
       { href: "/channels", icon: MessageSquare, label: "Channels", permission: "broadcast:read" },

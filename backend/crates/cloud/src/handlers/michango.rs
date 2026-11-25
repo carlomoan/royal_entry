@@ -536,3 +536,84 @@ pub async fn send_reminders(
     let message = custom_message.unwrap_or_else(|| "Michango reminders processed".to_string());
     Ok(Json(json!({ "success": true, "data": { "sent": sent, "failed": failed, "message": message } })))
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BulkPledgeItem {
+    pub guest_id: Uuid,
+    pub pledged_amount: i64,
+    pub payment_deadline: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BulkPledgeRequest {
+    pub pledges: Vec<BulkPledgeItem>,
+}
+
+/// POST /events/{eid}/michango/bulk — add pledges for several selected guests
+/// in one request. Existing pledges are skipped rather than overwritten.
+pub async fn create_pledges_bulk(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(payload): Json<BulkPledgeRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    if payload.pledges.is_empty() {
+        return Err(AppError::ValidationError("No pledges supplied".to_string()));
+    }
+
+    let mut created = 0;
+    let mut skipped = 0;
+    let mut errors = Vec::new();
+    for item in &payload.pledges {
+        if item.pledged_amount <= 0 {
+            errors.push(format!("{}: invalid amount", item.guest_id));
+            continue;
+        }
+        if !guest_belongs_to_event(&state, event_id, item.guest_id).await? {
+            errors.push(format!("{}: guest not in event", item.guest_id));
+            continue;
+        }
+        let existing: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pledge_tracker WHERE event_id = $1 AND guest_id = $2",
+        )
+        .bind(event_id)
+        .bind(item.guest_id)
+        .fetch_one(state.db.pool())
+        .await?;
+        if existing > 0 {
+            skipped += 1;
+            continue;
+        }
+        let deadline = item.payment_deadline.as_deref()
+            .map(|v| NaiveDate::parse_from_str(v, "%Y-%m-%d"))
+            .transpose()
+            .map_err(|_| AppError::ValidationError("Invalid payment_deadline format".to_string()))?;
+        let status = resolve_status(item.pledged_amount, 0, deadline);
+        sqlx::query(
+            r#"
+            INSERT INTO pledge_tracker
+                (id, event_id, guest_id, pledged_amount, amount_paid, payment_status,
+                 payment_deadline, notes, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, 0, $5, $6, $7, NOW(), NOW())
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(event_id)
+        .bind(item.guest_id)
+        .bind(item.pledged_amount)
+        .bind(&status)
+        .bind(deadline)
+        .bind(item.notes.as_deref())
+        .execute(state.db.pool())
+        .await?;
+        created += 1;
+    }
+
+    Ok(Json(json!({
+        "success": true,
+        "data": { "created": created, "skipped": skipped, "errors": errors }
+    })))
+}

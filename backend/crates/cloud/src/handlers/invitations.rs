@@ -288,7 +288,7 @@ pub async fn send_invitations(
         // No token, QR or check-in link here — only the invitation page.
         let card_png: Option<Vec<u8>> = None;
         let pledge_range = pledge_range_for(guest.guest_category.as_deref());
-        let message_body = format!(
+        let mut message_body = format!(
             "Dear {name},\n\nYou are cordially invited to {title} on {date} at {venue}.\n\nPledge (contribution): {range}\n\nView your invitation: {link}\n\nYour check-in card will be sent separately once it is issued.\n\nRoyalEntry",
             name = guest.full_name,
             title = event.title,
@@ -297,6 +297,25 @@ pub async fn send_invitations(
             range = pledge_range,
             link = invitation_link,
         );
+        if channel == "sms" {
+            if let Some(templated) = crate::services::templates::render_sms_template(
+                state.db.pool(),
+                org_id,
+                "invitation",
+                &json!({
+                    "guest_name": guest.full_name,
+                    "event_title": event.title,
+                    "event_date": event.event_date.format("%B %d, %Y").to_string(),
+                    "venue": event.venue_name.as_deref().unwrap_or("the venue"),
+                    "pledge_range": pledge_range,
+                    "invitation_link": invitation_link,
+                }),
+            )
+            .await
+            {
+                message_body = templated;
+            }
+        }
 
         let destination = if channel == "email" {
             guest.email.as_deref().ok_or_else(|| {

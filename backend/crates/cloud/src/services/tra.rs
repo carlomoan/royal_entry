@@ -57,7 +57,8 @@ impl TraService {
         }
 
         let row = sqlx::query(
-            "SELECT invoice_number, amount_tsh, tax_amount_tsh, tax_rate_percent, organization_id \
+            "SELECT invoice_number, amount_tsh, tax_amount_tsh, \
+             tax_rate_percent::DOUBLE PRECISION AS tax_rate_percent, organization_id \
              FROM billing_invoices WHERE id = $1",
         )
         .bind(invoice_id)
