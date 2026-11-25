@@ -14,11 +14,12 @@ import { isOnline } from "@/lib/offline";
 import {
   saveEventData, findGuestByLink, getOfflineArrivals, markOfflineArrival, isAlreadyArrivedOffline,
 } from "@/lib/scannerOffline";
-import { Card, Button, Input, Badge } from "@/components/ui";
+import { Card, Button, Input, Badge, Select } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import jsQR from "jsqr";
 
 type ScanMode = "qr" | "sms";
+type OtpMode = "all" | "feature_phone_only" | "off";
 
 type ScanResult = {
   status: "ok" | "fail" | "warn" | null;
@@ -118,6 +119,31 @@ export default function ScannerPage() {
     refetchInterval: 10_000,
   });
 
+  const { data: event } = useQuery({
+    queryKey: ["event-for-scanner", id],
+    queryFn: async () => (await api.get(`/events/${id}`)).data.data as { otp_mode?: string; title?: string } | undefined,
+    enabled: !!id,
+  });
+  const rawOtpMode = event?.otp_mode;
+  const otpMode: OtpMode =
+    rawOtpMode === "all" || rawOtpMode === "off" || rawOtpMode === "feature_phone_only"
+      ? rawOtpMode
+      : "feature_phone_only";
+
+  // OTP mode is changed live at the gate — no event deactivation required.
+  const otpModeMutation = useMutation({
+    mutationFn: (otp_mode: OtpMode) => api.post(`/events/${id}/gate/otp-mode`, { otp_mode }),
+    onSuccess: (r: any) => {
+      qc.invalidateQueries({ queryKey: ["event-for-scanner", id] });
+      toast.success(r?.data?.message ?? "OTP mode updated");
+    },
+    onError: (e: any) => {
+      toast.error(
+        e?.response?.data?.error?.message ?? e?.response?.data?.message ?? "Failed to update OTP mode"
+      );
+    },
+  });
+
   // Cache the event's guests + invitations locally so scanning works offline.
   const { data: guests = [] } = useQuery({
     queryKey: ["guests", id],
@@ -168,14 +194,17 @@ export default function ScannerPage() {
       const affiliation = [d.company_name, d.package_name].filter(Boolean).join(" · ");
       const affiliationPart = affiliation ? ` · ${affiliation}` : "";
       const suffix = r.data?.queued_offline ? " (offline — will sync)" : "";
+      const welcomeMessage: string | undefined =
+        typeof d.welcome_message === "string" && d.welcome_message ? d.welcome_message : undefined;
+      const composedMessage = `Welcome, ${guest}! Checked in successfully.${cls}${locPart}${entryPart}${affiliationPart}${suffix}`;
       setResult({
         status: "ok",
-        message: `Welcome, ${guest}! Checked in successfully.${cls}${locPart}${entryPart}${affiliationPart}${suffix}`,
+        message: welcomeMessage ?? composedMessage,
         company: d.company_name ?? undefined,
         packageName: d.package_name ?? undefined,
         entry: entryText || undefined,
       });
-      toast.success(`Welcome, ${guest}!${suffix}`);
+      toast.success(welcomeMessage ?? `Welcome, ${guest}!${suffix}`);
       setCode("");
       setCaptureLink(null);
 
@@ -364,9 +393,12 @@ export default function ScannerPage() {
         gate: gateRef.current,
       }),
     onSuccess: (r: any) => {
-      const guest = r.data.data?.guest_name ?? "guest";
-      setSmsResult({ status: "ok", message: `Identity verified. Welcome, ${guest}!` });
-      toast.success(`Verified & checked in: ${guest}`);
+      const d = r.data?.data ?? {};
+      const guest = d.guest_name ?? "guest";
+      const welcomeMessage: string | undefined =
+        typeof d.welcome_message === "string" && d.welcome_message ? d.welcome_message : undefined;
+      setSmsResult({ status: "ok", message: welcomeMessage ?? `Identity verified. Welcome, ${guest}!` });
+      toast.success(welcomeMessage ?? `Verified & checked in: ${guest}`);
       setOtp("");
       setOtpSent(null);
       setLink("");
@@ -487,6 +519,24 @@ export default function ScannerPage() {
             className="w-32 py-1.5 text-sm font-semibold"
           />
           <span className="text-xs text-slate-400">Recorded on every check-in</span>
+          <div className="ml-auto flex flex-wrap items-center gap-2 border-l border-slate-200 pl-3">
+            <div className="flex items-center gap-2">
+              <Select
+                id="gate-otp-mode"
+                label="OTP"
+                value={otpMode}
+                disabled={otpModeMutation.isPending}
+                onChange={(e) => otpModeMutation.mutate(e.target.value as OtpMode)}
+                className="w-48 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="off">Off (QR/token only)</option>
+                <option value="feature_phone_only">Feature phones only</option>
+                <option value="all">All guests</option>
+              </Select>
+              {otpModeMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+            </div>
+            <span className="text-xs text-slate-400">Changes apply instantly — no need to deactivate the event.</span>
+          </div>
         </div>
 
         {/* Offline indicator */}

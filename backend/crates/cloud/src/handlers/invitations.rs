@@ -466,16 +466,21 @@ pub async fn find_invitation_by_code(
     code: &str,
 ) -> AppResult<Option<Invitation>> {
     let normalized = crate::models::invitation::normalize_human_code(code);
-    if let Some(inv) = sqlx::query_as::<_, Invitation>(
-        "SELECT i.* FROM invitations i JOIN guests g ON g.id = i.guest_id \
-         WHERE i.short_link = $1 AND g.event_id = $2",
-    )
-    .bind(&normalized)
-    .bind(event_id)
-    .fetch_optional(pool)
-    .await?
-    {
-        return Ok(Some(inv));
+    // Short links are lowercase (`inv-…`); human codes are uppercase. Try the
+    // raw value first so internal callers passing a canonical short link still
+    // resolve, then the normalised form for codes typed at the gate.
+    for candidate in [code.trim(), normalized.as_str()] {
+        if let Some(inv) = sqlx::query_as::<_, Invitation>(
+            "SELECT i.* FROM invitations i JOIN guests g ON g.id = i.guest_id \
+             WHERE i.short_link = $1 AND g.event_id = $2",
+        )
+        .bind(candidate)
+        .bind(event_id)
+        .fetch_optional(pool)
+        .await?
+        {
+            return Ok(Some(inv));
+        }
     }
 
     let rows = sqlx::query_as::<_, Invitation>(

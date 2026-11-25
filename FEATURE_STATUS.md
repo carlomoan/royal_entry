@@ -247,9 +247,12 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Live gate controls (2026-11-24)
+- ✅ `POST /events/{eid}/gate/otp-mode` toggles OTP enforcement (`all` / `feature_phone_only` / `off`) instantly on an active event, with an audit entry. The scanner page has an OTP select next to the Gate field; no deactivation needed. Successful check-ins return an explicit `welcome_message` (name, company, class, table/seat, entry count) shown in the result panel and toast.
+
 ### Broadcast placeholders & gate tokens (2026-11-24)
 - ✅ Broadcast composer has variable chips (`[fullname]`, `[checkintoken]`, `[checkinlink]`, `[qrurl]`, `[phone]`, `[table]`, `[category]`, `[event]`, `[date]`, `[venue]`) with a live sample preview. Backend substitutes them per recipient for every channel; unknown placeholders are left visible.
-- ✅ Gate accepts the human-friendly entry code (e.g. `QADA-HIME-4093`) typed with spaces/lowercase as well as the long `inv-…` link. Duplicate scans report the original time and gate.
+- ✅ Gate accepts the human-friendly entry code (e.g. `QADA-HIME-4093`) typed with spaces/lowercase as well as the long `inv-…` link. Duplicate scans report the original time and gate. Fixed OTP verification for typed tokens: code resolution now tries the raw short link before the uppercase human-code form, so the internal short-link lookup no longer returns "Invitation not found".
 
 ### Guest pledges & check-in delivery (2026-11-24)
 - ✅ Add Pledge modal now accepts multiple selected guests with one amount/due date/notes via `POST /events/{eid}/michango/bulk` (existing pledges skipped).

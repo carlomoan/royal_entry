@@ -661,6 +661,25 @@ async fn perform_check_in(
             .await;
     });
 
+    let mut welcome = format!("Welcome, {}!", guest.full_name);
+    if let Some(company) = &guest.company_name {
+        welcome.push_str(&format!(" {}", company));
+    }
+    if let Some(category) = &guest.guest_category {
+        welcome.push_str(&format!(" · {}", category));
+    }
+    if let Some(table) = &guest.table_number {
+        welcome.push_str(&format!(" · Table {}", table));
+        if let Some(seat) = &guest.seat_number {
+            welcome.push_str(&format!(", seat {}", seat));
+        }
+    }
+    welcome.push_str(&format!(
+        " · entry {} of {} — you are checked in.",
+        entries_used,
+        guest.party_size.max(1)
+    ));
+
     Ok(CheckInResponse {
         guest_id: guest.guest_id,
         guest_name: guest.full_name.clone(),
@@ -675,6 +694,7 @@ async fn perform_check_in(
         invitation_id: guest.invitation_id,
         scanned_at,
         status: "scanned".to_string(),
+        welcome_message: welcome,
     })
 }
 
@@ -914,4 +934,50 @@ pub async fn capture_name(
     .await?;
     let _ = event; // ownership already asserted
     Ok(Json(json!({ "success": true, "message": "Name captured — entry logged for review" })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetOtpModeRequest {
+    pub otp_mode: String,
+}
+
+/// POST /events/{eid}/gate/otp-mode — change OTP enforcement live at the gate,
+/// without deactivating the event. Gate staff can switch it off or on at any
+/// time; every change is written to the pass audit trail.
+pub async fn set_gate_otp_mode(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(payload): Json<SetOtpModeRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let actor_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
+    let mode = payload.otp_mode.trim().to_ascii_lowercase();
+    if !matches!(mode.as_str(), "all" | "feature_phone_only" | "off") {
+        return Err(AppError::ValidationError(
+            "otp_mode must be all, feature_phone_only or off".to_string(),
+        ));
+    }
+    sqlx::query("UPDATE events SET otp_mode = $2, updated_at = NOW() WHERE id = $1")
+        .bind(event_id)
+        .bind(&mode)
+        .execute(state.db.pool())
+        .await?;
+    sqlx::query(
+        r#"INSERT INTO pass_audit (id, event_id, action, actor_id, actor_role, details)
+           VALUES ($1, $2, 'gate_otp_mode_changed', $3, $4, $5)"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(event_id)
+    .bind(actor_id)
+    .bind(&claims.role)
+    .bind(json!({"from": event.otp_mode, "to": mode}))
+    .execute(state.db.pool())
+    .await?;
+    Ok(Json(json!({
+        "success": true,
+        "data": { "otp_mode": mode },
+        "message": format!("Gate OTP mode set to {}", mode)
+    })))
 }

@@ -491,6 +491,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/v1/events/{eid}/scan/capture-name",
             post(scanner::capture_name),
         )
+        .route(
+            "/api/v1/events/{eid}/gate/otp-mode",
+            post(scanner::set_gate_otp_mode),
+        )
         .layer(middleware::from_fn(require_permission_middleware(
             "scanner:write",
         )));

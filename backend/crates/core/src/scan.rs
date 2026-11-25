@@ -40,4 +40,5 @@ pub struct CheckInResponse {
     pub invitation_id: Uuid,
     pub scanned_at: DateTime<Utc>,
     pub status: String,
+    pub welcome_message: String,
 }
