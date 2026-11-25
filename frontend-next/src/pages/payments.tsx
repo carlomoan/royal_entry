@@ -1,11 +1,12 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CreditCard, FileDown, Wallet, Clock, CheckCircle2, ArrowUpRight, Search, Eye, Printer,
 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
+import { useReactToPrint } from "react-to-print";
 import api from "@/lib/api";
 import { Card, Badge, StatCard, Select, Modal, Button } from "@/components/ui";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
@@ -16,6 +17,8 @@ export default function PaymentsPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [statusPaymentId, setStatusPaymentId] = useState<string | null>(null);
   const [receiptPayment, setReceiptPayment] = useState<any | null>(null);
+  const receiptPrintRef = useRef<HTMLDivElement>(null);
+  const reactToPrint = useReactToPrint({ contentRef: receiptPrintRef });
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ["payments"],
@@ -133,24 +136,26 @@ export default function PaymentsPage() {
       <Modal isOpen={!!receiptPayment} onClose={() => setReceiptPayment(null)} title="Payment Receipt" size="lg">
         {receiptPayment && (
           <div className="space-y-4">
-            <ReceiptDocument
-              variant="receipt"
-              number={`RCPT-${receiptPayment.id.slice(0, 8).toUpperCase()}`}
-              issuedAt={receiptPayment.completed_at ?? receiptPayment.created_at}
-              status="paid"
-              billTo={{ name: receiptPayment.payer_phone ?? "—", detail: receiptPayment.payment_type }}
-              items={[{
-                description: `Payment — ${receiptPayment.payment_type}${receiptPayment.package_name ? ` (${receiptPayment.package_name})` : ""}`,
-                amount: receiptPayment.amount_tsh ?? 0,
-              }]}
-              subtotal={receiptPayment.amount_tsh ?? 0}
-              taxAmount={0}
-              total={receiptPayment.amount_tsh ?? 0}
-              paidVia={receiptPayment.payment_method}
-              reference={receiptPayment.mpesa_receipt_number ?? receiptPayment.payment_reference ?? receiptPayment.transaction_id}
-            />
+            <div ref={receiptPrintRef}>
+              <ReceiptDocument
+                variant="receipt"
+                number={`RCPT-${receiptPayment.id.slice(0, 8).toUpperCase()}`}
+                issuedAt={receiptPayment.completed_at ?? receiptPayment.created_at}
+                status="paid"
+                billTo={{ name: receiptPayment.payer_phone ?? "—", detail: receiptPayment.payment_type }}
+                items={[{
+                  description: `Payment — ${receiptPayment.payment_type}${receiptPayment.package_name ? ` (${receiptPayment.package_name})` : ""}`,
+                  amount: receiptPayment.amount_tsh ?? 0,
+                }]}
+                subtotal={receiptPayment.amount_tsh ?? 0}
+                taxAmount={0}
+                total={receiptPayment.amount_tsh ?? 0}
+                paidVia={receiptPayment.payment_method}
+                reference={receiptPayment.mpesa_receipt_number ?? receiptPayment.payment_reference ?? receiptPayment.transaction_id}
+              />
+            </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => window.print()}>
+              <Button variant="outline" size="sm" onClick={() => reactToPrint()}>
                 <Printer className="h-3.5 w-3.5" /> Print
               </Button>
               <Button size="sm" onClick={() => { downloadReceipt(receiptPayment.id); setReceiptPayment(null); }}>

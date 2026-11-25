@@ -461,7 +461,19 @@ pub async fn send_reminders(
                         "amount_paid": format!("TZS {}", recipient.amount_paid),
                         "amount_remaining": format!("TZS {}", outstanding),
                         "payment_deadline": recipient.payment_deadline.map(|d| d.to_string()).unwrap_or_default(),
-                        "pay_link": format!("{}/billing", state.config.app.frontend_url.trim_end_matches('/')),
+                        "pay_link": format!(
+                            "{}/i/{}",
+                            state.config.app.frontend_url.trim_end_matches('/'),
+                            sqlx::query_scalar::<_, String>(
+                                "SELECT short_link FROM invitations WHERE guest_id = $1"
+                            )
+                            .bind(recipient.guest_id)
+                            .fetch_optional(state.db.pool())
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default()
+                        ),
                     }),
                 )
                 .await

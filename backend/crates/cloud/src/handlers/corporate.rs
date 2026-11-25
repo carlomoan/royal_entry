@@ -1181,8 +1181,8 @@ pub async fn generate_booking_invoice(
         r#"
         INSERT INTO booking_invoices
             (id, organization_id, event_id, booking_id, invoice_number, amount_tsh,
-             tax_rate_percent, tax_amount_tsh, tax_inclusive, tin, status, issued_at, due_at, notes)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', NOW(), NOW() + INTERVAL '14 days', $11)
+             tax_rate_percent, tax_amount_tsh, tax_inclusive, tin, status, issued_at, due_at, notes, public_token)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', NOW(), NOW() + INTERVAL '14 days', $11, $12)
         RETURNING *
         "#,
     )
@@ -1197,6 +1197,7 @@ pub async fn generate_booking_invoice(
     .bind(inclusive)
     .bind(&tin)
     .bind(format!("{} — {} booking", event.title, booking.company_name))
+    .bind(Uuid::new_v4().simple().to_string())
     .fetch_one(state.db.pool())
     .await?;
 

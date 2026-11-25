@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CreditCard, Receipt, CalendarDays, TrendingUp, AlertTriangle,
   Smartphone, Loader2, Inbox, Infinity as InfinityIcon, Clock, Eye, Printer, FileDown,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { useReactToPrint } from "react-to-print";
 import api from "@/lib/api";
 import { Card, Badge, Button, StatCard, Modal, Input } from "@/components/ui";
 import { formatTZS, formatDate } from "@/lib/utils";
@@ -31,6 +32,8 @@ export default function BillingPage() {
   const [payInvoice, setPayInvoice] = useState<any | null>(null);
   const [viewInvoice, setViewInvoice] = useState<any | null>(null);
   const [phone, setPhone] = useState("");
+  const invoicePrintRef = useRef<HTMLDivElement>(null);
+  const reactToPrint = useReactToPrint({ contentRef: invoicePrintRef });
 
   /* ── Exact DB data ─────────────────────────────────────────────────────── */
   const { data: sub, isLoading: subLoading } = useQuery({
@@ -288,25 +291,27 @@ export default function BillingPage() {
       <Modal isOpen={!!viewInvoice} onClose={() => setViewInvoice(null)} title={`Invoice ${viewInvoice?.invoice_number ?? ""}`} size="lg">
         {viewInvoice && (
           <div className="space-y-4">
-            <ReceiptDocument
-              variant="invoice"
-              number={viewInvoice.invoice_number}
-              issuedAt={viewInvoice.issued_at}
-              dueAt={viewInvoice.due_at}
-              status={viewInvoice.status}
-              billTo={{ name: sub?.plan_name ?? "Account", detail: "Subscription" }}
-              items={[{
-                description: `${viewInvoice.plan_name ?? "Subscription"} subscription`,
-                amount: (viewInvoice.amount_tsh ?? 0) - (viewInvoice.tax_amount_tsh ?? 0),
-              }]}
-              subtotal={(viewInvoice.amount_tsh ?? 0) - (viewInvoice.tax_amount_tsh ?? 0)}
-              taxAmount={viewInvoice.tax_amount_tsh ?? 0}
-              taxRate={viewInvoice.tax_rate_percent ?? undefined}
-              taxInclusive={viewInvoice.tax_inclusive}
-              total={viewInvoice.amount_tsh ?? 0}
-            />
+            <div ref={invoicePrintRef}>
+              <ReceiptDocument
+                variant="invoice"
+                number={viewInvoice.invoice_number}
+                issuedAt={viewInvoice.issued_at}
+                dueAt={viewInvoice.due_at}
+                status={viewInvoice.status}
+                billTo={{ name: sub?.plan_name ?? "Account", detail: "Subscription" }}
+                items={[{
+                  description: `${viewInvoice.plan_name ?? "Subscription"} subscription`,
+                  amount: (viewInvoice.amount_tsh ?? 0) - (viewInvoice.tax_amount_tsh ?? 0),
+                }]}
+                subtotal={(viewInvoice.amount_tsh ?? 0) - (viewInvoice.tax_amount_tsh ?? 0)}
+                taxAmount={viewInvoice.tax_amount_tsh ?? 0}
+                taxRate={viewInvoice.tax_rate_percent ?? undefined}
+                taxInclusive={viewInvoice.tax_inclusive}
+                total={viewInvoice.amount_tsh ?? 0}
+              />
+            </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => window.print()}>
+              <Button variant="outline" size="sm" onClick={() => reactToPrint()}>
                 <Printer className="h-3.5 w-3.5" /> Print
               </Button>
               <Button size="sm" onClick={() => setViewInvoice(null)}>Close</Button>

@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### WhatsApp check-in preview & PDF (2026-11-24)
+- ✅ Editable WhatsApp `checkin_card` template (channel_kind='whatsapp') with variables `{{guest_name}}`, `{{entry_code}}`, `{{check_in_link}}`, `{{qr_url}}`, `{{pdf_url}}`, `{{event_title}}`. Check-in delivery renders this template before sending.
+- ✅ Check-in card PDF: `GET /events/{eid}/guests/{gid}/card/pdf` (auth) and public `GET /public/invitations/{code}/card/pdf` for WhatsApp/email recipients. Falls back to a plain QR image when no card template is assigned. New `/events/{id}/whatsapp-preview` page shows the template editor, live rendered message and an embedded PDF preview.
+
 ### Live gate controls (2026-11-24)
 - ✅ `POST /events/{eid}/gate/otp-mode` toggles OTP enforcement (`all` / `feature_phone_only` / `off`) instantly on an active event, with an audit entry. The scanner page has an OTP select next to the Gate field; no deactivation needed. Successful check-ins return an explicit `welcome_message` (name, company, class, table/seat, entry count) shown in the result panel and toast.
 

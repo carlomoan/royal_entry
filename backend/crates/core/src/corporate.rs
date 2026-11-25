@@ -174,6 +174,7 @@ pub struct BookingInvoice {
     pub issued_at: DateTime<Utc>,
     pub due_at: Option<DateTime<Utc>>,
     pub notes: Option<String>,
+    pub public_token: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

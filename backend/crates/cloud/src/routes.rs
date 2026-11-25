@@ -4,9 +4,9 @@
 use crate::{
     files,
     handlers::{
-        audit, auth, billing, booking_registration, broadcast, corporate, event, event_assignment,
-        guest, invitations, messages, michango, notifications, payment, platform, public_invitation,
-        qr_code, rbac, reports, scanner, settings, templates, verify_token, webhooks,
+        audit, auth, billing, booking_registration, broadcast, corporate, document_templates, event,
+        event_assignment, guest, invitations, messages, michango, notifications, payment, platform,
+        public_invitation, qr_code, rbac, reports, scanner, settings, templates, verify_token, webhooks,
     },
     logs,
     middleware::{
@@ -93,6 +93,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/public/invitations/{code}/qr",
             get(public_invitation::public_invitation_qr),
+        )
+        .route(
+            "/api/v1/public/invitations/{code}/card/pdf",
+            get(crate::handlers::card_issuing::public_card_pdf),
+        )
+        .route(
+            "/api/v1/public/invoices/{token}",
+            get(document_templates::public_invoice),
         )
         .route(
             "/api/v1/public/bookings/{token}",
@@ -427,6 +435,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(crate::handlers::card_issuing::send_checkin_bulk),
         )
         .route(
+            "/api/v1/events/{eid}/guests/{id}/card/pdf",
+            get(crate::handlers::card_issuing::guest_card_pdf),
+        )
+        .route(
             "/api/v1/events/{eid}/arrival-messages",
             get(crate::handlers::arrival::list_messages)
                 .post(crate::handlers::arrival::create_message),
@@ -719,6 +731,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/settings/system",
             get(settings::get_system_settings).put(settings::update_system_settings),
+        )
+        .route(
+            "/api/v1/settings/document-templates",
+            get(document_templates::list_document_templates)
+                .post(document_templates::create_document_template),
+        )
+        .route(
+            "/api/v1/settings/document-templates/{id}",
+            put(document_templates::update_document_template)
+                .delete(document_templates::delete_document_template),
         )
         .layer(middleware::from_fn(require_platform_admin_middleware))
         .merge(

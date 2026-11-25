@@ -173,3 +173,29 @@ pub async fn render_sms_template(
     hbs.set_strict_mode(false); // missing variables render as empty, never fail a send
     hbs.render_template(&body, vars).ok()
 }
+
+/// Render a channel-specific message template (whatsapp/telegram) saved from
+/// the Templates UI. Returns None when no template exists, so callers fall
+/// back to built-in text.
+pub async fn render_channel_template(
+    pool: &sqlx::PgPool,
+    org_id: uuid::Uuid,
+    channel_kind: &str,
+    name: &str,
+    vars: &Value,
+) -> Option<String> {
+    let body: Option<String> = sqlx::query_scalar(
+        "SELECT body FROM message_templates WHERE org_id = $1 AND channel_kind = $2 AND name = $3",
+    )
+    .bind(org_id)
+    .bind(channel_kind)
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let body = body?;
+    let mut hbs = Handlebars::new();
+    hbs.set_strict_mode(false);
+    hbs.render_template(&body, vars).ok()
+}

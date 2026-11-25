@@ -7,6 +7,7 @@
 // ==============================================================================
 use axum::{
     extract::{Path, State},
+    response::IntoResponse,
     Extension, Json,
 };
 use chrono::{DateTime, Utc};
@@ -310,12 +311,18 @@ pub async fn send_checkin_credentials(
 
     // Feature phones cannot open WhatsApp or email: SMS only. Smartphones get
     // WhatsApp first, then email, then SMS as the last resort.
+    let pdf_url = format!(
+        "{}/api/v1/public/invitations/{}/card/pdf",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        invitation.short_link
+    );
     let vars = json!({
         "guest_name": guest.full_name,
         "event_title": event.title,
         "check_in_link": link,
         "entry_code": token,
         "qr_url": qr_url,
+        "pdf_url": pdf_url,
     });
     let sms_body = crate::services::templates::render_sms_template(
         state.db.pool(), event.organization_id, "checkin_card", &vars,
@@ -333,10 +340,21 @@ pub async fn send_checkin_credentials(
     let mut used_channel: Option<&str> = None;
     let mut recipient = String::new();
     let mut delivered = false;
+    let mut used_body = sms_body.clone();
 
     if !feature_phone && !phone.is_empty() && state.channels.is_whatsapp_ready() {
-        let receipt = state.channels.whatsapp_text(phone, &sms_body).await;
+        let whatsapp_body = crate::services::templates::render_channel_template(
+            state.db.pool(), event.organization_id, "whatsapp", "checkin_card", &vars,
+        )
+        .await
+        .unwrap_or_else(|| format!(
+            "{}\n\nCheck-in card PDF: {}",
+            sms_body,
+            vars.get("pdf_url").and_then(|v| v.as_str()).unwrap_or("")
+        ));
+        let receipt = state.channels.whatsapp_text(phone, &whatsapp_body).await;
         if receipt.as_ref().map(|r| r.success).unwrap_or(false) {
+            used_body = whatsapp_body;
             delivered = true;
             used_channel = Some("whatsapp");
             recipient = phone.to_string();
@@ -372,7 +390,7 @@ pub async fn send_checkin_credentials(
     if let Some(channel) = used_channel {
         state.channels.record_preview(
             event.id, guest_id, channel, &recipient, Some(&subject),
-            &sms_body, Some(&qr_url), Some(&token), None,
+            &used_body, Some(&qr_url), Some(&token), None,
         ).await;
     }
 
@@ -505,4 +523,87 @@ pub async fn send_checkin_bulk(
         "success": true,
         "data": { "sent": sent, "failed": failed, "errors": errors }
     })))
+}
+
+/// GET /events/{eid}/guests/{gid}/card/pdf — printable check-in card PDF.
+pub async fn guest_card_pdf(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, guest_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<axum::response::Response> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let event = crate::repository::event_repository::EventRepository::get_by_id(state.db.pool(), event_id)
+        .await?
+        .ok_or(AppError::EventNotFound)?;
+    if event.organization_id != org_id {
+        return Err(AppError::Forbidden);
+    }
+    let invitation = crate::handlers::invitations::ensure_invitation(state.db.pool(), guest_id).await?;
+    let png = match crate::cards::handlers::render_guest_card(
+        &state, org_id, event_id, guest_id, event.checkin_card_template_id,
+    ).await {
+        Ok(bytes) => bytes,
+        Err(_) => crate::qr::render::render_qr_png(&format!(
+            "{}/g/{}",
+            state.config.app.frontend_url.trim_end_matches('/'),
+            invitation.short_link
+        )).unwrap_or_default(),
+    };
+    let code = crate::models::invitation::generate_human_friendly_code(&invitation.id);
+    let pdf = crate::services::pdf::PdfService::new(state.clone())
+        .generate_checkin_card_pdf(event_id, guest_id, png, &code)
+        .await?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/pdf".to_string(),
+        )],
+        pdf,
+    ).into_response())
+}
+
+/// GET /public/invitations/{code}/card/pdf — public PDF for the guest's own
+/// check-in card. Needed because WhatsApp/email recipients are not logged in.
+pub async fn public_card_pdf(
+    State(state): State<Arc<AppState>>,
+    Path(code): Path<String>,
+) -> AppResult<axum::response::Response> {
+    let invitation = sqlx::query_as::<_, crate::models::invitation::Invitation>(
+        "SELECT * FROM invitations WHERE short_link = $1",
+    )
+    .bind(&code)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or(AppError::InvitationNotFound)?;
+    let event_id: Uuid = sqlx::query_scalar(
+        "SELECT event_id FROM guests WHERE id = $1",
+    )
+    .bind(invitation.guest_id)
+    .fetch_one(state.db.pool())
+    .await?;
+    let org_id: Uuid = sqlx::query_scalar("SELECT organization_id FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(state.db.pool())
+        .await?;
+    let png = match crate::cards::handlers::render_guest_card(
+        &state, org_id, event_id, invitation.guest_id, None,
+    ).await {
+        Ok(bytes) => bytes,
+        Err(_) => crate::qr::render::render_qr_png(&format!(
+            "{}/g/{}",
+            state.config.app.frontend_url.trim_end_matches('/'),
+            invitation.short_link
+        )).unwrap_or_default(),
+    };
+    let token = crate::models::invitation::generate_human_friendly_code(&invitation.id);
+    let pdf = crate::services::pdf::PdfService::new(state.clone())
+        .generate_checkin_card_pdf(event_id, invitation.guest_id, png, &token)
+        .await?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/pdf".to_string(),
+        )],
+        pdf,
+    ).into_response())
 }

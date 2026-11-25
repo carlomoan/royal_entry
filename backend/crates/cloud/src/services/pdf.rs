@@ -275,3 +275,92 @@ fn format_number(n: i64) -> String {
     }
     result
 }
+
+impl PdfService {
+    /// Build a printable check-in card PDF from the rendered card image plus
+    /// the guest's entry details. Used for WhatsApp/email attachments and the
+    /// preview page.
+    pub async fn generate_checkin_card_pdf(
+        &self,
+        event_id: Uuid,
+        guest_id: Uuid,
+        card_png: Vec<u8>,
+        entry_code: &str,
+    ) -> AppResult<Vec<u8>> {
+        let row = sqlx::query(
+            r#"SELECT e.title, e.event_date, e.venue_name, g.full_name, g.guest_category,
+                      g.table_number, g.seat_number, g.party_size, i.short_link
+               FROM events e JOIN guests g ON g.id = $2 AND g.event_id = e.id
+               LEFT JOIN invitations i ON i.guest_id = g.id
+               WHERE e.id = $1"#,
+        )
+        .bind(event_id)
+        .bind(guest_id)
+        .fetch_optional(&*self.state.db.pool())
+        .await?
+        .ok_or(AppError::GuestNotFound)?;
+
+        let title: String = row.try_get("title").unwrap_or_default();
+        let date: NaiveDate = row.try_get("event_date").unwrap_or_else(|_| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+        let venue: String = row.try_get("venue_name").unwrap_or_default();
+        let name: String = row.try_get("full_name").unwrap_or_default();
+        let category: String = row.try_get("guest_category").unwrap_or_default();
+        let table: String = row.try_get("table_number").unwrap_or_default();
+        let seat: String = row.try_get("seat_number").unwrap_or_default();
+        let party: i32 = row.try_get("party_size").unwrap_or(1);
+        let link: String = row.try_get("short_link").unwrap_or_default();
+
+        let (doc, page1, layer1) = PdfDocument::new(
+            &format!("Check-in card - {}", name),
+            Mm(210.0),
+            Mm(297.0),
+            "Card",
+        );
+        let font = doc.add_builtin_font(BuiltinFont::Helvetica)
+            .map_err(|e| AppError::GenericError(format!("PDF font error: {}", e)))?;
+        let bold = doc.add_builtin_font(BuiltinFont::HelveticaBold)
+            .map_err(|e| AppError::GenericError(format!("PDF font error: {}", e)))?;
+        let layer = doc.get_page(page1).get_layer(layer1);
+
+        layer.use_text("ROYALENTRY", 18.0, Mm(20.0), Mm(275.0), &bold);
+        layer.use_text("CHECK-IN CARD", 12.0, Mm(20.0), Mm(263.0), &bold);
+        let mut y = 248.0;
+        for line in [
+            format!("Event: {}", title),
+            format!("Date: {}", date.format("%d %B %Y")),
+            format!("Venue: {}", venue),
+            format!("Guest: {}", name),
+            format!("Class: {}", category),
+            format!("Table: {}{}", table, if seat.is_empty() { String::new() } else { format!(", seat {}", seat) }),
+            format!("Party size: {}", party),
+            format!("Entry code: {}", entry_code),
+        ] {
+            layer.use_text(&line, 11.0, Mm(20.0), Mm(y), &font);
+            y -= 7.0;
+        }
+
+        if let Ok(dynamic) = image024::load_from_memory(&card_png) {
+            let img = printpdf::Image::from_dynamic_image(&dynamic);
+            img.add_to_layer(
+                layer.clone(),
+                ImageTransform {
+                    translate_x: Some(Mm(20.0)),
+                    translate_y: Some(Mm(90.0)),
+                    scale_x: Some(0.45),
+                    scale_y: Some(0.45),
+                    ..Default::default()
+                },
+            );
+        }
+
+        layer.use_text(
+            &format!("Card link: /g/{}", link),
+            9.0,
+            Mm(20.0),
+            Mm(20.0),
+            &font,
+        );
+        doc.save_to_bytes()
+            .map_err(|e| AppError::GenericError(format!("PDF save error: {}", e)))
+    }
+}

@@ -5,7 +5,7 @@ import { useRouter } from "next/router";
 import {
   ArrowLeft, ArrowUpRight, Banknote, Radio, ScanLine, Users, Zap, QrCode, FileText, Mail,
   UserPlus, Upload, Download, FileUp, Plus, Trash2, CheckSquare, Square, MoreVertical,
-  MessageSquare, Smartphone, Copy, ExternalLink, AlertCircle, Send, Bell, CheckCircle, Pencil,
+  MessageSquare, MessageCircle, Smartphone, Copy, ExternalLink, AlertCircle, Send, Bell, CheckCircle, Pencil,
   Palette, LayoutDashboard, RefreshCw, Power, PowerOff, Info
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -230,6 +230,12 @@ export default function EventDetailPage() {
           </button>
         ))}
         <span className="mx-1 hidden h-6 w-px self-center bg-slate-200 sm:block" aria-hidden="true" />
+        <button
+          onClick={() => router.push(`/events/${id}/whatsapp-preview`)}
+          className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"
+        >
+          <MessageCircle className="h-4 w-4" /> WhatsApp preview
+        </button>
         <button
           onClick={() => router.push(`/events/${id}/gate-dashboard`)}
           className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-gold-700 transition hover:bg-gold-50"

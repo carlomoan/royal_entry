@@ -9,6 +9,7 @@ pub mod billing;
 pub mod booking_registration;
 pub mod broadcast;
 pub mod corporate;
+pub mod document_templates;
 pub mod event;
 pub mod event_assignment;
 pub mod guest;
