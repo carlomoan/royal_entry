@@ -64,24 +64,28 @@ pub async fn send_otp(
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     let event = assert_event_ownership(&state, event_id, org_id).await?;
 
-    let short_link = normalize_short_link(&payload.short_link);
-    if short_link.is_empty() {
+    let code = normalize_short_link(&payload.short_link);
+    if code.is_empty() {
         return Err(AppError::ValidationError("short_link is required".to_string()));
     }
+    let invitation = crate::handlers::invitations::find_invitation_by_code(
+        state.db.pool(), event_id, &code,
+    )
+    .await?
+    .ok_or(AppError::InvitationNotFound)?;
+    let short_link = invitation.short_link.clone();
 
     let row = sqlx::query(
         r#"
         SELECT g.id AS guest_id, g.full_name, g.phone, g.email, g.device_type
-        FROM invitations i
-        JOIN guests g ON g.id = i.guest_id
-        WHERE i.short_link = $1 AND g.event_id = $2
+        FROM guests g WHERE g.id = $1 AND g.event_id = $2
         "#,
     )
-    .bind(&short_link)
+    .bind(invitation.guest_id)
     .bind(event_id)
     .fetch_optional(state.db.pool())
     .await?
-    .ok_or(AppError::InvitationNotFound)?;
+    .ok_or(AppError::GuestNotFound)?;
 
     let guest_id: Uuid = row.try_get("guest_id").map_err(|_| AppError::GuestNotFound)?;
     let guest_name: String = row.try_get("full_name").unwrap_or_default();
@@ -289,7 +293,13 @@ pub async fn verify_otp(
     let scanner_user_id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::InvalidToken)?;
     let event = assert_event_ownership(&state, event_id, org_id).await?;
 
-    let short_link = normalize_short_link(&payload.short_link);
+    let code = normalize_short_link(&payload.short_link);
+    let invitation = crate::handlers::invitations::find_invitation_by_code(
+        state.db.pool(), event_id, &code,
+    )
+    .await?
+    .ok_or(AppError::InvitationNotFound)?;
+    let short_link = invitation.short_link.clone();
     let otp_hash = format!("{:?}", Sha256::digest(payload.code.trim().as_bytes()));
     let now = Utc::now();
 
@@ -488,6 +498,12 @@ async fn load_scan_guest(
     event_id: Uuid,
     short_link: &str,
 ) -> AppResult<Option<ScanGuest>> {
+    let invitation = crate::handlers::invitations::find_invitation_by_code(
+        state.db.pool(), event_id, short_link,
+    )
+    .await?;
+    let Some(invitation) = invitation else { return Ok(None) };
+
     let row = sqlx::query(
         r#"
         SELECT i.id AS invitation_id, g.id AS guest_id, g.full_name, g.phone,
@@ -501,10 +517,10 @@ async fn load_scan_guest(
         JOIN guests g ON g.id = i.guest_id
         LEFT JOIN bookings b ON b.id = g.booking_id
         LEFT JOIN event_packages p ON p.id = g.package_id
-        WHERE i.short_link = $1 AND g.event_id = $2
+        WHERE i.id = $1 AND g.event_id = $2
         "#,
     )
-    .bind(short_link)
+    .bind(invitation.id)
     .bind(event_id)
     .fetch_optional(state.db.pool())
     .await?;

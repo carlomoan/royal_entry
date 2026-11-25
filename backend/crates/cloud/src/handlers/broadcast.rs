@@ -9,6 +9,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use serde_json::json;
 use uuid::Uuid;
 use crate::{
@@ -185,6 +186,9 @@ pub async fn send_broadcast(
 ) -> AppResult<(StatusCode, Json<serde_json::Value>)> {
     let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
     assert_event_ownership(&state, event_id, org_id).await?;
+    let event = EventRepository::get_by_id(state.db.pool(), event_id)
+        .await?
+        .ok_or(AppError::EventNotFound)?;
 
     let message = payload.message.trim().to_string();
     if message.is_empty() {
@@ -238,7 +242,9 @@ pub async fn send_broadcast(
         } else {
             &recipient.phone
         };
-        let attempts = messaging.send(&channel, destination, &message).await?;
+        let vars = broadcast_vars(&state, &event, recipient.guest_id).await?;
+        let personalized = render_placeholders(&message, &vars);
+        let attempts = messaging.send(&channel, destination, &personalized).await?;
         let recipient_success = attempts.iter().any(|attempt| attempt.success);
         if recipient_success { sent += 1; } else { failed += 1; }
 
@@ -331,4 +337,75 @@ pub async fn list_message_history(
     .fetch_all(state.db.pool())
     .await?;
     Ok(Json(json!({ "success": true, "data": items })))
+}
+
+/// Replace `[variable]` and `{{variable}}` placeholders with per-recipient
+/// values. Unknown placeholders are left untouched so the operator can see
+/// what was not filled.
+fn render_placeholders(template: &str, vars: &std::collections::HashMap<String, String>) -> String {
+    let bracket = regex::Regex::new(r"\[([a-zA-Z0-9_]+)\]").unwrap();
+    let braces = regex::Regex::new(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}").unwrap();
+    let replace = |caps: &regex::Captures| -> String {
+        let key = caps.get(1).map(|m| m.as_str().to_ascii_lowercase()).unwrap_or_default();
+        vars.get(&key).cloned().unwrap_or_else(|| caps.get(0).unwrap().as_str().to_string())
+    };
+    let out = bracket.replace_all(template, replace).to_string();
+    braces.replace_all(&out, replace).to_string()
+}
+
+/// Build the variable map for one guest. The check-in token is the human-
+/// friendly code derived from the invitation id — the same one sent in the
+/// check-in card and accepted by the gate scanner.
+async fn broadcast_vars(
+    state: &Arc<AppState>,
+    event: &Event,
+    guest_id: Uuid,
+) -> AppResult<std::collections::HashMap<String, String>> {
+    let mut vars = std::collections::HashMap::new();
+    let row = sqlx::query(
+        r#"SELECT g.full_name, g.phone, g.table_number, g.guest_category,
+                  i.short_link, i.id AS invitation_id
+           FROM guests g LEFT JOIN invitations i ON i.guest_id = g.id WHERE g.id = $1"#,
+    )
+    .bind(guest_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    if let Some(row) = row {
+        let name: String = row.try_get("full_name").unwrap_or_default();
+        let phone: String = row.try_get("phone").unwrap_or_default();
+        let table: String = row.try_get("table_number").unwrap_or_default();
+        let category: String = row.try_get("guest_category").unwrap_or_default();
+        let short_link: Option<String> = row.try_get("short_link").ok();
+        let invitation_id: Option<Uuid> = row.try_get("invitation_id").ok();
+        vars.insert("fullname".into(), name.clone());
+        vars.insert("full_name".into(), name.clone());
+        vars.insert("name".into(), name);
+        vars.insert("phone".into(), phone);
+        vars.insert("table".into(), table);
+        vars.insert("category".into(), category);
+        if let Some(link) = short_link {
+            let token = invitation_id
+                .map(|id| crate::models::invitation::generate_human_friendly_code(&id))
+                .unwrap_or_default();
+            vars.insert("checkintoken".into(), token.clone());
+            vars.insert("entry_code".into(), token.clone());
+            vars.insert("token".into(), token);
+            vars.insert(
+                "checkinlink".into(),
+                format!("{}/g/{}", state.config.app.frontend_url.trim_end_matches('/'), link),
+            );
+            vars.insert(
+                "qrurl".into(),
+                format!("{}/api/v1/public/invitations/{}/qr", state.config.app.frontend_url.trim_end_matches('/'), link),
+            );
+        }
+    }
+    vars.insert("event".into(), event.title.clone());
+    vars.insert("eventtitle".into(), event.title.clone());
+    vars.insert("date".into(), event.event_date.to_string());
+    vars.insert(
+        "venue".into(),
+        event.venue_name.clone().unwrap_or_default(),
+    );
+    Ok(vars)
 }

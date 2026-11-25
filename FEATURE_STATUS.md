@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Broadcast placeholders & gate tokens (2026-11-24)
+- ✅ Broadcast composer has variable chips (`[fullname]`, `[checkintoken]`, `[checkinlink]`, `[qrurl]`, `[phone]`, `[table]`, `[category]`, `[event]`, `[date]`, `[venue]`) with a live sample preview. Backend substitutes them per recipient for every channel; unknown placeholders are left visible.
+- ✅ Gate accepts the human-friendly entry code (e.g. `QADA-HIME-4093`) typed with spaces/lowercase as well as the long `inv-…` link. Duplicate scans report the original time and gate.
+
 ### Guest pledges & check-in delivery (2026-11-24)
 - ✅ Add Pledge modal now accepts multiple selected guests with one amount/due date/notes via `POST /events/{eid}/michango/bulk` (existing pledges skipped).
 - ✅ Explicit check-in delivery: `POST /events/{eid}/guests/{id}/send-checkin` and bulk `POST /events/{eid}/guests/send-checkin`. Issues the card when eligible and sends the QR/token via WhatsApp → Email → SMS (feature phones SMS only). Invitations remain QR-free with no entry rights.

@@ -1,6 +1,6 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import {
   ArrowLeft, ArrowUpRight, Banknote, Radio, ScanLine, Users, Zap, QrCode, FileText, Mail,
@@ -418,8 +418,47 @@ const MESSAGE_CHANNEL_BADGE: Record<string, string> = {
   telegram: "bg-violet-100 text-violet-700",
 };
 
+const BROADCAST_VARIABLES: { label: string; token: string }[] = [
+  { label: "Full name", token: "[fullname]" },
+  { label: "Check-in token", token: "[checkintoken]" },
+  { label: "Check-in link", token: "[checkinlink]" },
+  { label: "QR image", token: "[qrurl]" },
+  { label: "Phone", token: "[phone]" },
+  { label: "Table", token: "[table]" },
+  { label: "Class", token: "[category]" },
+  { label: "Event", token: "[event]" },
+  { label: "Date", token: "[date]" },
+  { label: "Venue", token: "[venue]" },
+];
+
+const BROADCAST_PREVIEW_VALUES: Record<string, string> = {
+  fullname: "Amina Hassan",
+  full_name: "Amina Hassan",
+  name: "Amina Hassan",
+  phone: "255712345678",
+  table: "3",
+  category: "VIP",
+  checkintoken: "LAFE-QORI-2180",
+  entry_code: "LAFE-QORI-2180",
+  token: "LAFE-QORI-2180",
+  checkinlink: "sample-link",
+  qrurl: "sample-link",
+  event: "Sample Event",
+  eventtitle: "Sample Event",
+  date: "2026-12-15",
+  venue: "Main Hall",
+};
+
+function previewBroadcastMessage(text: string) {
+  return text.replace(/\[([a-z_]+)\]|\{\{([a-z_]+)\}\}/gi, (match, bracketKey, braceKey) => {
+    const key = (bracketKey ?? braceKey).toLowerCase();
+    return BROADCAST_PREVIEW_VALUES[key] ?? match;
+  });
+}
+
 function BroadcastTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
+  const messageRef = useRef<HTMLTextAreaElement>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [recipientType, setRecipientType] = useState("all");
@@ -529,6 +568,21 @@ function BroadcastTab({ eventId }: { eventId: string }) {
     setChannels((prev) =>
       prev.includes(channel) ? prev.filter((c) => c !== channel) : [...prev, channel]
     );
+  };
+
+  const insertVariable = (token: string) => {
+    const textarea = messageRef.current;
+    const focused = textarea && document.activeElement === textarea;
+    const start = focused ? textarea.selectionStart : message.length;
+    const end = focused ? textarea.selectionEnd : message.length;
+    setMessage(message.slice(0, start) + token + message.slice(end));
+    requestAnimationFrame(() => {
+      const el = messageRef.current;
+      if (!el) return;
+      el.focus();
+      const cursor = start + token.length;
+      el.setSelectionRange(cursor, cursor);
+    });
   };
 
   return (
@@ -675,7 +729,19 @@ function BroadcastTab({ eventId }: { eventId: string }) {
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Message</label>
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} placeholder="Type your message here..." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
+            <textarea ref={messageRef} value={message} onChange={(e) => setMessage(e.target.value)} rows={4} placeholder="Type your message here..." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20" />
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {BROADCAST_VARIABLES.map(({ label, token }) => (
+                <button key={token} type="button" title={token} onClick={() => insertVariable(token)} className="rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700">
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">Placeholders are replaced per guest before sending. The check-in token is a short code the gate can type quickly.</p>
+            <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <span className="font-semibold text-slate-700">Preview: </span>
+              <span className="whitespace-pre-wrap break-words">{previewBroadcastMessage(message) || "Your message preview will appear here..."}</span>
+            </div>
           </div>
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">Recipients</label>

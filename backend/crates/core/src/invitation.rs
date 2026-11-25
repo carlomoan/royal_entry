@@ -20,6 +20,14 @@ pub fn build_invitation_url(frontend_url: &str, token: &str) -> String {
     format!("{}/i/{}", frontend_url.trim_end_matches('/'), token,)
 }
 
+/// Normalise a code typed at the gate: uppercase, spaces/underscores → dashes.
+pub fn normalize_human_code(input: &str) -> String {
+    input
+        .trim()
+        .to_ascii_uppercase()
+        .replace([' ', '_'], "-")
+}
+
 /// Generate a human-friendly check-in code that's easy to type and remember
 /// Format: WORD1-WORD2-NUMBER (e.g., "ROYAL-GUEST-1234")
 pub fn generate_human_friendly_code(uuid: &Uuid) -> String {

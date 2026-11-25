@@ -456,3 +456,35 @@ pub async fn send_invitations(
         "data": { "sent": sent, "failed": failed, "errors": errors }
     })))
 }
+
+/// Resolve either a short link or a human-friendly entry code to an invitation
+/// within one event. The gate accepts codes like `LAFE-QORI-2180` typed by an
+/// usher as well as the long `inv-…` link from the QR.
+pub async fn find_invitation_by_code(
+    pool: &sqlx::PgPool,
+    event_id: Uuid,
+    code: &str,
+) -> AppResult<Option<Invitation>> {
+    let normalized = crate::models::invitation::normalize_human_code(code);
+    if let Some(inv) = sqlx::query_as::<_, Invitation>(
+        "SELECT i.* FROM invitations i JOIN guests g ON g.id = i.guest_id \
+         WHERE i.short_link = $1 AND g.event_id = $2",
+    )
+    .bind(&normalized)
+    .bind(event_id)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(Some(inv));
+    }
+
+    let rows = sqlx::query_as::<_, Invitation>(
+        "SELECT i.* FROM invitations i JOIN guests g ON g.id = i.guest_id WHERE g.event_id = $1",
+    )
+    .bind(event_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().find(|inv| {
+        crate::models::invitation::generate_human_friendly_code(&inv.id) == normalized
+    }))
+}
