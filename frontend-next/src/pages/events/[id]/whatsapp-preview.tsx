@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { ArrowLeft, ExternalLink, FileText, MessageCircle, Users } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, MessageCircle, RotateCcw, Users } from "lucide-react";
+import { Rnd } from "react-rnd";
 import api from "@/lib/api";
 import { Badge, Button, Card, Select, Textarea } from "@/components/ui";
 
@@ -81,6 +82,88 @@ function display(value: string | number | null | undefined, fallback = "—"): s
   return value == null || value === "" ? fallback : String(value);
 }
 
+type CardItemKey = "guestName" | "class" | "table" | "entryCode" | "qrLabel";
+
+type CardItemLayout = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: string;
+  fontSize: number;
+};
+
+type CardLayout = Record<CardItemKey, CardItemLayout>;
+
+const CARD_WIDTH = 420;
+const CARD_HEIGHT = 260;
+const CARD_LAYOUT_KEY = "royalentry_whatsapp_card_layout_";
+
+const CARD_ITEM_LABELS: { key: CardItemKey; label: string }[] = [
+  { key: "guestName", label: "Guest name" },
+  { key: "class", label: "Class" },
+  { key: "table", label: "Table" },
+  { key: "entryCode", label: "Entry code" },
+  { key: "qrLabel", label: "QR label" },
+];
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function defaultCardLayout(): CardLayout {
+  return {
+    guestName: { x: 20, y: 18, w: 230, h: 64, color: "#ffffff", fontSize: 24 },
+    class: { x: 20, y: 90, w: 180, h: 64, color: "#f3d489", fontSize: 16 },
+    table: { x: 210, y: 90, w: 190, h: 64, color: "#f3d489", fontSize: 16 },
+    entryCode: { x: 20, y: 162, w: 230, h: 64, color: "#ffffff", fontSize: 20 },
+    qrLabel: { x: 260, y: 162, w: 140, h: 64, color: "#c9a84c", fontSize: 14 },
+  };
+}
+
+function sanitizeCardLayout(value: unknown): CardLayout {
+  const defaults = defaultCardLayout();
+  if (!value || typeof value !== "object") return defaults;
+  const stored = value as Partial<Record<CardItemKey, Partial<CardItemLayout>>>;
+  const result = { ...defaults };
+  for (const { key } of CARD_ITEM_LABELS) {
+    const item = stored[key];
+    if (!item || typeof item !== "object") continue;
+    const base = defaults[key];
+    const w = clamp(Number(item.w) || base.w, 90, CARD_WIDTH);
+    const h = clamp(Number(item.h) || base.h, 52, CARD_HEIGHT);
+    result[key] = {
+      x: clamp(Number(item.x) || 0, 0, CARD_WIDTH - w),
+      y: clamp(Number(item.y) || 0, 0, CARD_HEIGHT - h),
+      w,
+      h,
+      color:
+        typeof item.color === "string" && /^#[0-9a-fA-F]{6}$/.test(item.color)
+          ? item.color
+          : base.color,
+      fontSize: clamp(Number(item.fontSize) || base.fontSize, 12, 48),
+    };
+  }
+  return result;
+}
+
+/** Visible corner resize handles for the designer boxes. */
+function cardCornerHandles() {
+  const handle = {
+    width: 12,
+    height: 12,
+    background: "#c9a84c",
+    borderRadius: 3,
+    border: "2px solid #fff",
+  };
+  return {
+    topLeft: { ...handle, top: -6, left: -6 },
+    topRight: { ...handle, top: -6, right: -6 },
+    bottomLeft: { ...handle, bottom: -6, left: -6 },
+    bottomRight: { ...handle, bottom: -6, right: -6 },
+  };
+}
+
 export default function WhatsAppPreviewPage() {
   const router = useRouter();
   const id = router.query.id as string;
@@ -90,11 +173,39 @@ export default function WhatsAppPreviewPage() {
   const [selectedGuestId, setSelectedGuestId] = useState("");
   const [sendResult, setSendResult] = useState<SendResult | null>(null);
   const [origin, setOrigin] = useState("");
+  const [cardLayout, setCardLayout] = useState<CardLayout>(defaultCardLayout);
+  const [cardLayoutLoaded, setCardLayoutLoaded] = useState(false);
   const editedRef = useRef(false);
+  const cardLayoutKey = id ? `${CARD_LAYOUT_KEY}${id}` : "";
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
+
+  useEffect(() => {
+    setCardLayoutLoaded(false);
+    if (!cardLayoutKey) return;
+    try {
+      const stored = window.localStorage.getItem(cardLayoutKey);
+      setCardLayout(stored ? sanitizeCardLayout(JSON.parse(stored)) : defaultCardLayout());
+    } catch {
+      setCardLayout(defaultCardLayout());
+    }
+    setCardLayoutLoaded(true);
+  }, [cardLayoutKey]);
+
+  useEffect(() => {
+    if (!cardLayoutLoaded || !cardLayoutKey) return;
+    try {
+      window.localStorage.setItem(cardLayoutKey, JSON.stringify(cardLayout));
+    } catch {
+      // Storage can be unavailable in private browsing or the desktop sandbox.
+    }
+  }, [cardLayout, cardLayoutKey, cardLayoutLoaded]);
+
+  const updateCardItem = (key: CardItemKey, patch: Partial<CardItemLayout>) => {
+    setCardLayout((current) => ({ ...current, [key]: { ...current[key], ...patch } }));
+  };
 
   const { data: event, isLoading: eventLoading } = useQuery<EventInfo>({
     queryKey: ["whatsapp-preview", "event", id],
@@ -164,6 +275,14 @@ export default function WhatsAppPreviewPage() {
     /\{\{\s*(\w+)\s*\}\}/g,
     (match, key: string) => variables[key] ?? match
   );
+
+  const cardSamples: Record<CardItemKey, string> = {
+    guestName: selectedGuest?.full_name || "Guest name",
+    class: display(selectedGuest?.guest_category, "Class"),
+    table: display(selectedGuest?.table_number, "Table"),
+    entryCode: "LAFE-QORI-2180",
+    qrLabel: "Scan at gate",
+  };
 
   const insertVariable = (token: string) => {
     const editor =
@@ -417,6 +536,156 @@ export default function WhatsAppPreviewPage() {
             )}
           </Card>
         </div>
+      )}
+
+      {!loading && (
+        <Card
+          title="Card layout"
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCardLayout(defaultCardLayout())}
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Reset layout
+            </Button>
+          }
+        >
+          <div className="space-y-5">
+            <p className="break-words text-xs text-slate-500">
+              Drag an item to move it, resize with its corner handles, then choose a colour and font
+              size. The layout is saved for this event on this device.
+            </p>
+
+            <div className="overflow-x-auto pb-2">
+              <div
+                className="relative shrink-0 overflow-hidden rounded-xl border-2 border-gold-400/70 shadow-inner"
+                style={{
+                  width: CARD_WIDTH,
+                  height: CARD_HEIGHT,
+                  background: "linear-gradient(135deg, #0b1b3f 0%, #132a5c 55%, #0b1b3f 100%)",
+                }}
+              >
+                {CARD_ITEM_LABELS.map(({ key, label }) => {
+                  const item = cardLayout[key];
+                  return (
+                    <Rnd
+                      key={key}
+                      size={{ width: item.w, height: item.h }}
+                      position={{ x: item.x, y: item.y }}
+                      bounds="parent"
+                      dragHandleClassName="card-item-drag"
+                      enableResizing={{
+                        topLeft: true,
+                        topRight: true,
+                        bottomLeft: true,
+                        bottomRight: true,
+                        top: false,
+                        right: false,
+                        bottom: false,
+                        left: false,
+                      }}
+                      resizeHandleStyles={cardCornerHandles()}
+                      minWidth={90}
+                      minHeight={52}
+                      onDragStop={(_, data) => updateCardItem(key, { x: data.x, y: data.y })}
+                      onResizeStop={(_, __, ref, ___, position) =>
+                        updateCardItem(key, {
+                          x: position.x,
+                          y: position.y,
+                          w: ref.offsetWidth,
+                          h: ref.offsetHeight,
+                        })
+                      }
+                      className="rounded-md border border-dashed border-gold-300/60 bg-navy-950/50 shadow"
+                    >
+                      <div className="card-item-drag flex cursor-move items-center justify-between gap-1 border-b border-white/10 px-1.5 py-0.5">
+                        <span className="truncate text-[9px] font-semibold uppercase tracking-wide text-slate-300">
+                          {label}
+                        </span>
+                        <span className="text-[10px] leading-none text-gold-300">⠿</span>
+                      </div>
+                      <div className="flex items-center gap-1 px-1.5 py-0.5">
+                        <input
+                          type="color"
+                          aria-label={`${label} colour`}
+                          value={item.color}
+                          onChange={(event) => updateCardItem(key, { color: event.target.value })}
+                          className="h-5 w-6 cursor-pointer rounded border border-white/20 bg-transparent p-0"
+                        />
+                        <input
+                          type="number"
+                          aria-label={`${label} font size`}
+                          min={12}
+                          max={48}
+                          value={item.fontSize}
+                          onChange={(event) => {
+                            const fontSize = Number(event.target.value);
+                            if (Number.isFinite(fontSize)) {
+                              updateCardItem(key, { fontSize: clamp(fontSize, 12, 48) });
+                            }
+                          }}
+                          className="h-5 w-11 rounded border border-white/20 bg-white/10 px-1 text-[10px] text-white"
+                        />
+                        <span className="text-[9px] text-slate-400">px</span>
+                      </div>
+                      <div
+                        className="truncate px-1.5"
+                        style={{ color: item.color, fontSize: item.fontSize, lineHeight: 1.2 }}
+                        title={cardSamples[key]}
+                      >
+                        {cardSamples[key]}
+                      </div>
+                    </Rnd>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                How it will look
+              </p>
+              <div
+                className="overflow-hidden rounded-lg border border-slate-200"
+                style={{ width: CARD_WIDTH * 0.65, height: CARD_HEIGHT * 0.65 }}
+              >
+                <div
+                  className="relative"
+                  style={{
+                    width: CARD_WIDTH,
+                    height: CARD_HEIGHT,
+                    transform: "scale(0.65)",
+                    transformOrigin: "top left",
+                    background: "linear-gradient(135deg, #0b1b3f 0%, #132a5c 55%, #0b1b3f 100%)",
+                  }}
+                >
+                  {CARD_ITEM_LABELS.map(({ key }) => {
+                    const item = cardLayout[key];
+                    return (
+                      <div
+                        key={key}
+                        className="absolute overflow-hidden whitespace-nowrap"
+                        style={{
+                          left: item.x,
+                          top: item.y,
+                          width: item.w,
+                          height: item.h,
+                          color: item.color,
+                          fontSize: item.fontSize,
+                          lineHeight: 1.2,
+                        }}
+                        title={cardSamples[key]}
+                      >
+                        {cardSamples[key]}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
       )}
     </div>
   );

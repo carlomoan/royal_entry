@@ -841,6 +841,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const [defaultPledgeAmount, setDefaultPledgeAmount] = useState(50000);
   const [cardGuest, setCardGuest] = useState<any | null>(null);
   const [cardQrUrl, setCardQrUrl] = useState<string | null>(null);
+  const [issuedCard, setIssuedCard] = useState<any | null>(null);
   const { sendCheckinMutation } = useSendCheckinMutations(eventId);
 
   const CATEGORY_PLEDGE_DEFAULTS: Record<string, number> = {
@@ -924,9 +925,10 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const cardActionMutation = useMutation({
     mutationFn: ({ guestId, action }: { guestId: string; action: "issue" | "approve" | "withdraw" }) =>
       api.post(`/events/${eventId}/guests/${guestId}/${action === "issue" ? "issue-card" : action === "approve" ? "approve-card" : "withdraw-approval"}`, action === "approve" ? { note: null } : {}),
-    onSuccess: (_r, vars) => {
+    onSuccess: (r: any, vars) => {
       qc.invalidateQueries({ queryKey: ["guests-for-pledge", eventId] });
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
+      if (vars.action === "issue" && r?.data?.data) setIssuedCard(r.data.data);
       toast.success(vars.action === "withdraw" ? "Approval withdrawn" : vars.action === "approve" ? "Card approved and issued" : "Check-in card issued");
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Card action failed"),
@@ -1162,7 +1164,7 @@ function MichangoTab({ eventId }: { eventId: string }) {
                       >
                         <Send className="h-4 w-4 mr-1.5" /> Send card
                       </Button>
-                      <Button size="sm" variant="outline" className="border-gold-300 text-gold-700 hover:bg-gold-50" onClick={() => router.push(`/events/${eventId}/guest/${p.guest_id}`)}>
+                      <Button size="sm" variant="outline" className="border-gold-300 text-gold-700 hover:bg-gold-50" onClick={() => router.push(`/events/${eventId}/guest/${p.guest_id}?kind=checkin`)}>
                         <QrCode className="h-4 w-4 mr-1.5" /> View Card
                       </Button>
                       <Badge label={paymentStatus === "paid" ? "Paid in full" : paymentStatus} variant={paymentStatus === "paid" ? "green" : paymentStatus === "overdue" ? "rose" : paymentStatus === "partial" ? "amber" : "slate"} />
@@ -1285,6 +1287,57 @@ function MichangoTab({ eventId }: { eventId: string }) {
             <Button type="submit" isLoading={paymentMutation.isPending}>Record Payment</Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!issuedCard} onClose={() => setIssuedCard(null)} title="Check-in card issued" size="md">
+        {issuedCard && (
+          <div className="space-y-4">
+            {pledges.find((p: any) => p.guest_id === issuedCard.guest_id)?.guest_name && (
+              <p className="text-sm font-semibold text-slate-900 break-words">
+                {pledges.find((p: any) => p.guest_id === issuedCard.guest_id).guest_name}
+              </p>
+            )}
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-slate-200 bg-white p-4">
+              {issuedCard.qr_url ? (
+                <img src={issuedCard.qr_url} alt="Check-in QR" className="h-48 w-48" />
+              ) : (
+                <p className="text-xs text-slate-500">QR preview unavailable</p>
+              )}
+              <p className="text-xs font-medium text-slate-500">Entry code</p>
+              <p className="w-full rounded-lg bg-slate-50 px-4 py-3 text-center font-mono text-2xl font-bold tracking-widest text-slate-900 break-all">
+                {issuedCard.entry_code || "—"}
+              </p>
+              {issuedCard.check_in_link && (
+                <a
+                  href={issuedCard.check_in_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full text-center text-xs font-medium text-gold-700 hover:underline break-all"
+                >
+                  {issuedCard.check_in_link}
+                </a>
+              )}
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => sendCheckinMutation.mutate(issuedCard.guest_id, {
+                  onSuccess: () => {
+                    qc.invalidateQueries({ queryKey: ["michango", eventId] });
+                    qc.invalidateQueries({ queryKey: ["invitations", eventId] });
+                  },
+                })}
+                isLoading={sendCheckinMutation.isPending}
+              >
+                <Send className="h-4 w-4 mr-1.5" /> Send card
+              </Button>
+              <Button variant="outline" onClick={() => router.push(`/events/${eventId}/guest/${issuedCard.guest_id}?kind=checkin`)}>
+                <QrCode className="h-4 w-4 mr-1.5" /> View full card
+              </Button>
+              <Button variant="ghost" onClick={() => setIssuedCard(null)}>Close</Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal isOpen={!!cardGuest} onClose={() => { setCardGuest(null); if (cardQrUrl) URL.revokeObjectURL(cardQrUrl); setCardQrUrl(null); }} title={`Guest Card — ${cardGuest?.guest_name ?? ""}`} size="md">

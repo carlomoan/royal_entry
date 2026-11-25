@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import {
   Download, Share2, ArrowLeft, Loader2, AlertCircle,
   Calendar, MapPin, Clock, User, CreditCard, CheckCircle2,
-  QrCode, Smartphone, Mail, Save, RotateCcw, Move, Send
+  QrCode, Smartphone, Mail, Save, RotateCcw, Move, Send, Printer
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -71,6 +71,13 @@ export default function GuestCardPage() {
 
   // Which card to show: the invitation or the check-in card/ticket.
   const [cardKind, setCardKind] = useState<"invitation" | "checkin">("invitation");
+  const [qrFailedFor, setQrFailedFor] = useState<string | null>(null);
+
+  // Deep links from the Michango tab open straight on the check-in card.
+  // Only react to "checkin" so the in-page toggle keeps working afterwards.
+  useEffect(() => {
+    if (router.query.kind === "checkin") setCardKind("checkin");
+  }, [router.query.kind]);
 
   // Resolve the card template for the selected kind. The backend renders with
   // the event's own template id, so the preview must match that exactly.
@@ -134,6 +141,25 @@ export default function GuestCardPage() {
 
   const invitation = invitations.find((i: any) => i.guest_id === guestId);
   const pledge = pledges.find((p: any) => p.guest_id === guestId);
+
+  // No-template fallback: the QR is served by the public (unauthenticated) endpoint.
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const publicQrUrl = invitation?.short_link
+    ? `${origin}/api/v1/public/invitations/${encodeURIComponent(invitation.short_link)}/qr`
+    : "";
+  const entryCode = (() => {
+    const payload = invitation?.scan_payload;
+    if (typeof payload === "string" && payload.trim()) {
+      try {
+        const last = new URL(payload, origin).pathname.split("/").filter(Boolean).pop();
+        if (last) return decodeURIComponent(last);
+      } catch {
+        return payload;
+      }
+    }
+    return invitation?.short_link;
+  })();
+  const qrFailed = !!invitation?.short_link && qrFailedFor === invitation.short_link;
 
   // Arrival message on the guest's own card page (auto-recognised by their token).
   const { data: arrivalData } = useQuery({
@@ -389,11 +415,84 @@ export default function GuestCardPage() {
                   )}
                 </>
               ) : (
-                <div className="aspect-[3/4] bg-slate-100 rounded-lg flex items-center justify-center">
-                  <div className="text-center px-6">
-                    <QrCode className="h-16 w-16 text-slate-300 mx-auto mb-3" />
-                    <p className="text-sm text-slate-500">No card template assigned to this event</p>
-                    <p className="text-xs text-slate-400 mt-1">Open the event and choose an invitation card design</p>
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="flex items-start justify-between gap-4 bg-gradient-to-r from-navy-950 to-navy-900 px-6 py-5 text-white">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold-300">{event.title}</p>
+                      <h3 className="mt-1 text-xl font-bold">
+                        {cardKind === "checkin" ? "Check-in Card / Ticket" : "Invitation Card"}
+                      </h3>
+                    </div>
+                    <QrCode className="h-8 w-8 flex-shrink-0 text-gold-300" />
+                  </div>
+
+                  <div className="p-6">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Guest</p>
+                        <p className="text-lg font-semibold text-slate-900">{guest.full_name}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Class</p>
+                        <p className="text-sm font-semibold text-slate-800">{guest.guest_category || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Table</p>
+                        <p className="text-sm font-semibold text-slate-800">
+                          {guest.table_number ? `Table ${guest.table_number}` : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Phone</p>
+                        <p className="text-sm font-semibold text-slate-800">{guest.phone || "—"}</p>
+                      </div>
+                    </div>
+
+                    {cardKind === "checkin" ? (
+                      <div className="mt-6 flex flex-col items-center gap-3 border-t border-slate-100 pt-6">
+                        {publicQrUrl && !qrFailed && (
+                          <img
+                            src={publicQrUrl}
+                            alt={`Check-in QR for ${guest.full_name}`}
+                            className="h-48 w-48 rounded-lg border border-slate-200 bg-white p-2"
+                            onError={() => setQrFailedFor(invitation.short_link)}
+                          />
+                        )}
+                        {(!publicQrUrl || qrFailed) && (
+                          <p className="text-sm font-medium text-slate-500">QR unavailable</p>
+                        )}
+                        {entryCode && (
+                          <div className="text-center">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Entry code</p>
+                            <p className="font-mono text-lg font-bold tracking-wider text-navy-950">{entryCode}</p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                        This invitation has no entry rights. The check-in card is sent after your pledge is confirmed.
+                      </p>
+                    )}
+
+                    <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                      <Button variant="outline" size="sm" onClick={() => window.print()}>
+                        <Printer className="h-4 w-4 mr-1" /> Print
+                      </Button>
+                      {invitation?.short_link && (
+                        <a
+                          href={`/g/${invitation.short_link}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sm font-semibold text-gold-700 hover:underline"
+                        >
+                          Open public card →
+                        </a>
+                      )}
+                    </div>
+
+                    <p className="mt-4 text-xs text-slate-400">
+                      No card template assigned to this event — open the event and choose an invitation card design.
+                    </p>
                   </div>
                 </div>
               )}

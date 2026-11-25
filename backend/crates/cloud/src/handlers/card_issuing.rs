@@ -10,6 +10,7 @@ use axum::{
     response::IntoResponse,
     Extension, Json,
 };
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use sqlx::Row;
@@ -95,8 +96,30 @@ pub async fn issue_card(
     .execute(state.db.pool())
     .await?;
 
+    let invitation = crate::handlers::invitations::ensure_invitation(state.db.pool(), guest_id).await?;
+    let link = format!(
+        "{}/g/{}",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        invitation.short_link
+    );
+    let token = crate::models::invitation::generate_human_friendly_code(&invitation.id);
+    let qr_url = format!(
+        "{}/api/v1/public/invitations/{}/qr",
+        state.config.app.frontend_url.trim_end_matches('/'),
+        invitation.short_link
+    );
     tracing::info!(event_id = %event_id, guest_id = %guest_id, user_id = %user_id, "Check-in card issued");
-    Ok(Json(json!({ "success": true, "message": "Check-in card issued" })))
+    Ok(Json(json!({
+        "success": true,
+        "message": "Check-in card issued",
+        "data": {
+            "guest_id": guest_id,
+            "check_in_link": link,
+            "entry_code": token,
+            "qr_url": qr_url,
+            "short_link": invitation.short_link,
+        }
+    })))
 }
 
 /// POST /api/v1/events/{eid}/guests/{gid}/approve-card
@@ -367,9 +390,15 @@ pub async fn send_checkin_credentials(
         if let Some(to) = email {
             if state.channels.is_email_ready() {
                 let html = crate::services::channels::html_wrap(&body.replace('\n', "<br>"));
-                if state.channels.email(to, &subject, &html).await
+                let qr_png = crate::qr::render::render_qr_png(&link).unwrap_or_default();
+                if state.channels.email_card(to, &subject, &html, Some(&qr_png)).await
                     .map(|r| r.success).unwrap_or(false)
                 {
+                    let b64 = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &qr_png,
+                    );
+                    used_body = format!("{html}<p><img src=\"data:image/png;base64,{b64}\" alt=\"Check-in QR\" style=\"width:180px;height:180px\" /></p>");
                     delivered = true;
                     used_channel = Some("email");
                     recipient = to.to_string();

@@ -247,6 +247,11 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Card actions & designer (2026-11-25)
+- ✅ `issue-card` now returns the real check-in link, human entry code and public QR URL; the Michango tab shows them in a modal with Send/View actions. `View Card` deep-links to the check-in tab. Guest card page has a QR fallback when no template is assigned.
+- ✅ Check-in emails embed the QR image inline (`email_card`) and the preview records the same HTML. WhatsApp preview page has a draggable/resizable/colour-changeable card layout designer persisted in localStorage.
+- ✅ Added a diagnostic React error boundary in `_app.tsx` so render failures show the actual error message instead of the generic "Something Went Wrong" page.
+
 ### Billing, roles & DB hardening (2026-11-25)
 - ✅ Billing link added to the platform sidebar; platform admins see a banner pointing to platform-wide payments since subscriptions are tenant-scoped. Account roles keep their existing Billing/Payments links.
 - ✅ Invoice paths verified end-to-end (create, mark paid, PDF, booking invoice) with no DB errors. Hardened `pass_security_level` validation, sandbox channel values, `tax_rate_percent` casts and payment-method normalisation. A 27-endpoint smoke test returned zero 5xx and zero database-error log lines.
