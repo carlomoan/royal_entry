@@ -18,15 +18,21 @@ export default function App({ Component, pageProps }: AppProps) {
   const [queryClient] = useState(() => new QueryClient());
   const router = useRouter();
 
-  // Login page is standalone (no sidebar/topbar/footer)
+  // Login and guest-facing public pages are standalone (no sidebar/auth shell).
   const isLogin = router.pathname === "/login";
+  const isPublicGuestPage =
+    router.pathname.startsWith("/invoice/") ||
+    router.pathname.startsWith("/i/") ||
+    router.pathname.startsWith("/g/") ||
+    router.pathname.startsWith("/w/") ||
+    router.pathname.startsWith("/b/");
 
   return (
     <NoSSR>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <IdleSessionTimeout />
-          {isLogin ? (
+          {isLogin || isPublicGuestPage ? (
             <Component {...pageProps} />
           ) : (
             <AppShell>

@@ -8,6 +8,7 @@ import TaxSection from "@/components/settings/sections/TaxSection";
 import GlobalVariablesSection from "@/components/settings/sections/GlobalVariablesSection";
 import CardTemplatesSection from "@/components/settings/sections/CardTemplatesSection";
 import EmailTemplatesSection from "@/components/settings/sections/EmailTemplatesSection";
+import DocumentTemplatesSection from "@/components/settings/sections/DocumentTemplatesSection";
 import RbacSection from "@/components/settings/sections/RbacSection";
 import WebhooksSection from "@/components/settings/sections/WebhooksSection";
 import AuditSection from "@/components/settings/sections/AuditSection";
@@ -23,6 +24,7 @@ export default function PlatformSettingsPage() {
     { id: "global-variables", label: "Global Variables", icon: SlidersHorizontal, content: <GlobalVariablesSection /> },
     { id: "card-templates", label: "Card Templates", icon: Palette, content: <CardTemplatesSection /> },
     { id: "email-templates", label: "Email Templates", icon: FileText, content: <EmailTemplatesSection /> },
+    { id: "document-templates", label: "Document Templates", icon: FileText, content: <DocumentTemplatesSection /> },
     { id: "roles", label: "Roles & Permissions", icon: ShieldCheck, content: <RbacSection /> },
     { id: "webhooks", label: "Webhooks", icon: Webhook, content: <WebhooksSection /> },
     { id: "audit", label: "Audit Logs", icon: ScrollText, content: <AuditSection /> },
