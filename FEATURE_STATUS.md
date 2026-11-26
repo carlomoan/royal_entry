@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### CSV import hardening (2026-11-26)
+- ✅ Phone numbers are normalised on CSV import, single guest create and bulk create: `785023234`, `0785023234`, `065023234` and `+255785023234` all become `255…`. Handles Excel stripping the leading zero from 07xx/06xx numbers.
+- ✅ Import returns a detailed report: total rows, imported, duplicates (in-file and in-event), invalid rows, DB failures, and per-row errors with row number, field, reason and raw data. The UI shows the report and can download failed rows as CSV.
+
 ### NextSMS v2 API correction (2026-11-26)
 - ✅ Reviewed official NextSMS Messaging API v2 docs. Corrected base URL to `https://messaging-service.co.tz`, WhatsApp `to` to an array of numbers, and template values to named `personalisation` objects (e.g. `{"message":"…"}`) instead of the invalid `variables` / `{{1}}` approach.
 - ✅ Added `NEXTSMS_WHATSAPP_PLACEHOLDERS` config (env + Settings UI) mapping our composed values to the template's named placeholders in order. Test script supports the free `/test/` endpoint.

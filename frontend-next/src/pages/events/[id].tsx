@@ -1392,6 +1392,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
   const { sendCheckinBulkMutation } = useSendCheckinMutations(eventId);
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [importReport, setImportReport] = useState<any | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [selectedGuests, setSelectedGuests] = useState<Set<string>>(new Set());
   const [bulkActionOpen, setBulkActionOpen] = useState(false);
@@ -1518,6 +1519,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
       setImportOpen(false);
       setCsvFile(null);
+      setImportReport(result);
       const imported = result?.imported ?? 0;
       const skipped = result?.skipped ?? 0;
       toast.success(`Imported ${imported} guest(s)${skipped ? `, skipped ${skipped}` : ""}`);
@@ -1798,6 +1800,7 @@ function GuestsTab({ eventId }: { eventId: string }) {
             <div>
               <p className="font-semibold">CSV format</p>
               <p className="mt-0.5 text-xs">Required columns: <code>full_name</code>, <code>phone</code>. Optional: email, whatsapp_phone, device_type, table_number, guest_category, plus_one_allowed, contact_method.</p>
+              <p className="mt-1 text-xs">Phones are normalised automatically: <code>785023234</code>, <code>0785023234</code>, <code>065023234</code> and <code>+255785023234</code> all become <code>255…</code>.</p>
             </div>
           </div>
           <input type="file" accept=".csv,text/csv" onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)} className="block w-full cursor-pointer rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-gold-500 file:px-3 file:py-1.5 file:font-semibold file:text-navy-950" />
@@ -1810,6 +1813,60 @@ function GuestsTab({ eventId }: { eventId: string }) {
             </div>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={!!importReport} onClose={() => setImportReport(null)} title="CSV import report" size="lg">
+        {importReport && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {[
+                { label: "Rows", value: importReport.total_rows ?? 0 },
+                { label: "Imported", value: importReport.imported ?? 0 },
+                { label: "Duplicates", value: importReport.duplicates ?? 0 },
+                { label: "Invalid", value: importReport.invalid_rows ?? 0 },
+                { label: "Failed", value: importReport.failed_rows ?? 0 },
+              ].map((s) => (
+                <div key={s.label} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase text-slate-500">{s.label}</p>
+                  <p className="mt-1 text-xl font-bold text-slate-900">{s.value}</p>
+                </div>
+              ))}
+            </div>
+            {(importReport.errors ?? []).length > 0 ? (
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase text-slate-500">
+                    <th className="px-3 py-2">Row</th><th className="px-3 py-2">Field</th><th className="px-3 py-2">Reason</th><th className="px-3 py-2">Raw data</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {importReport.errors.map((e: any, i: number) => (
+                      <tr key={i} className="align-top">
+                        <td className="px-3 py-2 font-mono">{e.row}</td>
+                        <td className="px-3 py-2">{e.field ?? "—"}</td>
+                        <td className="px-3 py-2 break-words text-rose-700">{e.message}</td>
+                        <td className="px-3 py-2 break-all font-mono text-xs text-slate-500">{e.raw}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">All rows imported successfully.</p>
+            )}
+            <div className="flex justify-end gap-2">
+              {(importReport.errors ?? []).length > 0 && (
+                <Button variant="outline" size="sm" onClick={() => {
+                  const head = "row,field,reason,raw_data\n";
+                  const lines = importReport.errors.map((e: any) => [e.row, e.field ?? "", e.message, e.raw].map((v: any) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+                  const blob = new Blob([head + lines.join("\n")], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a"); a.href = url; a.download = `guest-import-errors-${eventId}.csv`; a.click(); URL.revokeObjectURL(url);
+                }}><Download className="h-3.5 w-3.5" /> Download failed rows</Button>
+              )}
+              <Button size="sm" onClick={() => setImportReport(null)}>Close</Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </Card>
   );

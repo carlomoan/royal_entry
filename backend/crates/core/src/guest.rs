@@ -82,6 +82,44 @@ impl From<Guest> for GuestResponse {
     }
 }
 
+/// Normalise a phone number to international format without `+`.
+/// Accepts `785023234`, `0785023234`, `+255785023234`, `255785023234`,
+/// and numbers with spaces/dashes. Already-international non-TZ numbers are
+/// left alone.
+pub fn normalize_phone(input: &str) -> String {
+    let cleaned: String = input
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '+')
+        .collect();
+    let digits: String = cleaned.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return String::new();
+    }
+    if cleaned.starts_with('+') {
+        // Accept +255… and the occasional +07… pasted from a spreadsheet.
+        if digits.starts_with('0') && digits.len() >= 9 {
+            return format!("255{}", digits.trim_start_matches('0'));
+        }
+        return digits;
+    }
+    if digits.starts_with("255") && digits.len() >= 12 {
+        return digits;
+    }
+    // 07xx / 06xx local form with the leading zero intact.
+    if digits.starts_with('0') && digits.len() >= 9 {
+        return format!("255{}", digits.trim_start_matches('0'));
+    }
+    // Excel/CSV often strips the leading zero: 0785… becomes 785… (9 digits)
+    // and 0650… becomes 650… (8 digits). Both are Tanzanian mobile prefixes.
+    if (digits.len() == 8 || digits.len() == 9)
+        && (digits.starts_with('7') || digits.starts_with('6'))
+    {
+        return format!("255{digits}");
+    }
+    digits
+}
+
 /// Create guest request
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct CreateGuestRequest {

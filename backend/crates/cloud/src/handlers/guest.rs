@@ -100,8 +100,12 @@ pub async fn create_guest(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     Path(event_id): Path<Uuid>,
-    Json(payload): Json<CreateGuestRequest>,
+    Json(mut payload): Json<CreateGuestRequest>,
 ) -> AppResult<(StatusCode, Json<serde_json::Value>)> {
+    payload.phone = crate::models::guest::normalize_phone(&payload.phone);
+    if let Some(whatsapp) = payload.whatsapp_phone.take() {
+        payload.whatsapp_phone = Some(crate::models::guest::normalize_phone(&whatsapp));
+    }
     // Validate input
     payload.validate()
         .map_err(|e| AppError::ValidationError(e.to_string()))?;
@@ -175,7 +179,7 @@ pub async fn bulk_create_guests(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     Path(event_id): Path<Uuid>,
-    Json(payload): Json<CreateMultipleGuestsRequest>,
+    Json(mut payload): Json<CreateMultipleGuestsRequest>,
 ) -> AppResult<(StatusCode, Json<serde_json::Value>)> {
     let org_id = Uuid::parse_str(&claims.org_id)
         .map_err(|_| AppError::InvalidToken)?;
@@ -199,7 +203,13 @@ pub async fn bulk_create_guests(
             .await?;
     }
 
-    // Validate all guests before inserting any
+    // Normalise phones, then validate all guests before inserting any.
+    for guest in payload.guests.iter_mut() {
+        guest.phone = crate::models::guest::normalize_phone(&guest.phone);
+        if let Some(whatsapp) = guest.whatsapp_phone.take() {
+            guest.whatsapp_phone = Some(crate::models::guest::normalize_phone(&whatsapp));
+        }
+    }
     for (i, guest) in payload.guests.iter().enumerate() {
         guest.validate().map_err(|e| {
             AppError::ValidationError(format!("Guest at index {}: {}", i, e))
@@ -446,6 +456,14 @@ pub async fn guest_count(
 /// "Jane Smith","+255700001002","jane@example.com","3","Regular",false,sms
 ///
 /// Returns: { success: true, data: { imported: 2, skipped: 0, errors: [] } }
+#[derive(Debug, serde::Serialize)]
+struct ImportRowError {
+    row: usize,
+    field: Option<String>,
+    raw: String,
+    message: String,
+}
+
 pub async fn import_guests_csv(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -454,88 +472,125 @@ pub async fn import_guests_csv(
 ) -> AppResult<Json<serde_json::Value>> {
     let org_id = Uuid::parse_str(&claims.org_id)
         .map_err(|_| AppError::InvalidToken)?;
-
     assert_event_ownership(&state, event_id, org_id).await?;
 
-    // Extract CSV file from multipart
     let mut csv_data = None;
     while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
         if field.name() == Some("file") {
-            let data = field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
-            csv_data = Some(data);
+            csv_data = Some(field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?);
             break;
         }
     }
-
     let csv_bytes = csv_data.ok_or_else(|| AppError::BadRequest("No CSV file provided".to_string()))?;
-    let csv_str = String::from_utf8(csv_bytes.to_vec()).map_err(|_| AppError::BadRequest("Invalid UTF-8 in CSV".to_string()))?;
 
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
+        .flexible(true)
         .trim(csv::Trim::All)
-        .from_reader(Cursor::new(csv_str));
+        .from_reader(Cursor::new(csv_bytes.to_vec()));
 
     let headers = reader.headers().map_err(|e| AppError::BadRequest(e.to_string()))?.clone();
-
-    // Validate required columns
-    let required = ["full_name", "phone"];
-    for req in required {
-        if !headers.iter().any(|h| h == req) {
-            return Err(AppError::BadRequest(format!("Missing required column: {}", req)));
+    let header_names: Vec<String> = headers.iter().map(|h| h.trim().to_lowercase()).collect();
+    for required in ["full_name", "phone"] {
+        if !header_names.iter().any(|h| h == required) {
+            return Err(AppError::BadRequest(format!(
+                "Missing required column '{}'. Found: {:?}", required, header_names
+            )));
         }
     }
+    let idx = |name: &str| header_names.iter().position(|h| h == name);
+    let name_i = idx("full_name").unwrap();
+    let phone_i = idx("phone").unwrap();
+    let email_i = idx("email");
+    let whatsapp_i = idx("whatsapp_phone").or_else(|| idx("whatsapp"));
+    let device_i = idx("device_type").or_else(|| idx("device"));
+    let table_i = idx("table_number");
+    let category_i = idx("guest_category").or_else(|| idx("category"));
+    let plus_one_i = idx("plus_one_allowed").or_else(|| idx("plus_one"));
+    let contact_i = idx("contact_method").or_else(|| idx("contact"));
 
-    let mut guests_to_import = Vec::new();
-    let mut errors = Vec::new();
-    let mut row_num = 1;
+    let mut candidates: Vec<(usize, CreateGuestRequest)> = Vec::new();
+    let mut errors: Vec<ImportRowError> = Vec::new();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut total_rows = 0usize;
+    let mut invalid_rows = 0usize;
 
-    for result in reader.deserialize() {
-        row_num += 1;
-        let record: Result<CreateGuestRequest, _> = result;
-        match record {
-            Ok(guest) => {
-                // Validate
-                if let Err(e) = guest.validate() {
-                    errors.push(format!("Row {}: {}", row_num, e));
-                    continue;
-                }
-                guests_to_import.push(guest);
-            }
+    for result in reader.records() {
+        total_rows += 1;
+        let row = match result {
+            Ok(r) => r,
             Err(e) => {
-                errors.push(format!("Row {}: {}", row_num, e));
+                invalid_rows += 1;
+                errors.push(ImportRowError { row: total_rows, field: None, raw: String::new(), message: format!("CSV parse error: {}", e) });
+                continue;
             }
+        };
+        let raw = row.iter().collect::<Vec<_>>().join(",");
+        let get = |i: Option<usize>| -> Option<String> {
+            i.and_then(|n| row.get(n)).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+        };
+
+        let full_name = get(Some(name_i)).unwrap_or_default();
+        let raw_phone = get(Some(phone_i)).unwrap_or_default();
+        let phone = crate::models::guest::normalize_phone(&raw_phone);
+
+        let mut row_ok = true;
+        if full_name.len() < 2 {
+            errors.push(ImportRowError { row: total_rows, field: Some("full_name".into()), raw: raw.clone(), message: "Name is missing or too short".into() });
+            row_ok = false;
         }
-    }
-
-    if guests_to_import.is_empty() && errors.is_empty() {
-        return Err(AppError::BadRequest("No valid guests found in CSV".to_string()));
-    }
-
-    // Bulk insert valid guests
-    let mut imported = 0;
-    let mut skipped = 0;
-    let mut import_errors = Vec::new();
-
-    for guest in guests_to_import {
-        // Check for duplicate phone in this event
-        let existing = GuestRepository::get_by_phone(state.db.pool(), event_id, &guest.phone).await?;
-        if existing.is_some() {
-            skipped += 1;
-            import_errors.push(format!("Phone {} already exists in this event", guest.phone));
+        if phone.len() < 10 || phone.len() > 15 || !phone.chars().all(|c| c.is_ascii_digit()) {
+            errors.push(ImportRowError { row: total_rows, field: Some("phone".into()), raw: raw.clone(), message: format!("Invalid phone '{}' — use 785023234, 0785023234, 065023234 or +255785023234", raw_phone) });
+            row_ok = false;
+        }
+        if !row_ok {
+            invalid_rows += 1;
             continue;
         }
 
+        if let Some(first_row) = seen.get(&phone) {
+            errors.push(ImportRowError { row: total_rows, field: Some("phone".into()), raw: raw.clone(), message: format!("Duplicate phone in file — first seen on row {}", first_row) });
+            invalid_rows += 1;
+            continue;
+        }
+        seen.insert(phone.clone(), total_rows);
+
+        let guest = CreateGuestRequest {
+            full_name,
+            phone,
+            email: get(email_i),
+            whatsapp_phone: get(whatsapp_i).map(|v| crate::models::guest::normalize_phone(&v)),
+            device_type: get(device_i),
+            table_number: get(table_i),
+            guest_category: get(category_i),
+            plus_one_allowed: get(plus_one_i).map(|v| v.eq_ignore_ascii_case("true") || v == "1" || v.eq_ignore_ascii_case("yes")),
+            contact_method: get(contact_i),
+        };
+        if let Err(e) = guest.validate() {
+            errors.push(ImportRowError { row: total_rows, field: None, raw: raw.clone(), message: format!("Validation failed: {}", e) });
+            invalid_rows += 1;
+            continue;
+        }
+        candidates.push((total_rows, guest));
+    }
+
+    let mut imported = 0usize;
+    let mut duplicates = 0usize;
+    let mut failed_rows = 0usize;
+    for (row, guest) in candidates {
+        if let Some(_existing) = GuestRepository::get_by_phone(state.db.pool(), event_id, &guest.phone).await? {
+            duplicates += 1;
+            errors.push(ImportRowError { row, field: Some("phone".into()), raw: guest.phone.clone(), message: "Phone already exists in this event".into() });
+            continue;
+        }
         match GuestRepository::create(state.db.pool(), event_id, &guest).await {
             Ok(created) => {
                 imported += 1;
-                // Every guest gets a check-in link (QR / entry token) automatically.
-                let _ =
-                    crate::handlers::invitations::ensure_invitation(state.db.pool(), created.id)
-                        .await;
+                let _ = crate::handlers::invitations::ensure_invitation(state.db.pool(), created.id).await;
             }
             Err(e) => {
-                skipped += 1;
-                import_errors.push(format!("Failed to import guest {}: {}", guest.full_name, e));
+                failed_rows += 1;
+                errors.push(ImportRowError { row, field: None, raw: guest.phone.clone(), message: format!("Database error: {}", e) });
             }
         }
     }
@@ -543,9 +598,13 @@ pub async fn import_guests_csv(
     Ok(Json(json!({
         "success": true,
         "data": {
+            "total_rows": total_rows,
             "imported": imported,
-            "skipped": skipped,
-            "errors": import_errors
+            "duplicates": duplicates,
+            "invalid_rows": invalid_rows,
+            "failed_rows": failed_rows,
+            "skipped": duplicates + invalid_rows + failed_rows,
+            "errors": errors,
         }
     })))
 }
