@@ -742,6 +742,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             put(document_templates::update_document_template)
                 .delete(document_templates::delete_document_template),
         )
+        .route(
+            "/api/v1/settings/channels/test",
+            post(settings::test_channel),
+        )
         .layer(middleware::from_fn(require_platform_admin_middleware))
         .merge(
             Router::new()

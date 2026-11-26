@@ -558,3 +558,52 @@ pub async fn claim_account_user(
         "data": crate::models::user::UserResponse::from(updated),
     })))
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct TestChannelRequest {
+    pub channel: String,
+    pub to: String,
+    pub message: String,
+}
+
+/// POST /api/v1/settings/channels/test — send one real message through the
+/// configured provider and return its receipt, so config problems are visible
+/// without waiting for a guest flow to fail.
+pub async fn test_channel(
+    State(state): State<Arc<AppState>>,
+    Extension(_claims): Extension<Claims>,
+    Json(payload): Json<TestChannelRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let to = payload.to.trim();
+    let message = payload.message.trim();
+    if to.is_empty() || message.is_empty() {
+        return Err(AppError::ValidationError("Recipient and message are required".to_string()));
+    }
+    let receipts: Vec<serde_json::Value> = match payload.channel.to_ascii_lowercase().as_str() {
+        "sms" => state
+            .channels
+            .sms(&[to.to_string()], message)
+            .await?
+            .into_iter()
+            .map(|r| json!({"provider": r.provider, "success": r.success, "provider_id": r.provider_id, "error": r.error}))
+            .collect(),
+        "whatsapp" => {
+            let r = state.channels.whatsapp_text(to, message).await?;
+            vec![json!({"provider": r.provider, "success": r.success, "provider_id": r.provider_id, "error": r.error})]
+        }
+        "email" => {
+            let r = state
+                .channels
+                .email(to, "RoyalEntry channel test", &crate::services::channels::html_wrap(message))
+                .await?;
+            vec![json!({"provider": r.provider, "success": r.success, "provider_id": r.provider_id, "error": r.error})]
+        }
+        "telegram" => {
+            let r = state.channels.telegram(to, message).await?;
+            vec![json!({"provider": r.provider, "success": r.success, "provider_id": r.provider_id, "error": r.error})]
+        }
+        _ => return Err(AppError::ValidationError("channel must be sms, whatsapp, email or telegram".to_string())),
+    };
+    let ok = receipts.iter().any(|r| r.get("success").and_then(|v| v.as_bool()).unwrap_or(false));
+    Ok(Json(json!({ "success": true, "data": { "delivered": ok, "receipts": receipts } })))
+}

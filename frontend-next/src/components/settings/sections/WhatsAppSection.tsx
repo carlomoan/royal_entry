@@ -4,10 +4,25 @@ import { MessageCircle, Save, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Button, Input, Select } from "@/components/ui";
+import { Card, Button, Input, Select, Textarea } from "@/components/ui";
 
 const SANDBOX_WARNING =
   "Sandbox records messages instead of delivering them. Never enable in production — the backend forces it off when ENVIRONMENT=production.";
+
+const NEXTSMS_TEMPLATE_WARNING =
+  "NextSMS renders the approved template body. Your message is passed as variable {{1}} — the template in the NextSMS dashboard MUST contain {{1}}, e.g. `RoyalEntry: {{1}}`, and must be Approved/Verified. A template without {{1}} will show only its static text and recipients may see the wrong message.";
+
+type ChannelReceipt = {
+  provider?: string;
+  success?: boolean;
+  provider_id?: string | null;
+  error?: string | null;
+};
+
+type ChannelTestResult = {
+  delivered: boolean;
+  receipts: ChannelReceipt[];
+};
 
 function asText(value: unknown, fallback = ""): string {
   if (value === undefined || value === null || value === "********") return fallback;
@@ -31,6 +46,9 @@ export default function WhatsAppSection() {
   const [nextsmsAccount, setNextsmsAccount] = useState("");
   const [nextsmsTemplate, setNextsmsTemplate] = useState("");
   const [sandbox, setSandbox] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [testMessage, setTestMessage] = useState("RoyalEntry WhatsApp test {{1}}");
+  const [testResult, setTestResult] = useState<ChannelTestResult | null>(null);
 
   useEffect(() => {
     setProvider(asText(settings?.whatsapp_provider));
@@ -46,6 +64,22 @@ export default function WhatsAppSection() {
     mutationFn: (payload: Record<string, unknown>) => api.put("/settings/system", { settings: payload }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["system-settings"] }); toast.success("WhatsApp config saved"); },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed"),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const response = await api.post("/settings/channels/test", {
+        channel: "whatsapp",
+        to: testTo,
+        message: testMessage,
+      });
+      return response.data.data as ChannelTestResult;
+    },
+    onSuccess: (result) => setTestResult(result),
+    onError: (e: any) => {
+      setTestResult(null);
+      toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to send test message");
+    },
   });
 
   const isNextSms = provider === "nextsms";
@@ -70,6 +104,11 @@ export default function WhatsAppSection() {
         <p className="mt-2 text-xs text-slate-500">
           NextSMS WhatsApp is template-based: the account name and an approved template must be set on your NextSMS account.
         </p>
+        {isNextSms && (
+          <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium leading-relaxed text-amber-900">
+            {NEXTSMS_TEMPLATE_WARNING}
+          </p>
+        )}
       </Card>
 
       {!isNextSms && (
@@ -129,6 +168,63 @@ export default function WhatsAppSection() {
           <Save className="h-4 w-4" /> Save
         </Button>
       </div>
+
+      <Card title="Send test message">
+        <div className="space-y-4">
+          <p className="text-xs text-slate-500">Sends a real message through the configured provider and returns its delivery receipt.</p>
+          <Input
+            label="Recipient"
+            value={testTo}
+            onChange={(e) => setTestTo(e.target.value)}
+            placeholder="2557XXXXXXXX"
+          />
+          <Textarea
+            label="Message"
+            rows={3}
+            value={testMessage}
+            onChange={(e) => setTestMessage(e.target.value)}
+          />
+          <p className="-mt-3 text-xs text-slate-400">
+            Sent literally; the backend passes it as variable {"{{1}}"} in the NextSMS template.
+          </p>
+          <div>
+            <Button
+              onClick={() => testMutation.mutate()}
+              isLoading={testMutation.isPending}
+              disabled={!testTo.trim() || !testMessage.trim()}
+            >
+              <MessageCircle className="h-4 w-4" /> Send
+            </Button>
+          </div>
+          {testResult && (
+            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-800">
+                Delivered:{" "}
+                <span className={testResult.delivered ? "text-emerald-600" : "text-red-600"}>
+                  {testResult.delivered ? "Yes" : "No"}
+                </span>
+              </p>
+              {testResult.receipts.length === 0 ? (
+                <p className="text-xs text-slate-500">No provider receipts returned.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {testResult.receipts.map((receipt, index) => (
+                    <li key={index} className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+                      <p className="break-words"><span className="font-semibold">Provider:</span> {receipt.provider ?? "—"}</p>
+                      <p className="break-words"><span className="font-semibold">Success:</span> {receipt.success ? "true" : "false"}</p>
+                      <p className="break-words"><span className="font-semibold">Provider ID:</span> {receipt.provider_id ?? "—"}</p>
+                      <p className="break-words"><span className="font-semibold">Error:</span> {receipt.error ?? "—"}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-slate-500">
+                Check the NextSMS dashboard delivery log if the receipt says success but the phone receives nothing.
+              </p>
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }

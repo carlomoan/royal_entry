@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Channel test tool (2026-11-26)
+- ✅ `POST /settings/channels/test` sends a real message through the configured provider and returns the raw receipt (provider, success, provider_id, error). Added "Send test message" cards to WhatsApp Config and SMS Config, plus an amber warning that the NextSMS template must contain `{{1}}` and be approved.
+- ✅ Verified against a local NextSMS mock: WhatsApp payload carries `variables:['VARIABLE-TEST-123']` and returns a success receipt.
+
 ### NextSMS WhatsApp variables (2026-11-26)
 - ✅ NextSMS WhatsApp now sends `variables` (not `text`) — the composed message is passed as body variable `{{1}}`, so the recipient sees the message instead of only the approved static template.
 - ✅ `whatsapp_template` extracts variables from Meta-style components (`parameters[].text`) and legacy flat `{text}` shapes via `collect_body_variables`.

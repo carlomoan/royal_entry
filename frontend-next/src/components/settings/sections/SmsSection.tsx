@@ -4,10 +4,22 @@ import { MessageSquare, Save, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
-import { Card, Button, Input, Select } from "@/components/ui";
+import { Card, Button, Input, Select, Textarea } from "@/components/ui";
 
 const SANDBOX_WARNING =
   "Sandbox records messages instead of delivering them. Never enable in production — the backend forces it off when ENVIRONMENT=production.";
+
+type ChannelReceipt = {
+  provider?: string;
+  success?: boolean;
+  provider_id?: string | null;
+  error?: string | null;
+};
+
+type ChannelTestResult = {
+  delivered: boolean;
+  receipts: ChannelReceipt[];
+};
 
 function asText(value: unknown, fallback = ""): string {
   if (value === undefined || value === null || value === "********") return fallback;
@@ -34,6 +46,9 @@ export default function SmsSection() {
   const [providerOrder, setProviderOrder] = useState("");
   const [failover, setFailover] = useState(false);
   const [sandbox, setSandbox] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [testMessage, setTestMessage] = useState("RoyalEntry SMS test");
+  const [testResult, setTestResult] = useState<ChannelTestResult | null>(null);
 
   useEffect(() => {
     setProvider(asText(settings?.sms_provider));
@@ -53,6 +68,22 @@ export default function SmsSection() {
     mutationFn: (payload: Record<string, unknown>) => api.put("/settings/system", { settings: payload }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["system-settings"] }); toast.success("SMS config saved"); },
     onError: (e: any) => toast.error(e?.message ?? "Failed"),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const response = await api.post("/settings/channels/test", {
+        channel: "sms",
+        to: testTo,
+        message: testMessage,
+      });
+      return response.data.data as ChannelTestResult;
+    },
+    onSuccess: (result) => setTestResult(result),
+    onError: (e: any) => {
+      setTestResult(null);
+      toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to send test message");
+    },
   });
 
   return (
@@ -141,6 +172,57 @@ export default function SmsSection() {
             </div>
           </div>
         )}
+      </Card>
+
+      <Card title="Send test message">
+        <div className="space-y-4">
+          <p className="text-xs text-slate-500">Sends a real message through the configured provider and returns its delivery receipt.</p>
+          <Input
+            label="Recipient"
+            value={testTo}
+            onChange={(e) => setTestTo(e.target.value)}
+            placeholder="2557XXXXXXXX"
+          />
+          <Textarea
+            label="Message"
+            rows={3}
+            value={testMessage}
+            onChange={(e) => setTestMessage(e.target.value)}
+          />
+          <div>
+            <Button
+              onClick={() => testMutation.mutate()}
+              isLoading={testMutation.isPending}
+              disabled={!testTo.trim() || !testMessage.trim()}
+            >
+              <MessageSquare className="h-4 w-4" /> Send
+            </Button>
+          </div>
+          {testResult && (
+            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-800">
+                Delivered:{" "}
+                <span className={testResult.delivered ? "text-emerald-600" : "text-red-600"}>
+                  {testResult.delivered ? "Yes" : "No"}
+                </span>
+              </p>
+              {testResult.receipts.length === 0 ? (
+                <p className="text-xs text-slate-500">No provider receipts returned.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {testResult.receipts.map((receipt, index) => (
+                    <li key={index} className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+                      <p className="break-words"><span className="font-semibold">Provider:</span> {receipt.provider ?? "—"}</p>
+                      <p className="break-words"><span className="font-semibold">Success:</span> {receipt.success ? "true" : "false"}</p>
+                      <p className="break-words"><span className="font-semibold">Provider ID:</span> {receipt.provider_id ?? "—"}</p>
+                      <p className="break-words"><span className="font-semibold">Error:</span> {receipt.error ?? "—"}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
       </Card>
     </div>
   );
