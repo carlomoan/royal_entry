@@ -75,6 +75,8 @@ pub struct ChannelConfig {
     pub whatsapp_provider: String,
     pub nextsms_whatsapp_account: String,
     pub nextsms_whatsapp_template: String,
+    /// Placeholder names in the approved template body, in order (without braces).
+    pub nextsms_whatsapp_placeholders: Vec<String>,
     pub sms_sandbox: bool,
     pub whatsapp_sandbox: bool,
 }
@@ -105,7 +107,7 @@ impl Default for ChannelConfig {
             nextsms_token: env("NEXTSMS_API_TOKEN"),
             nextsms_sender: env("NEXTSMS_SENDER_ID"),
             nextsms_base_url: if env("NEXTSMS_BASE_URL").is_empty() {
-                "https://nextsms.co.tz".to_string()
+                "https://messaging-service.co.tz".to_string()
             } else {
                 env("NEXTSMS_BASE_URL")
             },
@@ -140,6 +142,14 @@ impl Default for ChannelConfig {
             whatsapp_provider: env("WHATSAPP_PROVIDER"),
             nextsms_whatsapp_account: env("NEXTSMS_WHATSAPP_ACCOUNT"),
             nextsms_whatsapp_template: env("NEXTSMS_WHATSAPP_TEMPLATE"),
+            nextsms_whatsapp_placeholders: {
+                let raw = env("NEXTSMS_WHATSAPP_PLACEHOLDERS");
+                if raw.is_empty() {
+                    vec!["message".to_string()]
+                } else {
+                    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+                }
+            },
             sms_sandbox: env_bool("ENABLE_SMS_SANDBOX", false),
             whatsapp_sandbox: env_bool("ENABLE_WHATSAPP_SANDBOX", false),
         }
@@ -196,7 +206,8 @@ async fn overlay_from_db(config: &mut ChannelConfig, pool: &PgPool) {
           'unitxt_api_token','unitxt_sender_id','unitxt_base_url','email_provider','resend_api_key','email_from', \
           'email_from_name','smtp_host','smtp_port','smtp_user','smtp_password','smtp_use_tls','telegram_bot_token', \
           'whatsapp_access_token','whatsapp_phone_number_id','whatsapp_api_version','whatsapp_provider', \
-          'nextsms_whatsapp_account','nextsms_whatsapp_template','enable_sms_sandbox','enable_whatsapp_sandbox')"
+          'nextsms_whatsapp_account','nextsms_whatsapp_template','nextsms_whatsapp_placeholders', \
+          'enable_sms_sandbox','enable_whatsapp_sandbox')"
     )
     .fetch_all(pool)
     .await
@@ -240,6 +251,12 @@ async fn overlay_from_db(config: &mut ChannelConfig, pool: &PgPool) {
             "whatsapp_provider" => { if let Some(v) = s { config.whatsapp_provider = v.to_lowercase(); } }
             "nextsms_whatsapp_account" => { if let Some(v) = s { config.nextsms_whatsapp_account = v; } }
             "nextsms_whatsapp_template" => { if let Some(v) = s { config.nextsms_whatsapp_template = v; } }
+            "nextsms_whatsapp_placeholders" => {
+                if let Some(v) = s {
+                    let names: Vec<String> = v.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect();
+                    if !names.is_empty() { config.nextsms_whatsapp_placeholders = names; }
+                }
+            }
             "enable_sms_sandbox" => { if let Some(v) = bool_value(&value) { config.sms_sandbox = v; } }
             "enable_whatsapp_sandbox" => { if let Some(v) = bool_value(&value) { config.whatsapp_sandbox = v; } }
             _ => {}
@@ -639,7 +656,7 @@ impl Channels {
         }
         if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
             // NextSMS renders the approved template body and ignores `text`.
-            // The composed message must travel as body variable {{1}}.
+            // The composed message goes into the first named placeholder.
             return self.send_nextsms_whatsapp(to, &[message.to_string()], None).await;
         }
         self.whatsapp_api(json!({
@@ -676,14 +693,32 @@ impl Channels {
     async fn send_nextsms_whatsapp(
         &self,
         to: &str,
-        variables: &[String],
+        values: &[String],
         template: Option<&str>,
     ) -> AppResult<ProviderReceipt> {
+        // Official v2 API: `to` is an array of NUMBERS, and template values go
+        // in `personalisation` keyed by the placeholder names without braces.
+        let number: u64 = normalize_tz_phone(to).parse().unwrap_or(0);
+        let names = if self.config.nextsms_whatsapp_placeholders.is_empty() {
+            vec!["message".to_string()]
+        } else {
+            self.config.nextsms_whatsapp_placeholders.clone()
+        };
+        let mut personalisation = serde_json::Map::new();
+        for (name, value) in names.iter().zip(values.iter()) {
+            personalisation.insert(name.clone(), json!(value));
+        }
+        if personalisation.is_empty() {
+            return Ok(ProviderReceipt::fail(
+                "nextsms-whatsapp",
+                "No template placeholder values supplied".to_string(),
+            ));
+        }
         let body = json!({
-            "to": [normalize_tz_phone(to)],
+            "to": [number],
             "account": self.config.nextsms_whatsapp_account,
             "template": template.unwrap_or(&self.config.nextsms_whatsapp_template),
-            "variables": variables,
+            "personalisation": [personalisation],
             "reference": format!("re-{}", Uuid::new_v4().simple()),
         });
         let response = self.client

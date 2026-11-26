@@ -10,7 +10,7 @@ const SANDBOX_WARNING =
   "Sandbox records messages instead of delivering them. Never enable in production — the backend forces it off when ENVIRONMENT=production.";
 
 const NEXTSMS_TEMPLATE_WARNING =
-  "NextSMS renders the approved template body. Your message is passed as variable {{1}} — the template in the NextSMS dashboard MUST contain {{1}}, e.g. `RoyalEntry: {{1}}`, and must be Approved/Verified. A template without {{1}} will show only its static text and recipients may see the wrong message.";
+  "NextSMS v2 uses named placeholders in the approved template body, e.g. `RoyalEntry: {message}`. The placeholder names below must match the template exactly (without braces), in body order. The template must be active and approved; otherwise delivery fails after the API accepts the request. Base URL: https://messaging-service.co.tz";
 
 type ChannelReceipt = {
   provider?: string;
@@ -45,9 +45,10 @@ export default function WhatsAppSection() {
   const [apiVersion, setApiVersion] = useState("v21.0");
   const [nextsmsAccount, setNextsmsAccount] = useState("");
   const [nextsmsTemplate, setNextsmsTemplate] = useState("");
+  const [nextsmsPlaceholders, setNextsmsPlaceholders] = useState("message");
   const [sandbox, setSandbox] = useState(false);
   const [testTo, setTestTo] = useState("");
-  const [testMessage, setTestMessage] = useState("RoyalEntry WhatsApp test {{1}}");
+  const [testMessage, setTestMessage] = useState("VARIABLE-TEST-123");
   const [testResult, setTestResult] = useState<ChannelTestResult | null>(null);
 
   useEffect(() => {
@@ -57,6 +58,7 @@ export default function WhatsAppSection() {
     setApiVersion(asText(settings?.whatsapp_api_version, "v21.0"));
     setNextsmsAccount(asText(settings?.nextsms_whatsapp_account));
     setNextsmsTemplate(asText(settings?.nextsms_whatsapp_template));
+    setNextsmsPlaceholders(asText(settings?.nextsms_whatsapp_placeholders, "message"));
     setSandbox(asBool(settings?.enable_whatsapp_sandbox));
   }, [settings]);
 
@@ -135,6 +137,7 @@ export default function WhatsAppSection() {
           <div className="space-y-4">
             <Input label="Account name" value={nextsmsAccount} onChange={(e) => setNextsmsAccount(e.target.value)} placeholder="Your NextSMS WhatsApp account name" />
             <Input label="Approved template" value={nextsmsTemplate} onChange={(e) => setNextsmsTemplate(e.target.value)} placeholder="Template name registered on NextSMS" />
+            <Input label="Placeholder names" value={nextsmsPlaceholders} onChange={(e) => setNextsmsPlaceholders(e.target.value)} placeholder="message  or  name,event,date,link" />
             <p className="text-xs text-slate-500">
               Uses the NextSMS API token and base URL from SMS Config. The &quot;to&quot; field is sent as an array with account and template, as required by NextSMS.
             </p>
@@ -160,6 +163,7 @@ export default function WhatsAppSection() {
             whatsapp_api_version: apiVersion,
             nextsms_whatsapp_account: nextsmsAccount,
             nextsms_whatsapp_template: nextsmsTemplate,
+            nextsms_whatsapp_placeholders: nextsmsPlaceholders,
             enable_whatsapp_sandbox: sandbox,
           };
           if (accessToken.trim()) payload.whatsapp_access_token = accessToken;
@@ -185,7 +189,7 @@ export default function WhatsAppSection() {
             onChange={(e) => setTestMessage(e.target.value)}
           />
           <p className="-mt-3 text-xs text-slate-400">
-            Sent literally; the backend passes it as variable {"{{1}}"} in the NextSMS template.
+            The backend puts this text into the first placeholder name configured above.
           </p>
           <div>
             <Button
