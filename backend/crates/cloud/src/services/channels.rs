@@ -147,6 +147,24 @@ impl Default for ChannelConfig {
 }
 
 
+/// Accepts Meta-style components (`{type:"body", parameters:[{type:"text",text:"…"}]}`)
+/// and the legacy flat `{text:"…"}` shape.
+fn collect_body_variables(components: &[serde_json::Value]) -> Vec<String> {
+    let mut out = Vec::new();
+    for c in components {
+        if let Some(params) = c.get("parameters").and_then(|p| p.as_array()) {
+            for p in params {
+                if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
+                    out.push(t.to_string());
+                }
+            }
+        } else if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
 /// sandbox_messages.channel has a CHECK constraint. Never pass an arbitrary
 /// channel name (e.g. "both") through — map it to a valid value.
 fn safe_channel(channel: &str) -> &'static str {
@@ -620,9 +638,9 @@ impl Channels {
             return Ok(self.log_sandbox("whatsapp", to, message).await);
         }
         if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
-            // NextSMS WhatsApp is template-based; the configured template is
-            // used for free-form text sends.
-            return self.send_nextsms_whatsapp(to, message, None).await;
+            // NextSMS renders the approved template body and ignores `text`.
+            // The composed message must travel as body variable {{1}}.
+            return self.send_nextsms_whatsapp(to, &[message.to_string()], None).await;
         }
         self.whatsapp_api(json!({
             "messaging_product": "whatsapp",
@@ -642,10 +660,8 @@ impl Channels {
             return Ok(self.log_sandbox("whatsapp", to, &format!("template {template_name}")).await);
         }
         if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
-            let text = components.first()
-                .and_then(|c| c.get("text").and_then(|v| v.as_str()))
-                .unwrap_or(template_name);
-            return self.send_nextsms_whatsapp(to, text, Some(template_name)).await;
+            let vars = collect_body_variables(&components);
+            return self.send_nextsms_whatsapp(to, &vars, Some(template_name)).await;
         }
         self.whatsapp_api(json!({
             "messaging_product": "whatsapp",
@@ -660,14 +676,14 @@ impl Channels {
     async fn send_nextsms_whatsapp(
         &self,
         to: &str,
-        message: &str,
+        variables: &[String],
         template: Option<&str>,
     ) -> AppResult<ProviderReceipt> {
         let body = json!({
             "to": [normalize_tz_phone(to)],
             "account": self.config.nextsms_whatsapp_account,
             "template": template.unwrap_or(&self.config.nextsms_whatsapp_template),
-            "text": message,
+            "variables": variables,
             "reference": format!("re-{}", Uuid::new_v4().simple()),
         });
         let response = self.client

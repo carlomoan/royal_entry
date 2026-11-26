@@ -3,9 +3,9 @@ import { MessageSquare } from "lucide-react";
 import { Card, Badge } from "@/components/ui";
 
 const CHANNELS = [
-  { kind: "sms", label: "SMS", icon: MessageSquare, provider: "Africa's Talking" },
-  { kind: "whatsapp", label: "WhatsApp", icon: MessageSquare, provider: "WhatsApp Business API" },
-  { kind: "email", label: "Email", icon: MessageSquare, provider: "SMTP" },
+  { kind: "sms", label: "SMS", icon: MessageSquare, provider: "NextSMS / UniTxt" },
+  { kind: "whatsapp", label: "WhatsApp", icon: MessageSquare, provider: "NextSMS / Meta Cloud API" },
+  { kind: "email", label: "Email", icon: MessageSquare, provider: "Resend / SMTP" },
   { kind: "telegram", label: "Telegram", icon: MessageSquare, provider: "Bot API" },
 ];
 

@@ -14,7 +14,6 @@ pub mod templates;
 pub mod tra;
 pub mod usage;
 pub mod webhooks;
-pub mod whatsapp;
 
 pub use auth::AuthService;
 pub use bootstrap::BootstrapService;
@@ -29,4 +28,3 @@ pub use scheduler::start_scheduler;
 pub use templates::TemplateService;
 pub use usage::UsageService;
 pub use webhooks::WebhookService;
-pub use whatsapp::WhatsappService;

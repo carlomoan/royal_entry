@@ -247,6 +247,12 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### NextSMS WhatsApp variables (2026-11-26)
+- ✅ NextSMS WhatsApp now sends `variables` (not `text`) — the composed message is passed as body variable `{{1}}`, so the recipient sees the message instead of only the approved static template.
+- ✅ `whatsapp_template` extracts variables from Meta-style components (`parameters[].text`) and legacy flat `{text}` shapes via `collect_body_variables`.
+- ✅ Removed the dead CallMeBot `WhatsappService`; updated Channels page labels to NextSMS/UniTxt, NextSMS/Meta Cloud, Resend/SMTP.
+- ✅ Verified against a local NextSMS mock: payload contains `variables:[…composed message…]`, no `text` key.
+
 ### Card actions & designer (2026-11-25)
 - ✅ `issue-card` now returns the real check-in link, human entry code and public QR URL; the Michango tab shows them in a modal with Send/View actions. `View Card` deep-links to the check-in tab. Guest card page has a QR fallback when no template is assigned.
 - ✅ Check-in emails embed the QR image inline (`email_card`) and the preview records the same HTML. WhatsApp preview page has a draggable/resizable/colour-changeable card layout designer persisted in localStorage.
