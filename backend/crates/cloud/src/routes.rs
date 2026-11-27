@@ -240,16 +240,24 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(corporate::create_package),
         )
         .route(
-            "/api/v1/events/{eid}/packages/{id}",
-            put(corporate::update_package).delete(corporate::delete_package),
+            "/api/v1/events/{eid}/bookings/{id}",
+            put(corporate::update_booking).delete(corporate::delete_booking),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/registration-token",
+            post(corporate::regenerate_registration_token),
+        )
+        .route(
+            "/api/v1/events/{eid}/bookings/{id}/passes/import",
+            post(corporate::import_passes),
         )
         .route(
             "/api/v1/events/{eid}/bookings",
             post(corporate::create_booking),
         )
         .route(
-            "/api/v1/events/{eid}/bookings/{id}",
-            put(corporate::update_booking),
+            "/api/v1/events/{eid}/bookings/import",
+            post(corporate::import_bookings),
         )
         .route(
             "/api/v1/events/{eid}/bookings/{id}/tables",

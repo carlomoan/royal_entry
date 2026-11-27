@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Pencil, Trash2, CheckCircle2, Armchair, Lightbulb, X, Building2, Ticket,
-  RefreshCw, FileText, Wallet, Users, Printer, MailCheck, Link2, Send, Ban,
+  RefreshCw, FileText, Wallet, Users, Printer, MailCheck, Link2, Send, Ban, Upload,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -147,6 +147,14 @@ type BookingForm = {
 
 type BookingPackageRow = { package_id: string; quantity: string };
 
+type ImportError = { row: number | string; message: string };
+type ImportResult = {
+  total_rows: number;
+  created: number;
+  updated?: number;
+  errors: ImportError[];
+};
+
 const formatTsh = (amount: number) => `TZS ${Number(amount || 0).toLocaleString("en-TZ")}`;
 const errorMessage = (e: any) =>
   e?.response?.data?.error?.message ?? e?.response?.data?.message ?? e?.message ?? "Something went wrong";
@@ -184,6 +192,54 @@ const passStateStyle = (state: string) => {
     default: return "bg-gold-100 text-gold-800";
   }
 };
+
+const normalizeImportResult = (data: any): ImportResult => ({
+  total_rows: Number(data?.total_rows ?? 0),
+  created: Number(data?.created ?? 0),
+  updated: data?.updated === undefined ? undefined : Number(data.updated),
+  errors: Array.isArray(data?.errors) ? data.errors : [],
+});
+
+function ImportResultPanel({ result }: { result: ImportResult }) {
+  const errors = result.errors ?? [];
+  return (
+    <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+      <div className="flex flex-wrap gap-x-6 gap-y-1">
+        <p><span className="text-slate-500">Rows read:</span> <span className="font-semibold text-slate-900">{result.total_rows}</span></p>
+        <p><span className="text-slate-500">Created:</span> <span className="font-semibold text-emerald-700">{result.created}</span></p>
+        {result.updated !== undefined && (
+          <p><span className="text-slate-500">Updated:</span> <span className="font-semibold text-navy-900">{result.updated}</span></p>
+        )}
+        <p><span className="text-slate-500">Failed:</span> <span className="font-semibold text-rose-700">{errors.length}</span></p>
+      </div>
+      {errors.length > 0 ? (
+        <div>
+          <p className="mb-2 font-semibold text-rose-700">Errors</p>
+          <div className="overflow-x-auto rounded-lg border border-rose-200 bg-white">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-rose-50">
+                <tr>
+                  <th className={thClass}>Row</th>
+                  <th className={thClass}>Message</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {errors.map((error, index) => (
+                  <tr key={`${error.row}-${index}`}>
+                    <td className={`${tdClass} whitespace-nowrap font-semibold`}>{error.row}</td>
+                    <td className={`${tdClass} break-words`}>{error.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <p className="text-emerald-700">No errors.</p>
+      )}
+    </div>
+  );
+}
 
 export default function CorporateTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
@@ -278,10 +334,43 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
   const [bookingForm, setBookingForm] = useState<BookingForm>(emptyBookingForm);
   const [bookingRows, setBookingRows] = useState<BookingPackageRow[]>([{ package_id: "", quantity: "1" }]);
 
+  const [editBookingTarget, setEditBookingTarget] = useState<Booking | null>(null);
+  const [editBookingForm, setEditBookingForm] = useState<BookingForm>(emptyBookingForm);
+  const [regeneratedLink, setRegeneratedLink] = useState<{ company: string; token: string; url: string } | null>(null);
+  const [bookingImportOpen, setBookingImportOpen] = useState(false);
+  const [bookingImportFile, setBookingImportFile] = useState<File | null>(null);
+  const [bookingImportResult, setBookingImportResult] = useState<ImportResult | null>(null);
+  const [passImportTarget, setPassImportTarget] = useState<Booking | null>(null);
+  const [passImportFile, setPassImportFile] = useState<File | null>(null);
+  const [passImportResult, setPassImportResult] = useState<ImportResult | null>(null);
+
   const openBookingModal = () => {
     setBookingForm(emptyBookingForm);
     setBookingRows([{ package_id: "", quantity: "1" }]);
     setBookingModalOpen(true);
+  };
+
+  const openEditBookingModal = (booking: Booking) => {
+    setEditBookingTarget(booking);
+    setEditBookingForm({
+      company_name: booking.company_name,
+      contact_person: booking.contact_person,
+      contact_phone: booking.contact_phone,
+      contact_email: booking.contact_email ?? "",
+      notes: booking.notes ?? "",
+    });
+  };
+
+  const openBookingImportModal = () => {
+    setBookingImportFile(null);
+    setBookingImportResult(null);
+    setBookingImportOpen(true);
+  };
+
+  const openPassImportModal = (booking: Booking) => {
+    setPassImportFile(null);
+    setPassImportResult(null);
+    setPassImportTarget(booking);
   };
 
   const createBookingMutation = useMutation({
@@ -321,6 +410,76 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
       contact_email: bookingForm.contact_email.trim() || undefined,
       notes: bookingForm.notes.trim() || undefined,
       packages: selected,
+    });
+  };
+
+  const updateBookingMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<BookingForm> }) =>
+      api.put(`/events/${eventId}/bookings/${id}`, payload),
+    onSuccess: () => {
+      invalidate();
+      setEditBookingTarget(null);
+      toast.success("Booking updated");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const deleteBookingMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/events/${eventId}/bookings/${id}`),
+    onSuccess: (r) => {
+      invalidate();
+      toast.success(r.data.message ?? "Booking deleted");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const importBookingsMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.post(`/events/${eventId}/bookings/import`, form);
+      return normalizeImportResult(res.data.data);
+    },
+    onSuccess: (result) => {
+      invalidate();
+      setBookingImportResult(result);
+      toast.success(`Imported ${result.created} of ${result.total_rows} booking rows`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const importPassesMutation = useMutation({
+    mutationFn: async ({ bookingId, file }: { bookingId: string; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.post(`/events/${eventId}/bookings/${bookingId}/passes/import`, form);
+      return normalizeImportResult(res.data.data);
+    },
+    onSuccess: (result) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["booking-passes", eventId, passImportTarget?.id] });
+      setPassImportResult(result);
+      toast.success(`Imported ${result.created} new and ${result.updated ?? 0} updated pass rows`);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+
+  const submitEditBooking = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editBookingTarget) return;
+    if (!editBookingForm.company_name.trim() || !editBookingForm.contact_person.trim() || !editBookingForm.contact_phone.trim()) {
+      toast.error("Company, contact person and phone are required");
+      return;
+    }
+    updateBookingMutation.mutate({
+      id: editBookingTarget.id,
+      payload: {
+        company_name: editBookingForm.company_name.trim(),
+        contact_person: editBookingForm.contact_person.trim(),
+        contact_phone: editBookingForm.contact_phone.trim(),
+        contact_email: editBookingForm.contact_email.trim() || undefined,
+        notes: editBookingForm.notes.trim() || undefined,
+      },
     });
   };
 
@@ -416,6 +575,26 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
       toast.error(`Could not copy link — copy it manually: ${url}`);
     }
   };
+
+  const regenerateTokenMutation = useMutation({
+    mutationFn: async (booking: Booking) =>
+      (await api.post(`/events/${eventId}/bookings/${booking.id}/registration-token`)).data.data as { registration_token: string },
+    onSuccess: (data, booking) => {
+      invalidate();
+      const token = data?.registration_token;
+      if (!token) {
+        toast.error("No registration token was returned");
+        return;
+      }
+      setRegeneratedLink({
+        company: booking.company_name,
+        token,
+        url: `${window.location.origin}/b/${token}`,
+      });
+      void copyRegistrationLink(token);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
 
   const resendMutation = useMutation({
     mutationFn: async (booking: Booking) => {
@@ -706,6 +885,36 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
           )}
           <Button
             size="sm" variant="ghost"
+            className="text-navy-800"
+            onClick={() => openEditBookingModal(b)}
+            title="Edit booking details"
+          ><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+          <Button
+            size="sm" variant="ghost"
+            className="text-rose-600"
+            onClick={() => {
+              if (window.confirm(`Delete the booking for ${b.company_name}? This cannot be undone.`)) {
+                deleteBookingMutation.mutate(b.id);
+              }
+            }}
+            isLoading={deleteBookingMutation.isPending && deleteBookingMutation.variables === b.id}
+            title="Delete booking"
+          ><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+          <Button
+            size="sm" variant="ghost"
+            className="text-violet-700"
+            onClick={() => regenerateTokenMutation.mutate(b)}
+            isLoading={regenerateTokenMutation.isPending && regenerateTokenMutation.variables?.id === b.id}
+            title="Generate a new registration link and copy it"
+          ><RefreshCw className="h-3.5 w-3.5" /> Regenerate link</Button>
+          <Button
+            size="sm" variant="ghost"
+            className="text-sky-700"
+            onClick={() => openPassImportModal(b)}
+            title="Import named guests from CSV or XLSX"
+          ><Upload className="h-3.5 w-3.5" /> Import passes</Button>
+          <Button
+            size="sm" variant="ghost"
             className="text-emerald-700"
             disabled={!!b.confirmed_at}
             title={b.confirmed_at ? "Payment already confirmed" : "Confirm payment"}
@@ -761,9 +970,14 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
       <Card
         title={`Bookings (${bookings.length})`}
         action={
-          <Button size="sm" onClick={openBookingModal} disabled={packages.length === 0} title={packages.length === 0 ? "Add a package first" : "Create a booking"}>
-            <Plus className="h-4 w-4" /> New booking
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={openBookingImportModal} title="Import bookings from CSV or XLSX">
+              <Upload className="h-4 w-4" /> Import bookings
+            </Button>
+            <Button size="sm" onClick={openBookingModal} disabled={packages.length === 0} title={packages.length === 0 ? "Add a package first" : "Create a booking"}>
+              <Plus className="h-4 w-4" /> New booking
+            </Button>
+          </div>
         }
       >
         <p className="mb-4 text-sm text-slate-500">
@@ -1265,6 +1479,132 @@ export default function CorporateTab({ eventId }: { eventId: string }) {
             <Button type="submit" isLoading={addTableMutation.isPending}><Armchair className="h-4 w-4" /> Add table</Button>
           </div>
         </form>
+      </Modal>
+
+      {/* ── Edit booking modal ────────────────────────────────────────── */}
+      <Modal
+        isOpen={!!editBookingTarget}
+        onClose={() => setEditBookingTarget(null)}
+        title={`Edit booking — ${editBookingTarget?.company_name ?? ""}`}
+        size="lg"
+      >
+        <form onSubmit={submitEditBooking} className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input
+              id="edit-company-name" label="Company name"
+              value={editBookingForm.company_name}
+              onChange={(e) => setEditBookingForm({ ...editBookingForm, company_name: e.target.value })}
+              required
+            />
+            <Input
+              id="edit-contact-person" label="Contact person"
+              value={editBookingForm.contact_person}
+              onChange={(e) => setEditBookingForm({ ...editBookingForm, contact_person: e.target.value })}
+              required
+            />
+            <Input
+              id="edit-contact-phone" label="Contact phone"
+              value={editBookingForm.contact_phone}
+              onChange={(e) => setEditBookingForm({ ...editBookingForm, contact_phone: e.target.value })}
+              required
+            />
+            <Input
+              id="edit-contact-email" label="Contact email (optional)" type="email"
+              value={editBookingForm.contact_email}
+              onChange={(e) => setEditBookingForm({ ...editBookingForm, contact_email: e.target.value })}
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-booking-notes" className="mb-1 block text-xs font-semibold text-slate-600">Notes (optional)</label>
+            <textarea
+              id="edit-booking-notes" rows={2} value={editBookingForm.notes}
+              onChange={(e) => setEditBookingForm({ ...editBookingForm, notes: e.target.value })}
+              placeholder="Internal notes about this booking"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-gold-400 focus:ring-2 focus:ring-gold-100"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={() => setEditBookingTarget(null)}>Cancel</Button>
+            <Button type="submit" isLoading={updateBookingMutation.isPending}>Save changes</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Regenerated registration link modal ───────────────────────── */}
+      <Modal
+        isOpen={!!regeneratedLink}
+        onClose={() => setRegeneratedLink(null)}
+        title="Registration link regenerated"
+      >
+        {regeneratedLink && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              New registration token for <span className="font-semibold text-slate-900">{regeneratedLink.company}</span>. The link below was copied to your clipboard.
+            </p>
+            <div className="break-words rounded-lg bg-slate-50 p-3 font-mono text-sm text-navy-950">{regeneratedLink.token}</div>
+            <p className="break-words text-xs text-slate-500">{regeneratedLink.url}</p>
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+              <Button variant="ghost" onClick={() => setRegeneratedLink(null)}>Close</Button>
+              <Button onClick={() => copyRegistrationLink(regeneratedLink.token)}><Link2 className="h-4 w-4" /> Copy link</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Import bookings modal ─────────────────────────────────────── */}
+      <Modal
+        isOpen={bookingImportOpen}
+        onClose={() => setBookingImportOpen(false)}
+        title="Import bookings"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <p className="break-words text-sm text-slate-600">
+            Upload a CSV or XLSX file with columns: company_name, contact_person, contact_phone, contact_email, package_name, quantity, notes.
+          </p>
+          <Input
+            type="file" accept=".csv,.xlsx,.xls" label="Bookings file"
+            onChange={(e) => setBookingImportFile(e.target.files?.[0] ?? null)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setBookingImportOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!bookingImportFile}
+              isLoading={importBookingsMutation.isPending}
+              onClick={() => { if (bookingImportFile) importBookingsMutation.mutate(bookingImportFile); }}
+            ><Upload className="h-4 w-4" /> Import</Button>
+          </div>
+          {bookingImportResult && <ImportResultPanel result={bookingImportResult} />}
+        </div>
+      </Modal>
+
+      {/* ── Import passes modal ───────────────────────────────────────── */}
+      <Modal
+        isOpen={!!passImportTarget}
+        onClose={() => setPassImportTarget(null)}
+        title={`Import passes — ${passImportTarget?.company_name ?? ""}`}
+        size="lg"
+      >
+        {passImportTarget && (
+          <div className="space-y-4">
+            <p className="break-words text-sm text-slate-600">
+              Upload a CSV or XLSX file with columns: full_name, phone, email, table_number, guest_category, package_name.
+            </p>
+            <Input
+              type="file" accept=".csv,.xlsx,.xls" label="Passes file"
+              onChange={(e) => setPassImportFile(e.target.files?.[0] ?? null)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPassImportTarget(null)}>Cancel</Button>
+              <Button
+                disabled={!passImportFile}
+                isLoading={importPassesMutation.isPending}
+                onClick={() => { if (passImportFile) importPassesMutation.mutate({ bookingId: passImportTarget.id, file: passImportFile }); }}
+              ><Upload className="h-4 w-4" /> Import</Button>
+            </div>
+            {passImportResult && <ImportResultPanel result={passImportResult} />}
+          </div>
+        )}
       </Modal>
     </div>
   );

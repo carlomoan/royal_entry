@@ -10,13 +10,29 @@ import { Rnd } from "react-rnd";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Button, Card, Badge, Modal } from "@/components/ui";
-import { CardTemplateConfig, QrPosition } from "@/types/cardTheme";
+import { QrPosition } from "@/types/cardTheme";
 
 type SetupStep = "upload" | "position" | "review";
+
+type TemplatePreviewSource = {
+  theme_config?: { front_image_url?: unknown; front_file_id?: string } | null;
+  background_file_id?: string | null;
+};
+
+/** Stored file ids are authoritative; front_image_url is often stale. */
+function templateImageUrl(t: TemplatePreviewSource | null | undefined): string | null {
+  const url = t?.theme_config?.front_image_url;
+  if (typeof url === "string" && (url.startsWith("/api/v1/files/") || url.startsWith("http"))) {
+    return url;
+  }
+  const fileId = t?.theme_config?.front_file_id || t?.background_file_id;
+  return fileId ? `/api/v1/files/${fileId}` : null;
+}
 
 export default function CardSetupPage() {
   const qc = useQueryClient();
   const [step, setStep] = useState<SetupStep>("upload");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [frontImage, setFrontImage] = useState<string | null>(null);
   const [frontFileId, setFrontFileId] = useState("");
   const [qrPos, setQrPos] = useState<QrPosition>({ x: 65, y: 75, w: 20, h: 20 });
@@ -69,6 +85,20 @@ export default function CardSetupPage() {
     },
   });
 
+  // Update mutation
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: any }) =>
+      api.put(`/cards/templates/${id}`, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["card-templates"] });
+      toast.success("Template updated successfully!");
+      resetForm();
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.error?.message || "Failed to update template");
+    },
+  });
+
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/cards/templates/${id}`),
@@ -86,6 +116,7 @@ export default function CardSetupPage() {
     setTemplateName("");
     setTemplateDescription("");
     setQrPos({ x: 65, y: 75, w: 20, h: 20 });
+    setEditingId(null);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,7 +147,7 @@ export default function CardSetupPage() {
   };
 
   const confirmSave = () => {
-    saveMutation.mutate({
+    const payload = {
       name: templateName,
       description: templateDescription,
       theme_config: {
@@ -125,8 +156,38 @@ export default function CardSetupPage() {
         qr_position: qrPos,
       },
       is_active: true,
-    });
+    };
+    if (editingId) {
+      updateMutation.mutate({ id: editingId, payload });
+    } else {
+      saveMutation.mutate(payload);
+    }
   };
+
+  const handleEdit = (t: any) => {
+    const storedQr = t?.theme_config?.qr_position;
+    const num = (v: unknown, fallback: number) =>
+      typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    setTemplateName(t?.name || "");
+    setTemplateDescription(t?.description || "");
+    setFrontFileId(t?.theme_config?.front_file_id || t?.background_file_id || "");
+    setFrontImage(templateImageUrl(t));
+    setQrPos({
+      x: num(storedQr?.x, 65),
+      y: num(storedQr?.y, 75),
+      w: num(storedQr?.w, 20),
+      h: num(storedQr?.h, 20),
+    });
+    setEditingId(t?.id || null);
+    setStep("position");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const previewImageUrl = templateImageUrl(previewTemplate);
+  const previewQr = previewTemplate?.theme_config?.qr_position;
+  const showPreviewQr = previewQr &&
+    [previewQr.x, previewQr.y, previewQr.w, previewQr.h]
+      .every((v: unknown) => typeof v === "number" && Number.isFinite(v));
 
   const copyTemplateId = (id: string) => {
     navigator.clipboard.writeText(id);
@@ -137,7 +198,7 @@ export default function CardSetupPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-900 mb-2">Card Template Studio</h1>
@@ -161,18 +222,18 @@ export default function CardSetupPage() {
                     idx + 1
                   )}
                 </div>
-                <span className={`ml-2 text-sm font-medium ${step === s ? "text-slate-900" : "text-slate-500"
+                <span className={`ml-1 sm:ml-2 text-xs sm:text-sm font-medium ${step === s ? "text-slate-900" : "text-slate-500"
                   }`}>
                   {s === "upload" ? "Upload Design" : s === "position" ? "Position QR" : "Review & Save"}
                 </span>
-                {idx < 2 && <div className="w-16 h-0.5 bg-slate-200 mx-4" />}
+                {idx < 2 && <div className="w-6 sm:w-16 h-0.5 bg-slate-200 mx-2 sm:mx-4" />}
               </div>
             ))}
           </div>
         </div>
 
         {/* Main Content */}
-        <Card className="p-8 mb-8">
+        <Card className="p-5 sm:p-8 mb-8">
           {/* Step 1: Upload */}
           {step === "upload" && (
             <div className="space-y-6">
@@ -363,12 +424,19 @@ export default function CardSetupPage() {
                 </div>
               </div>
 
-              <div className="flex justify-center gap-3">
+              <div className="flex flex-wrap justify-center gap-3">
                 <Button variant="outline" onClick={() => setStep("position")}>
                   <ArrowLeft className="h-4 w-4 mr-1" /> Adjust Position
                 </Button>
-                <Button onClick={confirmSave} isLoading={saveMutation.isPending} size="lg">
-                  <Save className="h-4 w-4 mr-2" /> Save Template
+                {editingId && (
+                  <Button variant="ghost" onClick={resetForm}>Cancel Edit</Button>
+                )}
+                <Button
+                  onClick={confirmSave}
+                  isLoading={saveMutation.isPending || updateMutation.isPending}
+                  size="lg"
+                >
+                  <Save className="h-4 w-4 mr-2" /> {editingId ? "Update Template" : "Save Template"}
                 </Button>
               </div>
             </div>
@@ -399,12 +467,14 @@ export default function CardSetupPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {templates.map((t: any) => (
+              {templates.map((t: any) => {
+                const imageUrl = templateImageUrl(t);
+                return (
                 <div key={t.id} className="overflow-hidden group hover:shadow-lg transition-shadow rounded-xl border border-slate-200 bg-white">
                   <div className="relative h-48 bg-slate-100">
-                    {t.theme_config?.front_image_url ? (
+                    {imageUrl ? (
                       <img
-                        src={t.theme_config.front_image_url}
+                        src={imageUrl}
                         alt={t.name}
                         className="w-full h-full object-cover"
                       />
@@ -429,7 +499,7 @@ export default function CardSetupPage() {
                       <span>ID: {t.id.slice(0, 8)}...</span>
                       <span>{new Date(t.created_at).toLocaleDateString()}</span>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         variant="outline"
                         size="sm"
@@ -437,6 +507,14 @@ export default function CardSetupPage() {
                         onClick={() => setPreviewTemplate(t)}
                       >
                         <Eye className="h-3.5 w-3.5 mr-1" /> Preview
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => handleEdit(t)}
+                      >
+                        <Edit3 className="h-3.5 w-3.5 mr-1" /> Edit
                       </Button>
                       <Button
                         variant="ghost"
@@ -465,7 +543,8 @@ export default function CardSetupPage() {
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -480,12 +559,27 @@ export default function CardSetupPage() {
       >
         {previewTemplate && (
           <div className="space-y-4">
-            {previewTemplate.theme_config?.front_image_url && (
-              <img
-                src={previewTemplate.theme_config.front_image_url}
-                alt={previewTemplate.name}
-                className="w-full rounded-lg border border-slate-200"
-              />
+            {previewImageUrl && (
+              <div className="relative w-full">
+                <img
+                  src={previewImageUrl}
+                  alt={previewTemplate.name}
+                  className="w-full rounded-lg border border-slate-200 block"
+                />
+                {showPreviewQr && (
+                  <div
+                    className="absolute border-2 border-dashed border-gold-500 bg-gold-500/20 flex items-center justify-center pointer-events-none"
+                    style={{
+                      left: `${previewQr.x}%`,
+                      top: `${previewQr.y}%`,
+                      width: `${previewQr.w}%`,
+                      height: `${previewQr.h}%`,
+                    }}
+                  >
+                    <QrCode className="h-5 w-5 text-gold-700 drop-shadow" />
+                  </div>
+                )}
+              </div>
             )}
             <div className="bg-slate-50 rounded-lg p-4 space-y-2">
               <div>

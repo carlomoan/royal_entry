@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/router";
 import {
-  AlertCircle, CalendarDays, CarFront, Check, Clock, Copy, Download,
+  AlertCircle, CalendarDays, CarFront, Check, Clock, Copy, Download, FileDown,
   Image as ImageIcon, Link2, Loader2, Lock, MapPin, Printer, QrCode,
   Share2, Sparkles, Users,
 } from "lucide-react";
@@ -102,6 +102,7 @@ export default function CheckInCardPage() {
   const router = useRouter();
   const token = typeof router.query.token === "string" ? router.query.token : undefined;
   const [qrFailed, setQrFailed] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["check-in-card", token],
@@ -156,6 +157,12 @@ export default function CheckInCardPage() {
 
   const { invitation, guest, event } = data;
   const qrUrl = `${api.defaults.baseURL}/public/invitations/${invitation.short_link}/qr`;
+  const guestSlug =
+    guest.full_name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "guest";
 
   // Backwards compatibility: when the backend does not send card_issued_at at
   // all, show the QR. Only an explicit null + a "not issued" status, or a
@@ -220,6 +227,54 @@ export default function CheckInCardPage() {
     await copy(url, "Link copied to clipboard");
   };
 
+  const triggerDownload = (href: string, filename: string) => {
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  const downloadQr = async () => {
+    try {
+      const response = await fetch(qrUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      triggerDownload(objectUrl, `checkin-qr-${guestSlug}.png`);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch {
+      toast.error("Could not download the QR code. Please try again.");
+    }
+  };
+
+  const downloadCardPdf = async () => {
+    const url = `${window.location.origin}/api/v1/public/invitations/${encodeURIComponent(invitation.short_link)}/card/pdf`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      triggerDownload(objectUrl, `checkin-card-${guestSlug}.pdf`);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch {
+      // If the browser blocks the blob download, let the guest save it manually.
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener,noreferrer";
+      link.click();
+      toast.error("Could not download automatically — the card opened in a new tab.");
+    }
+  };
+
+  const copyCheckInLink = async () => {
+    await copy(window.location.href, "Check-in link copied");
+    setCopiedLink(true);
+    window.setTimeout(() => setCopiedLink(false), 2000);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-navy-950 via-navy-900 to-navy-950 p-4 py-8 print:bg-white print:p-0">
       <div className="mx-auto w-full max-w-lg">
@@ -231,6 +286,21 @@ export default function CheckInCardPage() {
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="ghost" onClick={() => window.print()}>
               <Printer className="h-3.5 w-3.5" /> Print
+            </Button>
+            <Button size="sm" variant="outline" onClick={downloadQr} aria-label="Download QR code">
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Download QR</span>
+              <span className="sm:hidden">QR</span>
+            </Button>
+            <Button size="sm" variant="outline" onClick={downloadCardPdf} aria-label="Download card as PDF">
+              <FileDown className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Download card (PDF)</span>
+              <span className="sm:hidden">PDF</span>
+            </Button>
+            <Button size="sm" variant="outline" onClick={copyCheckInLink} aria-label="Copy check-in link">
+              {copiedLink ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{copiedLink ? "Copied!" : "Copy check-in link"}</span>
+              <span className="sm:hidden">{copiedLink ? "Copied!" : "Copy link"}</span>
             </Button>
             <Button size="sm" variant="outline" onClick={share}>
               <Share2 className="h-3.5 w-3.5" /> Share

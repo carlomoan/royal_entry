@@ -10,6 +10,7 @@ pub mod pdf;
 pub mod reminders;
 pub mod scheduler;
 pub mod sms;
+pub mod tabular_import;
 pub mod templates;
 pub mod tra;
 pub mod usage;

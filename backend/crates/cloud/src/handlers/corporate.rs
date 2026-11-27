@@ -1564,3 +1564,196 @@ pub async fn reassign_pass(
     let _ = crate::handlers::card_issuing::send_checkin_credentials(&state, &event, guest_id).await;
     Ok(Json(json!({ "success": true, "message": "Pass reassigned and new credentials sent" })))
 }
+
+/// DELETE /events/{eid}/bookings/{id} — remove a mistaken booking and its
+/// packages/tables/invoice. Passes are kept but detached from the booking.
+pub async fn delete_booking(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, booking_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let booking = sqlx::query_as::<_, Booking>("SELECT * FROM bookings WHERE id = $1 AND event_id = $2")
+        .bind(booking_id).bind(event_id).fetch_optional(state.db.pool()).await?
+        .ok_or(AppError::NotFound("Booking not found".into()))?;
+    // Audit before deleting — pass_audit.booking_id references bookings.
+    audit_pass(&state, event_id, booking_id, None, actor_id, &claims.role,
+        "booking_deleted", json!({"company_name": booking.company_name})).await?;
+    sqlx::query("DELETE FROM bookings WHERE id = $1 AND event_id = $2")
+        .bind(booking_id).bind(event_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({ "success": true, "message": "Booking deleted" })))
+}
+
+/// POST /events/{eid}/bookings/{id}/registration-token — replace the contact
+/// registration link (e.g. if it was forwarded to the wrong person).
+pub async fn regenerate_registration_token(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, booking_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let token = Uuid::new_v4().simple().to_string();
+    sqlx::query("UPDATE bookings SET registration_token = $2, updated_at = NOW() WHERE id = $1 AND event_id = $3")
+        .bind(booking_id).bind(&token).bind(event_id).execute(state.db.pool()).await?;
+    audit_pass(&state, event_id, booking_id, None, actor_id, &claims.role,
+        "registration_token_regenerated", json!({})).await?;
+    Ok(Json(json!({ "success": true, "data": { "registration_token": token } })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ImportOptions {
+    pub dry_run: Option<bool>,
+}
+
+async fn multipart_bytes(mut multipart: axum::extract::Multipart) -> AppResult<(String, Vec<u8>)> {
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        if field.name() == Some("file") {
+            let name = field.file_name().unwrap_or("import.csv").to_string();
+            let bytes = field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+            return Ok((name, bytes.to_vec()));
+        }
+    }
+    Err(AppError::BadRequest("No file provided".to_string()))
+}
+
+fn header_map(headers: &[String]) -> std::collections::HashMap<String, usize> {
+    headers.iter().enumerate().map(|(i, h)| (h.trim().to_ascii_lowercase(), i)).collect()
+}
+fn cell<'a>(row: &'a [String], map: &std::collections::HashMap<String, usize>, key: &str) -> Option<&'a str> {
+    map.get(key).and_then(|i| row.get(*i)).map(|v| v.trim()).filter(|v| !v.is_empty())
+}
+
+/// POST /events/{eid}/bookings/import — CSV/XLSX of bookings.
+pub async fn import_bookings(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    multipart: axum::extract::Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let (name, bytes) = multipart_bytes(multipart).await?;
+    let rows = crate::services::tabular_import::read_table(&bytes, &name)?;
+    if rows.is_empty() { return Err(AppError::BadRequest("File is empty".to_string())); }
+    let map = header_map(&rows[0]);
+    for required in ["company_name", "contact_person", "contact_phone"] {
+        if !map.contains_key(required) {
+            return Err(AppError::BadRequest(format!("Missing column '{}'", required)));
+        }
+    }
+    let mut created = 0; let mut errors = Vec::new();
+    for (i, row) in rows.iter().enumerate().skip(1) {
+        if row.iter().all(|v| v.trim().is_empty()) { continue; }
+        let company = cell(row, &map, "company_name").unwrap_or("");
+        let person = cell(row, &map, "contact_person").unwrap_or("");
+        let phone_raw = cell(row, &map, "contact_phone").unwrap_or("");
+        let phone = crate::models::guest::normalize_phone(phone_raw);
+        if company.is_empty() || person.is_empty() || phone.len() < 10 {
+            errors.push(json!({"row": i + 1, "message": "Missing company, contact person or invalid phone"}));
+            continue;
+        }
+        let email = cell(row, &map, "contact_email").map(str::to_string);
+        let package_name = cell(row, &map, "package_name").map(str::to_string);
+        let quantity: i32 = cell(row, &map, "quantity").and_then(|v| v.parse().ok()).unwrap_or(1);
+        let package_id = if let Some(ref pname) = package_name {
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM event_packages WHERE event_id = $1 AND LOWER(name) = LOWER($2)")
+                .bind(event_id).bind(pname).fetch_optional(state.db.pool()).await?
+        } else { None };
+        let bid = Uuid::new_v4();
+        if let Err(e) = sqlx::query(
+            r#"INSERT INTO bookings (id, event_id, company_name, contact_person, contact_phone, contact_email,
+                   registration_token, workflow_status, contact_email_is_free, created_by)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,'requested',$8,$9)"#,
+        ).bind(bid).bind(event_id).bind(company).bind(person).bind(&phone).bind(email)
+            .bind(Uuid::new_v4().simple().to_string())
+            .bind(is_free_email(None)).bind(actor_id)
+            .execute(state.db.pool()).await {
+            errors.push(json!({"row": i + 1, "message": format!("Database error: {}", e)}));
+            continue;
+        }
+        if let Some(pid) = package_id {
+            let _ = sqlx::query("INSERT INTO booking_packages (booking_id, package_id, quantity) VALUES ($1,$2,$3)")
+                .bind(bid).bind(pid).bind(quantity.max(1)).execute(state.db.pool()).await;
+        }
+        created += 1;
+    }
+    Ok(Json(json!({ "success": true, "data": { "total_rows": rows.len().saturating_sub(1), "created": created, "errors": errors } })))
+}
+
+/// POST /events/{eid}/bookings/{bid}/passes/import — CSV/XLSX of named passes.
+pub async fn import_passes(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, booking_id)): Path<(Uuid, Uuid)>,
+    multipart: axum::extract::Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = org_id_from(&claims)?;
+    let actor_id = user_id_from(&claims)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let booking = sqlx::query_as::<_, Booking>("SELECT * FROM bookings WHERE id = $1 AND event_id = $2")
+        .bind(booking_id).bind(event_id).fetch_optional(state.db.pool()).await?
+        .ok_or(AppError::NotFound("Booking not found".into()))?;
+    let (name, bytes) = multipart_bytes(multipart).await?;
+    let rows = crate::services::tabular_import::read_table(&bytes, &name)?;
+    if rows.is_empty() { return Err(AppError::BadRequest("File is empty".to_string())); }
+    let map = header_map(&rows[0]);
+    for required in ["full_name", "phone"] {
+        if !map.contains_key(required) {
+            return Err(AppError::BadRequest(format!("Missing column '{}'", required)));
+        }
+    }
+    let event = crate::repository::event_repository::EventRepository::get_by_id(state.db.pool(), event_id).await?
+        .ok_or(AppError::EventNotFound)?;
+    let mut created = 0; let mut updated = 0; let mut errors = Vec::new();
+    for (i, row) in rows.iter().enumerate().skip(1) {
+        if row.iter().all(|v| v.trim().is_empty()) { continue; }
+        let full_name = cell(row, &map, "full_name").unwrap_or("");
+        let phone = crate::models::guest::normalize_phone(cell(row, &map, "phone").unwrap_or(""));
+        if full_name.len() < 2 || phone.len() < 10 {
+            errors.push(json!({"row": i + 1, "message": "Missing name or invalid phone"}));
+            continue;
+        }
+        let email = cell(row, &map, "email").map(str::to_string);
+        let table = cell(row, &map, "table_number").map(str::to_string);
+        let category = cell(row, &map, "guest_category").map(str::to_string);
+        let package_name = cell(row, &map, "package_name").map(str::to_string);
+        let package_id = if let Some(ref pname) = package_name {
+            sqlx::query_scalar::<_, Uuid>("SELECT id FROM event_packages WHERE event_id = $1 AND LOWER(name) = LOWER($2)")
+                .bind(event_id).bind(pname).fetch_optional(state.db.pool()).await?
+        } else { None };
+        // Match an existing unnamed pass by phone, otherwise create one.
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM guests WHERE booking_id = $1 AND phone = $2 LIMIT 1",
+        ).bind(booking_id).bind(&phone).fetch_optional(state.db.pool()).await?;
+        let guest_id = if let Some(id) = existing {
+            sqlx::query("UPDATE guests SET full_name=$2, email=$3, table_number=COALESCE($4,table_number), guest_category=COALESCE($5,guest_category), package_id=COALESCE($6,package_id), pass_state='named', named_at=NOW(), updated_at=NOW() WHERE id=$1")
+                .bind(id).bind(full_name).bind(email).bind(table).bind(category).bind(package_id)
+                .execute(state.db.pool()).await?;
+            updated += 1; id
+        } else {
+            let id = Uuid::new_v4();
+            if let Err(e) = sqlx::query(
+                r#"INSERT INTO guests (id, event_id, full_name, phone, email, table_number, guest_category,
+                       device_type, contact_method, party_size, booking_id, package_id, pass_state, named_at,
+                       card_issued_at, created_at, updated_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'smartphone','sms',1,$8,$9,'named',NOW(),NOW(),NOW(),NOW())"#,
+            ).bind(id).bind(event_id).bind(full_name).bind(&phone).bind(email).bind(table)
+                .bind(category).bind(booking_id).bind(package_id).execute(state.db.pool()).await {
+                errors.push(json!({"row": i + 1, "message": format!("Database error: {}", e)}));
+                continue;
+            }
+            created += 1; id
+        };
+        let _ = crate::handlers::invitations::ensure_invitation(state.db.pool(), guest_id).await;
+        audit_pass(&state, event_id, booking_id, Some(guest_id), actor_id, &claims.role,
+            "pass_imported", json!({"full_name": full_name})).await?;
+    }
+    let _ = booking;
+    let _ = event;
+    Ok(Json(json!({ "success": true, "data": { "total_rows": rows.len().saturating_sub(1), "created": created, "updated": updated, "errors": errors } })))
+}

@@ -247,6 +247,12 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Booking CRUD, imports & card studio (2026-11-27)
+- ✅ Bookings can be edited and deleted; registration links can be regenerated. Added CSV/XLSX import for bookings and passes with per-row error reports (`calamine` for spreadsheets).
+- ✅ Card Studio previews now fall back to `/api/v1/files/{front_file_id}` and support editing existing templates with a visual QR overlay.
+- ✅ Public check-in card page can download the QR PNG, the card PDF, and copy its link.
+- ✅ Fixed audit FK ordering on booking delete.
+
 ### CSV import hardening (2026-11-26)
 - ✅ Phone numbers are normalised on CSV import, single guest create and bulk create: `785023234`, `0785023234`, `065023234` and `+255785023234` all become `255…`. Handles Excel stripping the leading zero from 07xx/06xx numbers.
 - ✅ Import returns a detailed report: total rows, imported, duplicates (in-file and in-event), invalid rows, DB failures, and per-row errors with row number, field, reason and raw data. The UI shows the report and can download failed rows as CSV.
