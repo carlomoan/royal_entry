@@ -247,6 +247,9 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Card Studio QR positioning fix (2026-11-27)
+- ✅ The QR box now uses the measured displayed-image size (`canvasSize`) for both position and dimensions, matching the field boxes. Dragging/resizing writes back percentages from the actual DOM rect, so the box no longer jumps off position when the image scales with the viewport. Corner-only resize handles added.
+
 ### Branding & card colour tools (2026-11-27)
 - ✅ The official logo (`/RoyalEntrylogoVector.svg`, from `assets/RoyalEntrylogoVector.svg`) is now used for every brand mark via a shared `BrandLogo` component — sidebar, receipts, invoices, public guest pages and error pages.
 - ✅ Card Studio has a global Text colour picker with presets applying to all stamped fields, per-field overrides, and a QR colour picker that is honoured by the renderer.

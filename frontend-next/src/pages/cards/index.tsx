@@ -499,37 +499,70 @@ export default function CardSetupPage() {
                   }}
                 />
 
+                {(() => {
+                  const qrHandleStyle: React.CSSProperties = {
+                    backgroundColor: "#ffffff",
+                    border: "1px solid #d97706",
+                    borderRadius: 3,
+                  };
+                  return (
                 <Rnd
-                  size={{ width: `${qrPos.w}%`, height: `${qrPos.h}%` }}
-                  position={{ x: (qrPos.x / 100) * 800, y: (qrPos.y / 100) * 600 }}
-                  onDragStop={(_, d) => {
-                    const parent = d.node.parentNode as HTMLElement;
-                    if (parent) {
-                      setQrPos((p) => ({
-                        ...p,
-                        x: Math.max(0, Math.min(100, (d.x as number / parent.offsetWidth) * 100)),
-                        y: Math.max(0, Math.min(100, (d.y as number / parent.offsetHeight) * 100)),
-                      }));
-                    }
+                  size={{
+                    width: (qrPos.w / 100) * canvasSize.width,
+                    height: (qrPos.h / 100) * canvasSize.height,
                   }}
-                  onResizeStop={(_, __, ref) => {
-                    const parent = ref.parentNode as HTMLElement;
-                    if (parent) {
-                      setQrPos((p) => ({
-                        ...p,
-                        w: Math.max(5, Math.min(50, (ref.offsetWidth / parent.offsetWidth) * 100)),
-                        h: Math.max(5, Math.min(50, (ref.offsetHeight / parent.offsetHeight) * 100)),
-                      }));
-                    }
+                  position={{
+                    x: (qrPos.x / 100) * canvasSize.width,
+                    y: (qrPos.y / 100) * canvasSize.height,
                   }}
                   bounds="parent"
+                  enableResizing={{
+                    topLeft: true,
+                    topRight: true,
+                    bottomLeft: true,
+                    bottomRight: true,
+                    top: false,
+                    right: false,
+                    bottom: false,
+                    left: false,
+                  }}
+                  resizeHandleStyles={{
+                    topLeft: qrHandleStyle,
+                    topRight: qrHandleStyle,
+                    bottomLeft: qrHandleStyle,
+                    bottomRight: qrHandleStyle,
+                  }}
+                  onDragStop={(_, d) => {
+                    const imageRect = designImageRef.current?.getBoundingClientRect();
+                    const boxRect = d.node.getBoundingClientRect();
+                    if (!imageRect || !imageRect.width || !imageRect.height) return;
+                    setQrPos((p) => ({
+                      ...p,
+                      x: clampPercent(((boxRect.left - imageRect.left) / imageRect.width) * 100),
+                      y: clampPercent(((boxRect.top - imageRect.top) / imageRect.height) * 100),
+                    }));
+                  }}
+                  onResizeStop={(_, __, ref) => {
+                    const imageRect = designImageRef.current?.getBoundingClientRect();
+                    const boxRect = ref.getBoundingClientRect();
+                    if (!imageRect || !imageRect.width || !imageRect.height) return;
+                    setQrPos((p) => ({
+                      ...p,
+                      x: clampPercent(((boxRect.left - imageRect.left) / imageRect.width) * 100),
+                      y: clampPercent(((boxRect.top - imageRect.top) / imageRect.height) * 100),
+                      w: clampPercent((boxRect.width / imageRect.width) * 100),
+                      h: clampPercent((boxRect.height / imageRect.height) * 100),
+                    }));
+                  }}
                   className="border-2 border-dashed border-gold-500 bg-gold-500/20 flex items-center justify-center cursor-move z-10"
-                  style={{ minWidth: "40px", minHeight: "40px" }}
+                  style={{ minWidth: 24, minHeight: 24 }}
                 >
                   <div className="bg-white/90 rounded-full p-2 shadow-lg pointer-events-none">
                     <QrCode className="h-5 w-5 text-gold-700" />
                   </div>
                 </Rnd>
+                  );
+                })()}
 
                 {CARD_FIELD_KEYS.map((key) => {
                   const pos = fieldPositions[key];
