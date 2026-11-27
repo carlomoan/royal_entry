@@ -6,6 +6,7 @@
 //   - "receipt"  → issued after payment, confirms what was received
 // Wrap in a `.print-area` container to print just this document.
 // ==============================================================================
+import BrandLogo from "@/components/brand/BrandLogo";
 import { formatTZS, formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -60,14 +61,13 @@ export default function ReceiptDocument({
       {/* Header band */}
       <div className="bg-navy-950 px-8 py-6 text-white">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-gradient-to-br from-gold-400 to-gold-600 text-lg font-black text-navy-950">
-              R
-            </div>
-            <div>
-              <p className="text-lg font-bold leading-tight">RoyalEntry</p>
-              <p className="text-xs text-slate-400">Elite Access Solutions</p>
-            </div>
+          <div className="min-w-0">
+            <BrandLogo
+              showName
+              className="h-11 w-11"
+              nameClassName="text-lg font-bold leading-tight text-white"
+            />
+            <p className="mt-0.5 pl-[52px] text-xs text-slate-400">Elite Access Solutions</p>
           </div>
           <div className="text-right">
             <p className="text-2xl font-black tracking-wide text-gold-400">{heading}</p>

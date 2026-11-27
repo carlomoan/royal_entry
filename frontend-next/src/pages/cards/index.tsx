@@ -1,10 +1,10 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Upload, Save, QrCode, Trash2, Eye, Edit3, CheckCircle2,
   AlertCircle, Loader2, Image as ImageIcon, ArrowRight, ArrowLeft,
-  Download, Copy, Check
+  Download, Copy, Check, RotateCcw
 } from "lucide-react";
 import { Rnd } from "react-rnd";
 import toast from "react-hot-toast";
@@ -19,6 +19,74 @@ type TemplatePreviewSource = {
   theme_config?: { front_image_url?: unknown; front_file_id?: string } | null;
   background_file_id?: string | null;
 };
+
+type CardFieldKey = "guest_name" | "ticket_no" | "table_number" | "category";
+type FieldPosition = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: string;
+  align: "left" | "center";
+};
+type FieldPositions = Record<CardFieldKey, FieldPosition>;
+
+const CARD_FIELD_KEYS: CardFieldKey[] = ["guest_name", "ticket_no", "table_number", "category"];
+
+const DEFAULT_QR_COLOR = "#000000";
+const TEXT_COLOR_PRESETS = [
+  { label: "Navy", value: "#0f172a" },
+  { label: "Maroon", value: "#7a1220" },
+  { label: "Gold", value: "#b8860b" },
+  { label: "White", value: "#ffffff" },
+  { label: "Black", value: "#000000" },
+] as const;
+
+const isHexColor = (value: unknown): value is string =>
+  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+
+const CARD_FIELD_META: Record<CardFieldKey, { label: string; sample: string }> = {
+  guest_name: { label: "Jina kamili", sample: "Jina kamili: Asha Mwangi" },
+  ticket_no: { label: "Namba ya tiketi", sample: "Tiketi: RE-2026-0142" },
+  table_number: { label: "Namba ya meza", sample: "Meza: 12" },
+  category: { label: "Kikundi", sample: "VIP" },
+};
+
+/** Caritas check-in pass layout; every call returns fresh objects. */
+function caritasFieldLayout(): FieldPositions {
+  return {
+    guest_name: { x: 10, y: 37, w: 80, h: 9, color: "#2563eb", align: "center" },
+    ticket_no: { x: 10, y: 49, w: 80, h: 9, color: "#7c3aed", align: "center" },
+    table_number: { x: 10, y: 60, w: 53, h: 8, color: "#059669", align: "center" },
+    category: { x: 10, y: 69, w: 53, h: 10, color: "#e11d48", align: "center" },
+  };
+}
+
+const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
+
+/** Read stored field_positions defensively; missing/invalid values fall back to Caritas. */
+function normalizeFieldPositions(stored: unknown): FieldPositions {
+  const result = caritasFieldLayout();
+  if (!stored || typeof stored !== "object") return result;
+  const raw = stored as Record<string, Partial<FieldPosition> | undefined>;
+  const pct = (value: unknown, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) ? clampPercent(value) : fallback;
+
+  CARD_FIELD_KEYS.forEach((key) => {
+    const value = raw[key];
+    if (!value || typeof value !== "object") return;
+    const fallback = result[key];
+    result[key] = {
+      x: pct(value.x, fallback.x),
+      y: pct(value.y, fallback.y),
+      w: pct(value.w, fallback.w),
+      h: pct(value.h, fallback.h),
+      color: isHexColor(value.color) ? value.color : fallback.color,
+      align: value.align === "left" || value.align === "center" ? value.align : fallback.align,
+    };
+  });
+  return result;
+}
 
 type PreviewEvent = { id: string; title?: string };
 type PreviewGuest = {
@@ -54,8 +122,53 @@ export default function CardSetupPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewEventId, setPreviewEventId] = useState("");
   const [previewGuestId, setPreviewGuestId] = useState("");
+  const [fieldPositions, setFieldPositions] = useState<FieldPositions>(() => caritasFieldLayout());
+  const [qrColor, setQrColor] = useState<string>(DEFAULT_QR_COLOR);
+  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const designImageRef = useRef<HTMLImageElement>(null);
+
+  // The Rnd boxes are positioned in pixels, so keep them in sync with the
+  // displayed image size (it scales with the viewport).
+  useEffect(() => {
+    if (step !== "position" || !frontImage) return;
+    const image = designImageRef.current;
+    if (!image) return;
+    const measure = () => {
+      const rect = image.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setCanvasSize({ width: rect.width, height: rect.height });
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [step, frontImage]);
+
+  const updateField = (key: CardFieldKey, patch: Partial<FieldPosition>) => {
+    setFieldPositions((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  };
+
+  const applyColorToAllFields = (color: string) => {
+    setFieldPositions((prev) => {
+      const next = { ...prev };
+      CARD_FIELD_KEYS.forEach((key) => {
+        next[key] = { ...next[key], color };
+      });
+      return next;
+    });
+  };
+
+  const resetFieldPositions = () => {
+    setFieldPositions(caritasFieldLayout());
+    toast.success("Field positions reset to the Caritas layout");
+  };
 
   // Fetch existing templates
   const { data: templates = [], isLoading: templatesLoading } = useQuery({
@@ -163,6 +276,8 @@ export default function CardSetupPage() {
     setTemplateName("");
     setTemplateDescription("");
     setQrPos({ x: 65, y: 75, w: 20, h: 20 });
+    setFieldPositions(caritasFieldLayout());
+    setQrColor(DEFAULT_QR_COLOR);
     setEditingId(null);
   };
 
@@ -201,6 +316,8 @@ export default function CardSetupPage() {
         front_file_id: frontFileId,
         front_image_url: frontImage,
         qr_position: qrPos,
+        qr_color: qrColor,
+        field_positions: fieldPositions,
       },
       is_active: true,
     };
@@ -225,6 +342,8 @@ export default function CardSetupPage() {
       w: num(storedQr?.w, 20),
       h: num(storedQr?.h, 20),
     });
+    setFieldPositions(normalizeFieldPositions(t?.theme_config?.field_positions));
+    setQrColor(isHexColor(t?.theme_config?.qr_color) ? t.theme_config.qr_color : DEFAULT_QR_COLOR);
     setEditingId(t?.id || null);
     setStep("position");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -359,7 +478,7 @@ export default function CardSetupPage() {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">Position QR Code</h3>
                   <p className="text-sm text-slate-500">
-                    Drag and resize the yellow box to mark where the QR code should appear
+                    Drag and resize the yellow QR box and the coloured field boxes to mark where each value should appear
                   </p>
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => setStep("upload")}>
@@ -367,8 +486,10 @@ export default function CardSetupPage() {
                 </Button>
               </div>
 
-              <div className="relative border-2 border-slate-200 rounded-lg overflow-hidden bg-slate-100 mx-auto max-w-2xl">
+              <div className="w-full overflow-x-auto">
+              <div className="relative border-2 border-slate-200 rounded-lg overflow-hidden bg-slate-100 mx-auto max-w-2xl min-w-[600px] sm:min-w-0">
                 <img
+                  ref={designImageRef}
                   src={frontImage}
                   alt="Card Design"
                   className="w-full h-auto block"
@@ -409,6 +530,96 @@ export default function CardSetupPage() {
                     <QrCode className="h-5 w-5 text-gold-700" />
                   </div>
                 </Rnd>
+
+                {CARD_FIELD_KEYS.map((key) => {
+                  const pos = fieldPositions[key];
+                  const meta = CARD_FIELD_META[key];
+                  const handleStyle: React.CSSProperties = {
+                    backgroundColor: "#ffffff",
+                    border: `1px solid ${pos.color}`,
+                    borderRadius: 3,
+                  };
+                  return (
+                    <Rnd
+                      key={key}
+                      size={{
+                        width: (pos.w / 100) * canvasSize.width,
+                        height: (pos.h / 100) * canvasSize.height,
+                      }}
+                      position={{
+                        x: (pos.x / 100) * canvasSize.width,
+                        y: (pos.y / 100) * canvasSize.height,
+                      }}
+                      bounds="parent"
+                      enableResizing={{
+                        topLeft: true,
+                        topRight: true,
+                        bottomLeft: true,
+                        bottomRight: true,
+                        top: false,
+                        right: false,
+                        bottom: false,
+                        left: false,
+                      }}
+                      resizeHandleStyles={{
+                        topLeft: handleStyle,
+                        topRight: handleStyle,
+                        bottomLeft: handleStyle,
+                        bottomRight: handleStyle,
+                      }}
+                      onDragStop={(_, d) => {
+                        const imageRect = designImageRef.current?.getBoundingClientRect();
+                        const boxRect = d.node.getBoundingClientRect();
+                        if (!imageRect || !imageRect.width || !imageRect.height) return;
+                        setFieldPositions((prev) => ({
+                          ...prev,
+                          [key]: {
+                            ...prev[key],
+                            x: clampPercent(((boxRect.left - imageRect.left) / imageRect.width) * 100),
+                            y: clampPercent(((boxRect.top - imageRect.top) / imageRect.height) * 100),
+                          },
+                        }));
+                      }}
+                      onResizeStop={(_, __, ref) => {
+                        const imageRect = designImageRef.current?.getBoundingClientRect();
+                        const boxRect = ref.getBoundingClientRect();
+                        if (!imageRect || !imageRect.width || !imageRect.height) return;
+                        setFieldPositions((prev) => ({
+                          ...prev,
+                          [key]: {
+                            ...prev[key],
+                            x: clampPercent(((boxRect.left - imageRect.left) / imageRect.width) * 100),
+                            y: clampPercent(((boxRect.top - imageRect.top) / imageRect.height) * 100),
+                            w: clampPercent((boxRect.width / imageRect.width) * 100),
+                            h: clampPercent((boxRect.height / imageRect.height) * 100),
+                          },
+                        }));
+                      }}
+                      className="border-2 border-dashed cursor-move z-10 flex"
+                      style={{
+                        borderColor: pos.color,
+                        backgroundColor: `${pos.color}22`,
+                        color: pos.color,
+                        minWidth: 24,
+                        minHeight: 18,
+                      }}
+                    >
+                      <div
+                        className={`w-full h-full flex flex-col justify-center px-1 pointer-events-none overflow-hidden ${
+                          pos.align === "center" ? "items-center text-center" : "items-start text-left"
+                        }`}
+                      >
+                        <span className="text-[9px] font-bold uppercase leading-tight drop-shadow-sm">
+                          {meta.label}
+                        </span>
+                        <span className="text-[10px] font-semibold leading-tight w-full truncate drop-shadow-sm">
+                          {meta.sample}
+                        </span>
+                      </div>
+                    </Rnd>
+                  );
+                })}
+              </div>
               </div>
 
               {/* QR Position Info */}
@@ -431,6 +642,132 @@ export default function CardSetupPage() {
                     <span className="text-slate-500">H:</span>
                     <span className="ml-1 font-mono font-semibold">{qrPos.h.toFixed(1)}%</span>
                   </div>
+                </div>
+              </div>
+
+              {/* Text colour + QR colour tools */}
+              <div className="max-w-2xl mx-auto rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900">Text colour</h4>
+                  <p className="text-[11px] text-slate-500">
+                    Colours are stamped onto the card when a guest card is rendered.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-700">All fields text colour</p>
+                      <label className="mt-2 flex items-center gap-2">
+                        <input
+                          type="color"
+                          aria-label="All fields text colour"
+                          value={fieldPositions.guest_name.color}
+                          onChange={(e) => applyColorToAllFields(e.target.value)}
+                          className="h-9 w-12 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+                        />
+                        <span className="font-mono text-xs text-slate-600">
+                          {fieldPositions.guest_name.color}
+                        </span>
+                      </label>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Applies to all four fields; fine-tune individual fields below.
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-600">Quick presets</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {TEXT_COLOR_PRESETS.map((preset) => (
+                          <button
+                            key={preset.value}
+                            type="button"
+                            title={`${preset.label} (${preset.value})`}
+                            aria-label={`Apply ${preset.label} text colour to all fields`}
+                            onClick={() => applyColorToAllFields(preset.value)}
+                            className={`h-8 w-8 rounded-full border-2 transition-transform hover:scale-110 ${
+                              fieldPositions.guest_name.color.toLowerCase() === preset.value
+                                ? "border-gold-500 ring-2 ring-gold-300"
+                                : "border-slate-300"
+                            }`}
+                            style={{ backgroundColor: preset.value }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold text-slate-700">QR colour</p>
+                    <label className="mt-2 flex items-center gap-2">
+                      <input
+                        type="color"
+                        aria-label="QR colour"
+                        value={qrColor}
+                        onChange={(e) => setQrColor(e.target.value)}
+                        className="h-9 w-12 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+                      />
+                      <span className="font-mono text-xs text-slate-600">{qrColor}</span>
+                    </label>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Colour used for the QR code on rendered guest cards.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Field positions */}
+              <div className="bg-slate-50 rounded-lg p-4 max-w-2xl mx-auto space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600">Field positions</p>
+                    <p className="text-[11px] text-slate-500">
+                      Choose the text colour and alignment stamped onto the card.
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={resetFieldPositions}>
+                    <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset fields to Caritas layout
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {CARD_FIELD_KEYS.map((key) => {
+                    const pos = fieldPositions[key];
+                    return (
+                      <div
+                        key={key}
+                        className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      >
+                        <span
+                          className="h-3 w-3 rounded-full shrink-0"
+                          style={{ backgroundColor: pos.color }}
+                        />
+                        <span className="flex-1 min-w-[90px] text-xs font-medium text-slate-700">
+                          {CARD_FIELD_META[key].label}
+                        </span>
+                        <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                          Colour
+                          <input
+                            type="color"
+                            aria-label={`${CARD_FIELD_META[key].label} colour`}
+                            value={pos.color}
+                            onChange={(e) => updateField(key, { color: e.target.value })}
+                            className="h-7 w-9 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+                          />
+                        </label>
+                        <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                          Align
+                          <select
+                            aria-label={`${CARD_FIELD_META[key].label} alignment`}
+                            value={pos.align}
+                            onChange={(e) =>
+                              updateField(key, { align: e.target.value as "left" | "center" })
+                            }
+                            className="rounded border border-slate-300 bg-white px-1.5 py-1 text-xs focus:border-gold-500 focus:outline-none"
+                          >
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                          </select>
+                        </label>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

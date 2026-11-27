@@ -12,6 +12,7 @@ import {
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
+import BrandLogo from "@/components/brand/BrandLogo";
 import { cn, formatDate, formatTime } from "@/lib/utils";
 
 type ParkingVariant = { class_name?: string | null; instructions?: string | null };
@@ -284,7 +285,11 @@ export default function CheckInCardPage() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 print:hidden">
           <div className="flex items-center gap-2 text-gold-400">
             <Sparkles className="h-4 w-4" />
-            <span className="text-xs font-bold uppercase tracking-[0.2em]">RoyalEntry</span>
+            <BrandLogo
+              showName
+              className="h-6 w-6"
+              nameClassName="text-xs font-bold uppercase tracking-[0.2em] text-gold-400"
+            />
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="ghost" onClick={() => window.print()}>
@@ -533,7 +538,8 @@ export default function CheckInCardPage() {
           )}
 
           <div className="border-t border-slate-100 px-6 py-4 text-center text-xs text-slate-400">
-            Powered by <span className="font-semibold text-gold-600">RoyalEntry</span>
+            Powered by{" "}
+            <BrandLogo showName className="h-4 w-4" nameClassName="text-xs font-semibold text-gold-600" />
           </div>
         </div>
 

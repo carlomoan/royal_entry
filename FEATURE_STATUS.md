@@ -247,6 +247,15 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Branding & card colour tools (2026-11-27)
+- ✅ The official logo (`/RoyalEntrylogoVector.svg`, from `assets/RoyalEntrylogoVector.svg`) is now used for every brand mark via a shared `BrandLogo` component — sidebar, receipts, invoices, public guest pages and error pages.
+- ✅ Card Studio has a global Text colour picker with presets applying to all stamped fields, per-field overrides, and a QR colour picker that is honoured by the renderer.
+
+### Real-data card stamping (2026-11-27)
+- ✅ The card renderer now stamps real guest data onto uploaded templates: guest name, human-friendly ticket code, table number and category (VIP/KAWAIDA), plus the QR. Positions come from `theme_config.field_positions` with Caritas-layout defaults; text auto-fits so full names are never truncated.
+- ✅ Email and WhatsApp check-in delivery attach the SAME fully rendered card image (WhatsApp via NextSMS `header.image` with base64). Public PDF download uses the same rendered card.
+- ✅ Card Studio has a field-position designer: four draggable/resizable boxes, per-field colour and alignment controls, and a reset-to-Caritas-layout button.
+
 ### Payment tracking & batch delivery (2026-11-27)
 - ✅ Every pledge payment (single or bulk) is recorded in `pledge_payments` with method, reference, notes, recorder and batch id. `GET /events/{eid}/michango/payments` provides searchable history with stats; the Michango tab shows it.
 - ✅ SMS broadcasts now use NextSMS v2 `/api/sms/v2/text/multi` — one request with personalised text per recipient. Verified: 13 recipients, 1 batch request, 13 sent / 0 failed.

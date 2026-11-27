@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Home, ArrowLeft, AlertTriangle, ShieldX, Lock, Search, ServerCrash } from "lucide-react";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 interface ErrorPageProps {
   code: string;
@@ -49,9 +50,10 @@ function ErrorLayout({ code, title, message, icon: Icon, accentColor }: ErrorPag
           </button>
         </div>
 
-        <p className="mt-8 text-xs text-slate-400">
-          RoyalEntry · Elite Access Solutions
-        </p>
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400">
+          <BrandLogo showName className="h-5 w-5" nameClassName="text-sm font-bold text-navy-950" />
+          <span>· Elite Access Solutions</span>
+        </div>
       </div>
     </div>
   );

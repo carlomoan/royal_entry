@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 import { Button, Card, Badge } from "@/components/ui";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function PublicInvitationPage() {
   const router = useRouter();
@@ -82,7 +83,13 @@ export default function PublicInvitationPage() {
 
         <Card className="overflow-hidden p-0">
           <div className="bg-navy-950 px-8 py-8 text-center text-white">
-            <p className="text-xs font-bold uppercase tracking-[0.3em] text-gold-400">RoyalEntry</p>
+            <div className="flex justify-center">
+              <BrandLogo
+                showName
+                className="h-10 w-10"
+                nameClassName="text-sm font-bold uppercase tracking-[0.3em] text-white"
+              />
+            </div>
             <h1 className="mt-3 text-3xl font-black">You&apos;re Invited</h1>
             <p className="mt-1 text-lg font-semibold text-gold-400">{data.title}</p>
           </div>

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 type InvoiceData = {
   invoice_number: string;
@@ -140,7 +141,11 @@ export default function PublicInvoicePage() {
               <FileText className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-[0.25em] text-gold-400">RoyalEntry</p>
+              <BrandLogo
+                showName
+                className="h-8 w-8"
+                nameClassName="text-xs font-bold uppercase tracking-[0.25em] text-white"
+              />
               <p className="break-words text-sm text-slate-300">Invoice {data.invoice_number}</p>
             </div>
           </div>
@@ -156,7 +161,13 @@ export default function PublicInvoicePage() {
 
         <div className="overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div className="border-b border-slate-100 bg-navy-950 px-5 py-6 text-center text-white sm:px-8">
-            <p className="text-xs font-bold uppercase tracking-[0.3em] text-gold-400">RoyalEntry</p>
+            <div className="flex justify-center">
+              <BrandLogo
+                showName
+                className="h-10 w-10"
+                nameClassName="text-sm font-bold uppercase tracking-[0.3em] text-white"
+              />
+            </div>
             <h1 className="mt-2 break-words text-2xl font-black sm:text-3xl">
               Invoice {data.invoice_number}
             </h1>

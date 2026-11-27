@@ -10,6 +10,7 @@ import {
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Button, Badge } from "@/components/ui";
+import BrandLogo from "@/components/brand/BrandLogo";
 import { formatDate, formatTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -297,7 +298,8 @@ export default function PublicInvitationPage() {
         {/* Footer */}
         <div className="mt-8 text-center">
           <p className="text-sm text-slate-400">
-            Powered by <span className="font-semibold text-gold-400">RoyalEntry</span>
+            Powered by{" "}
+            <BrandLogo showName className="h-4 w-4" nameClassName="text-sm font-semibold text-gold-500" />
           </p>
         </div>
       </div>

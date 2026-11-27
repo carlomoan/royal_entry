@@ -523,3 +523,51 @@ fn draw_text_on_canvas(
         cursor_x += glyph.unpositioned().h_metrics().advance_width;
     }
 }
+
+/// Public colour parser for field stamping.
+pub fn parse_color_for_field(color: &str) -> (u8, u8, u8, u8) {
+    parse_color(color, (0, 0, 0, 255))
+}
+
+/// Stamp one data field into a designer-defined box. Text is auto-fitted to
+/// the box width so full values (e.g. long names) are never truncated.
+#[allow(clippy::too_many_arguments)]
+pub fn stamp_field(
+    canvas: &mut RgbaImage,
+    text: &str,
+    x_percent: f32,
+    y_percent: f32,
+    w_percent: f32,
+    h_percent: f32,
+    canvas_width: u32,
+    canvas_height: u32,
+    color: (u8, u8, u8, u8),
+    align: &str,
+) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let font = load_font("DM Sans");
+    let max_width = (w_percent / 100.0) * canvas_width as f32;
+    let mut font_size = ((h_percent / 100.0) * canvas_height as f32 * 0.62).clamp(12.0, 120.0);
+    loop {
+        let scale = Scale::uniform(font_size);
+        let width: f32 = text
+            .chars()
+            .map(|c| font.glyph(c).scaled(scale).h_metrics().advance_width)
+            .sum();
+        if width <= max_width || font_size <= 12.0 {
+            break;
+        }
+        font_size -= 1.0;
+    }
+    let (tx, ty) = if align.eq_ignore_ascii_case("left") {
+        (x_percent + 1.5, y_percent + h_percent / 2.0)
+    } else {
+        (x_percent + w_percent / 2.0, y_percent + h_percent / 2.0)
+    };
+    draw_text_on_canvas(
+        canvas, text, tx, ty, font_size, "DM Sans", color, align,
+        canvas_width, canvas_height,
+    );
+}

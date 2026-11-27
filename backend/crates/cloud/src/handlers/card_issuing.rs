@@ -356,6 +356,18 @@ pub async fn send_checkin_credentials(
         guest.full_name, event.title, link, token
     ));
 
+    // Render the fully personalised card (template + guest data + QR) once,
+    // then attach the SAME image to email and WhatsApp.
+    let card_png = crate::cards::handlers::render_guest_card(
+        &state,
+        event.organization_id,
+        event.id,
+        guest_id,
+        event.checkin_card_template_id.or(event.card_template_id),
+    )
+    .await
+    .unwrap_or_else(|_| crate::qr::render::render_qr_png(&link).unwrap_or_default());
+
     let subject = format!("Your check-in card — {}", event.title);
     let email = guest.email.as_deref().filter(|e| !e.trim().is_empty());
     let phone = guest.phone.trim();
@@ -375,7 +387,7 @@ pub async fn send_checkin_credentials(
             sms_body,
             vars.get("pdf_url").and_then(|v| v.as_str()).unwrap_or("")
         ));
-        let receipt = state.channels.whatsapp_text(phone, &whatsapp_body).await;
+        let receipt = state.channels.whatsapp_card(phone, &card_png, &whatsapp_body).await;
         if receipt.as_ref().map(|r| r.success).unwrap_or(false) {
             used_body = whatsapp_body;
             delivered = true;
@@ -390,13 +402,12 @@ pub async fn send_checkin_credentials(
         if let Some(to) = email {
             if state.channels.is_email_ready() {
                 let html = crate::services::channels::html_wrap(&body.replace('\n', "<br>"));
-                let qr_png = crate::qr::render::render_qr_png(&link).unwrap_or_default();
-                if state.channels.email_card(to, &subject, &html, Some(&qr_png)).await
+                if state.channels.email_card(to, &subject, &html, Some(&card_png)).await
                     .map(|r| r.success).unwrap_or(false)
                 {
                     let b64 = base64::Engine::encode(
                         &base64::engine::general_purpose::STANDARD,
-                        &qr_png,
+                        &card_png,
                     );
                     used_body = format!("{html}<p><img src=\"data:image/png;base64,{b64}\" alt=\"Check-in QR\" style=\"width:180px;height:180px\" /></p>");
                     delivered = true;

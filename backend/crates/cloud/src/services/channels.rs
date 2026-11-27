@@ -884,3 +884,58 @@ impl Channels {
         Ok(out)
     }
 }
+
+impl Channels {
+    /// Send a WhatsApp template message with the rendered card image as its
+    /// header. NextSMS accepts base64 image data in `header.image.file`.
+    pub async fn whatsapp_card(
+        &self,
+        to: &str,
+        image_png: &[u8],
+        message: &str,
+    ) -> AppResult<ProviderReceipt> {
+        if self.config.whatsapp_sandbox || !self.whatsapp_ready() {
+            return Ok(self.log_sandbox("whatsapp", to, message).await);
+        }
+        if self.config.whatsapp_provider.eq_ignore_ascii_case("nextsms") {
+            let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, image_png);
+            let names = if self.config.nextsms_whatsapp_placeholders.is_empty() {
+                vec!["message".to_string()]
+            } else {
+                self.config.nextsms_whatsapp_placeholders.clone()
+            };
+            let mut personalisation = serde_json::Map::new();
+            if let Some(name) = names.first() {
+                personalisation.insert(name.clone(), json!(message));
+            }
+            let body = json!({
+                "to": [normalize_tz_phone(to).parse::<u64>().unwrap_or(0)],
+                "account": self.config.nextsms_whatsapp_account,
+                "template": self.config.nextsms_whatsapp_template,
+                "personalisation": [personalisation],
+                "header": { "image": { "file": format!("data:image/png;base64,{}", b64), "name": "checkin-card.png" } },
+                "reference": format!("re-card-{}", Uuid::new_v4().simple()),
+            });
+            let response = self.client
+                .post(format!("{}/api/whatsapp/v2/text/single", self.config.nextsms_base_url.trim_end_matches('/')))
+                .bearer_auth(&self.config.nextsms_token)
+                .header("Accept", "application/json")
+                .json(&body).send().await
+                .map_err(|e| AppError::WhatsappError(format!("NextSMS WhatsApp card failed: {}", e.without_url())))?;
+            let status = response.status();
+            let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let has_errors = payload.get("errors").and_then(|v| v.as_object()).map(|m| !m.is_empty()).unwrap_or(false);
+            if status.is_success() && !has_errors {
+                let id = payload.pointer("/messages/0/id").and_then(|v| v.as_str()).map(String::from);
+                Ok(ProviderReceipt::ok("nextsms-whatsapp", id))
+            } else {
+                let reason = payload.get("message").and_then(|v| v.as_str()).unwrap_or("card send rejected").to_string();
+                Ok(ProviderReceipt::fail("nextsms-whatsapp", reason))
+            }
+        } else {
+            // Meta Cloud API needs a media upload first; fall back to text with
+            // the card link so the guest still receives their credentials.
+            self.whatsapp_text(to, message).await
+        }
+    }
+}

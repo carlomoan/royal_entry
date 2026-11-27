@@ -255,15 +255,71 @@ async fn render_for_guest(
         return Err(AppError::BadRequest("QR position falls outside the card bounds".to_string()));
     }
 
+    let qr_color_hex = config.get("qr_color").and_then(serde_json::Value::as_str).unwrap_or("#000000");
+    let qr_rgb = crate::cards::renderer::parse_color_for_field(qr_color_hex);
     let qr_code = QrCode::new(qr_url.as_bytes()).map_err(|error| AppError::QrGenerationError(error.to_string()))?;
     let qr = qr_code
         .render::<Rgba<u8>>()
         .min_dimensions(width.max(1), height.max(1))
-        .dark_color(Rgba([0, 0, 0, 255]))
+        .dark_color(Rgba([qr_rgb.0, qr_rgb.1, qr_rgb.2, 255]))
         .light_color(Rgba([0, 0, 0, 0]))
         .build();
     let qr = image::imageops::resize(&qr, width, height, FilterType::Nearest);
     image::imageops::overlay(&mut front, &qr, i64::from(left), i64::from(top));
+
+    // Stamp real guest data into the designer's field boxes. Positions come
+    // from theme_config.field_positions; defaults match the Caritas pass.
+    let guest_row = sqlx::query(
+        "SELECT full_name, table_number, guest_category FROM guests WHERE id = $1",
+    )
+    .bind(guest_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let invitation_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM invitations WHERE guest_id = $1",
+    )
+    .bind(guest_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    if let (Some(guest_row), Some(invitation_id)) = (guest_row, invitation_id) {
+        let name: String = guest_row.try_get("full_name").unwrap_or_default();
+        let table: String = guest_row.try_get("table_number").unwrap_or_default();
+        let category: String = guest_row.try_get("guest_category").unwrap_or_default();
+        let ticket = crate::models::invitation::generate_human_friendly_code(&invitation_id);
+        let category_label = if category.eq_ignore_ascii_case("VIP") || category.eq_ignore_ascii_case("VVIP") {
+            "VIP"
+        } else {
+            "KAWAIDA"
+        };
+        let defaults: serde_json::Value = serde_json::json!({
+            "guest_name": {"x": 10.0, "y": 37.0, "w": 80.0, "h": 9.0, "color": "#7a1220", "align": "left"},
+            "ticket_no": {"x": 10.0, "y": 49.0, "w": 80.0, "h": 9.0, "color": "#7a1220", "align": "left"},
+            "table_number": {"x": 10.0, "y": 60.0, "w": 53.0, "h": 8.0, "color": "#7a1220", "align": "left"},
+            "category": {"x": 10.0, "y": 69.0, "w": 53.0, "h": 10.0, "color": "#7a1220", "align": "left"},
+        });
+        let positions = config.get("field_positions").unwrap_or(&defaults);
+        for (field, value) in [
+            ("guest_name", name.as_str()),
+            ("ticket_no", ticket.as_str()),
+            ("table_number", table.as_str()),
+            ("category", category_label),
+        ] {
+            if let Some(box_cfg) = positions.get(field) {
+                let num = |key: &str, fallback: f64| {
+                    box_cfg.get(key).and_then(serde_json::Value::as_f64).unwrap_or(fallback) as f32
+                };
+                let color = crate::cards::renderer::parse_color_for_field(
+                    box_cfg.get("color").and_then(serde_json::Value::as_str).unwrap_or("#7a1220"),
+                );
+                let align = box_cfg.get("align").and_then(serde_json::Value::as_str).unwrap_or("left");
+                let (cw, ch) = (front.width(), front.height());
+                crate::cards::renderer::stamp_field(
+                    &mut front, value, num("x", 10.0), num("y", 37.0),
+                    num("w", 80.0), num("h", 9.0), cw, ch, color, align,
+                );
+            }
+        }
+    }
 
     let mut output = Cursor::new(Vec::new());
     DynamicImage::ImageRgba8(front)

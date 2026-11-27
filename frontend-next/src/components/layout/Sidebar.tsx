@@ -5,9 +5,10 @@ import { useRouter } from "next/router";
 import {
   LayoutDashboard, CalendarDays, CreditCard, BarChart3, ScrollText,
   Settings, Building2, Package, Users, Palette, MessageSquare,
-  ChevronLeft, ChevronRight, LogOut, Crown, UserCircle,
+  ChevronLeft, ChevronRight, LogOut, UserCircle,
   ScanLine, Sparkles, Gauge, QrCode, FileText,
 } from "lucide-react";
+import BrandLogo from "@/components/brand/BrandLogo";
 import { useAuth } from "@/lib/auth";
 import { isPlatformAdmin, roleLabel, can } from "@/lib/roles";
 import { cn } from "@/lib/utils";
@@ -111,18 +112,19 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
       )}
     >
       {/* Brand */}
-      <div className="flex h-16 items-center gap-3 border-b border-white/10 px-4">
-        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-gold-400 to-gold-600">
-          <Crown className="h-5 w-5 text-navy-950" />
-        </div>
-        {!collapsed && (
-          <div className="animate-fadeIn">
-            <h1 className="text-base font-bold leading-tight">RoyalEntry</h1>
-            <p className="text-[10px] uppercase tracking-wider text-slate-400">
+      <div className="flex h-16 items-center border-b border-white/10 px-4">
+        <div className="min-w-0">
+          <BrandLogo
+            showName={!collapsed}
+            className="h-9 w-9"
+            nameClassName="text-base font-bold leading-tight text-white"
+          />
+          {!collapsed && (
+            <p className="mt-0.5 animate-fadeIn pl-11 text-[10px] uppercase tracking-wider text-slate-400">
               {platform ? "Platform Console" : "Client Workspace"}
             </p>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Navigation */}

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 import { Badge, Button, Card, Input } from "@/components/ui";
+import BrandLogo from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
 
 type BookingPass = {
@@ -193,7 +194,13 @@ export default function BookingRegistrationPage() {
     <div className="min-h-screen bg-gradient-to-br from-navy-950 via-navy-900 to-navy-800 px-4 py-8 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
         <div className="mb-6 text-center text-white">
-          <p className="text-xs font-bold uppercase tracking-[0.3em] text-gold-400">RoyalEntry</p>
+          <div className="flex justify-center">
+            <BrandLogo
+              showName
+              className="h-10 w-10"
+              nameClassName="text-sm font-bold uppercase tracking-[0.3em] text-white"
+            />
+          </div>
           <h1 className="mt-2 break-words text-2xl font-black sm:text-3xl">
             Register attendee names
           </h1>
