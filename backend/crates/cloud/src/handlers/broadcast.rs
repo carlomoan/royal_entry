@@ -432,3 +432,42 @@ async fn broadcast_vars(
     );
     Ok(vars)
 }
+
+/// DELETE /events/{eid}/broadcasts/{id} — remove a campaign and all its
+/// delivery rows (e.g. a failed batch the operator wants to discard).
+pub async fn delete_broadcast(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, campaign_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM broadcast_campaigns WHERE id = $1 AND event_id = $2",
+    )
+    .bind(campaign_id).bind(event_id).fetch_one(state.db.pool()).await?;
+    if exists == 0 {
+        return Err(AppError::NotFound("Broadcast not found".to_string()));
+    }
+    sqlx::query("DELETE FROM broadcast_deliveries WHERE campaign_id = $1")
+        .bind(campaign_id).execute(state.db.pool()).await?;
+    sqlx::query("DELETE FROM broadcast_campaigns WHERE id = $1 AND event_id = $2")
+        .bind(campaign_id).bind(event_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({ "success": true, "message": "Broadcast and its delivery records deleted" })))
+}
+
+/// DELETE /events/{eid}/broadcasts/{id}/deliveries — clear delivery rows but
+/// keep the campaign in history.
+pub async fn delete_broadcast_deliveries(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path((event_id, campaign_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let result = sqlx::query(
+        "DELETE FROM broadcast_deliveries WHERE campaign_id = $1 AND campaign_id IN (SELECT id FROM broadcast_campaigns WHERE event_id = $2)",
+    )
+    .bind(campaign_id).bind(event_id).execute(state.db.pool()).await?;
+    Ok(Json(json!({ "success": true, "data": { "deleted": result.rows_affected() } })))
+}

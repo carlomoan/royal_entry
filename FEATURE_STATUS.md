@@ -263,6 +263,10 @@
 - ✅ Email and WhatsApp check-in delivery attach the SAME fully rendered card image (WhatsApp via NextSMS `header.image` with base64). Public PDF download uses the same rendered card.
 - ✅ Card Studio has a field-position designer: four draggable/resizable boxes, per-field colour and alignment controls, and a reset-to-Caritas-layout button.
 
+### Broadcast resilience & cleanup (2026-11-27)
+- ✅ SMS broadcasts try the NextSMS batch endpoint first, then automatically fall back to individual single sends when the batch is rejected (e.g. duplicate protection or sender not enabled for bulk). Verified: batch 422 → 13 single sends → 13 sent / 0 failed.
+- ✅ Failed broadcasts can be removed: `DELETE /events/{eid}/broadcasts/{id}` removes a campaign and its deliveries; `DELETE .../deliveries` clears failed rows while keeping history. Both exposed in the Broadcast tab.
+
 ### Payment tracking & batch delivery (2026-11-27)
 - ✅ Every pledge payment (single or bulk) is recorded in `pledge_payments` with method, reference, notes, recorder and batch id. `GET /events/{eid}/michango/payments` provides searchable history with stats; the Michango tab shows it.
 - ✅ SMS broadcasts now use NextSMS v2 `/api/sms/v2/text/multi` — one request with personalised text per recipient. Verified: 13 recipients, 1 batch request, 13 sent / 0 failed.

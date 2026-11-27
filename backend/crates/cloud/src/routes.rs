@@ -566,7 +566,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/v1/events/{eid}/broadcasts/{id}/deliveries",
-            get(broadcast::list_broadcast_deliveries),
+            get(broadcast::list_broadcast_deliveries).delete(broadcast::delete_broadcast_deliveries),
+        )
+        .route(
+            "/api/v1/events/{eid}/broadcasts/{id}",
+            delete(broadcast::delete_broadcast),
         )
         .route(
             "/api/v1/events/{eid}/message-history",

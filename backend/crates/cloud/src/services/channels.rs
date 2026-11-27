@@ -835,6 +835,10 @@ impl Channels {
             }
             return Ok(out);
         }
+
+        // Try the provider batch endpoint first. If it is unavailable, rejected
+        // (e.g. sender not enabled for bulk or duplicate protection), fall back
+        // to the single-send path that already works for gate codes.
         if !self.config.nextsms_token.is_empty() && !self.config.nextsms_sender.is_empty() {
             let items: Vec<serde_json::Value> = messages
                 .iter()
@@ -844,38 +848,46 @@ impl Channels {
                     "text": text,
                 }))
                 .collect();
-            let response = self.client
+            let batch_result = self.client
                 .post(format!("{}/api/sms/v2/text/multi", self.config.nextsms_base_url.trim_end_matches('/')))
                 .bearer_auth(&self.config.nextsms_token)
                 .header("Accept", "application/json")
                 .json(&json!({"messages": items, "reference": format!("re-batch-{}", Uuid::new_v4().simple())}))
-                .send().await
-                .map_err(|e| AppError::ExternalApiError(format!("NextSMS batch request failed: {}", e.without_url())))?;
-            let status = response.status();
-            let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
-            if !status.is_success() {
-                let reason = payload.get("message").and_then(|v| v.as_str()).unwrap_or("batch rejected");
-                return Ok(messages.iter().map(|_| ProviderReceipt::fail("nextsms", reason.to_string())).collect());
-            }
-            let returned = payload.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            return Ok(messages.iter().enumerate().map(|(i, _)| {
-                match returned.get(i) {
-                    Some(entry) => {
-                        let group = entry.pointer("/status/groupName").and_then(|v| v.as_str()).unwrap_or("");
-                        let rejected = group.eq_ignore_ascii_case("REJECTED") || group.eq_ignore_ascii_case("FAILED");
-                        let id = entry.get("messageId").and_then(|v| v.as_str().map(String::from)
-                            .or_else(|| v.as_i64().map(|n| n.to_string())));
-                        if rejected || id.is_none() {
-                            let why = entry.pointer("/status/description").and_then(|v| v.as_str()).unwrap_or("rejected");
-                            ProviderReceipt::fail("nextsms", why.to_string())
-                        } else {
-                            ProviderReceipt::ok("nextsms", id)
+                .send().await;
+            if let Ok(response) = batch_result {
+                let status = response.status();
+                let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
+                if status.is_success() {
+                    let returned = payload.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let receipts: Vec<ProviderReceipt> = messages.iter().enumerate().map(|(i, _)| {
+                        match returned.get(i) {
+                            Some(entry) => {
+                                let group = entry.pointer("/status/groupName").and_then(|v| v.as_str()).unwrap_or("");
+                                let rejected = group.eq_ignore_ascii_case("REJECTED") || group.eq_ignore_ascii_case("FAILED");
+                                let id = entry.get("messageId").and_then(|v| v.as_str().map(String::from)
+                                    .or_else(|| v.as_i64().map(|n| n.to_string())));
+                                if rejected || id.is_none() {
+                                    let why = entry.pointer("/status/description").and_then(|v| v.as_str()).unwrap_or("rejected");
+                                    ProviderReceipt::fail("nextsms", why.to_string())
+                                } else {
+                                    ProviderReceipt::ok("nextsms", id)
+                                }
+                            }
+                            None => ProviderReceipt::fail("nextsms", "No status returned".to_string()),
                         }
+                    }).collect();
+                    if receipts.iter().any(|r| r.success) {
+                        return Ok(receipts);
                     }
-                    None => ProviderReceipt::fail("nextsms", "No status returned".to_string()),
+                } else {
+                    let reason = payload.get("message").and_then(|v| v.as_str()).unwrap_or("batch rejected");
+                    tracing::warn!(error = reason, "NextSMS batch rejected — falling back to single sends");
                 }
-            }).collect());
+            }
         }
+
+        // Single-send fallback (works with the same sender ID and avoids the
+        // batch duplicate-protection rule).
         let mut out = Vec::with_capacity(messages.len());
         for (to, text) in messages {
             let mut receipts = self.sms(&[to.clone()], text).await?;

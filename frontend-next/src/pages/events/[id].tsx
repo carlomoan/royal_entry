@@ -558,6 +558,31 @@ function BroadcastTab({ eventId }: { eventId: string }) {
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed to send broadcast"),
   });
 
+  const invalidateBroadcastData = () => {
+    qc.invalidateQueries({ queryKey: ["broadcasts", eventId] });
+    qc.invalidateQueries({ queryKey: ["broadcast-deliveries", eventId] });
+    qc.invalidateQueries({ queryKey: ["message-history", eventId] });
+  };
+
+  const deleteBroadcastMutation = useMutation({
+    mutationFn: (campaignId: string) => api.delete(`/events/${eventId}/broadcasts/${campaignId}`),
+    onSuccess: (_response, campaignId) => {
+      invalidateBroadcastData();
+      if (expandedBroadcast === campaignId) setExpandedBroadcast(null);
+      toast.success("Broadcast and its deliveries deleted");
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.response?.data?.message ?? "Failed to delete broadcast"),
+  });
+
+  const clearDeliveriesMutation = useMutation({
+    mutationFn: (campaignId: string) => api.delete(`/events/${eventId}/broadcasts/${campaignId}/deliveries`),
+    onSuccess: (response: any) => {
+      invalidateBroadcastData();
+      toast.success(`Cleared ${response?.data?.data?.deleted ?? 0} delivery record(s)`);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.response?.data?.message ?? "Failed to clear deliveries"),
+  });
+
   const handleSend = () => {
     sendMutation.mutate({
       recipient_type: recipientType,
@@ -631,11 +656,55 @@ function BroadcastTab({ eventId }: { eventId: string }) {
                 <span>Failed: <strong className="text-rose-600">{b.failed_count ?? 0}</strong></span>
                 <span>Total: <strong className="text-slate-700">{b.total_recipients ?? 0}</strong></span>
               </div>
-              <button onClick={() => setExpandedBroadcast(expandedBroadcast === b.id ? null : b.id)} className="mt-3 text-xs font-semibold text-gold-700 hover:underline">
-                {expandedBroadcast === b.id ? "Hide delivery details" : "Show delivery details"}
-              </button>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <button type="button" onClick={() => setExpandedBroadcast(expandedBroadcast === b.id ? null : b.id)} className="text-xs font-semibold text-gold-700 hover:underline">
+                  {expandedBroadcast === b.id ? "Hide delivery details" : "Show delivery details"}
+                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm("Clear all delivery records for this broadcast? The campaign will be kept.")) {
+                        clearDeliveriesMutation.mutate(b.id);
+                      }
+                    }}
+                    disabled={clearDeliveriesMutation.isPending}
+                    className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                    title="Clear deliveries but keep this campaign"
+                  >
+                    Clear deliveries
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm("Delete this broadcast and all its delivery records? This cannot be undone.")) {
+                        deleteBroadcastMutation.mutate(b.id);
+                      }
+                    }}
+                    disabled={deleteBroadcastMutation.isPending}
+                    className="inline-flex items-center gap-1 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-100 disabled:opacity-50"
+                    title="Delete broadcast and all deliveries"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </button>
+                </div>
+              </div>
               {expandedBroadcast === b.id && (
                 <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Clear all deliveries for this campaign? The campaign will be kept.")) {
+                          clearDeliveriesMutation.mutate(b.id);
+                        }
+                      }}
+                      disabled={clearDeliveriesMutation.isPending}
+                      className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      Clear all deliveries for this campaign
+                    </button>
+                  </div>
                   {deliveriesLoading ? <p className="text-xs text-slate-400">Loading delivery statuses…</p> : deliveries.length === 0 ? <p className="text-xs text-slate-400">No delivery records.</p> : deliveries.map((delivery: any) => (
                     <div key={delivery.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
                       <span className="font-medium text-slate-700">{delivery.guest_name}</span>
