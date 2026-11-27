@@ -15,6 +15,17 @@ import { CardTemplateRecord, QrPosition } from "@/types/cardTheme";
 
 type SetupStep = "upload" | "position" | "review";
 
+// Print sizes at 96 dpi, plus the default RoyalEntry card size.
+const DOCUMENT_PRESETS: Record<string, { label: string; width: number; height: number }> = {
+  card: { label: "Card (900 × 1200)", width: 900, height: 1200 },
+  a4: { label: "A4 portrait (794 × 1123)", width: 794, height: 1123 },
+  a4_landscape: { label: "A4 landscape (1123 × 794)", width: 1123, height: 794 },
+  a5: { label: "A5 (559 × 794)", width: 559, height: 794 },
+  a3: { label: "A3 (1123 × 1587)", width: 1123, height: 1587 },
+  a1: { label: "A1 (2245 × 3179)", width: 2245, height: 3179 },
+  custom: { label: "Custom", width: 900, height: 1200 },
+};
+
 type TemplatePreviewSource = {
   theme_config?: { front_image_url?: unknown; front_file_id?: string } | null;
   background_file_id?: string | null;
@@ -124,32 +135,19 @@ export default function CardSetupPage() {
   const [previewGuestId, setPreviewGuestId] = useState("");
   const [fieldPositions, setFieldPositions] = useState<FieldPositions>(() => caritasFieldLayout());
   const [qrColor, setQrColor] = useState<string>(DEFAULT_QR_COLOR);
-  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
+  // Design canvas size in pixels. Presets use 96 dpi equivalents of print sizes.
+  const [templateSize, setTemplateSize] = useState({ width: 900, height: 1200 });
+  const [sizePreset, setSizePreset] = useState("card");
+  const [zoom, setZoom] = useState(0.55);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const designImageRef = useRef<HTMLImageElement>(null);
 
-  // The Rnd boxes are positioned in pixels, so keep them in sync with the
-  // displayed image size (it scales with the viewport).
-  useEffect(() => {
-    if (step !== "position" || !frontImage) return;
-    const image = designImageRef.current;
-    if (!image) return;
-    const measure = () => {
-      const rect = image.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        setCanvasSize({ width: rect.width, height: rect.height });
-      }
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", measure);
-      return () => window.removeEventListener("resize", measure);
-    }
-    const observer = new ResizeObserver(measure);
-    observer.observe(image);
-    return () => observer.disconnect();
-  }, [step, frontImage]);
+  // Canvas dimensions are explicit (template size), never derived from the
+  // displayed image. Zoom only scales the on-screen preview.
+  const canvasWidth = Math.round(templateSize.width * zoom);
+  const canvasHeight = Math.round(templateSize.height * zoom);
 
   const updateField = (key: CardFieldKey, patch: Partial<FieldPosition>) => {
     setFieldPositions((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
@@ -278,6 +276,8 @@ export default function CardSetupPage() {
     setQrPos({ x: 65, y: 75, w: 20, h: 20 });
     setFieldPositions(caritasFieldLayout());
     setQrColor(DEFAULT_QR_COLOR);
+    setTemplateSize({ width: DOCUMENT_PRESETS.card.width, height: DOCUMENT_PRESETS.card.height });
+    setSizePreset("card");
     setEditingId(null);
   };
 
@@ -318,6 +318,7 @@ export default function CardSetupPage() {
         qr_position: qrPos,
         qr_color: qrColor,
         field_positions: fieldPositions,
+        size: { width: templateSize.width, height: templateSize.height },
       },
       is_active: true,
     };
@@ -344,6 +345,14 @@ export default function CardSetupPage() {
     });
     setFieldPositions(normalizeFieldPositions(t?.theme_config?.field_positions));
     setQrColor(isHexColor(t?.theme_config?.qr_color) ? t.theme_config.qr_color : DEFAULT_QR_COLOR);
+    const storedSize = t?.theme_config?.size;
+    if (storedSize && Number.isFinite(storedSize.width) && Number.isFinite(storedSize.height)) {
+      setTemplateSize({ width: storedSize.width, height: storedSize.height });
+      setSizePreset("custom");
+    } else {
+      setTemplateSize({ width: DOCUMENT_PRESETS.card.width, height: DOCUMENT_PRESETS.card.height });
+      setSizePreset("card");
+    }
     setEditingId(t?.id || null);
     setStep("position");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -486,18 +495,59 @@ export default function CardSetupPage() {
                 </Button>
               </div>
 
-              <div className="w-full overflow-x-auto">
-              <div className="relative border-2 border-slate-200 rounded-lg overflow-hidden bg-slate-100 mx-auto max-w-2xl min-w-[600px] sm:min-w-0">
-                <img
-                  ref={designImageRef}
-                  src={frontImage}
-                  alt="Card Design"
-                  className="w-full h-auto block"
-                  onLoad={(e) => {
-                    const img = e.target as HTMLImageElement;
-                    console.log("Image loaded:", img.naturalWidth, "x", img.naturalHeight);
-                  }}
-                />
+              <div className="w-full overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-end gap-3 mb-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Document size</label>
+                    <select
+                      value={sizePreset}
+                      onChange={(e) => {
+                        const key = e.target.value;
+                        setSizePreset(key);
+                        const preset = DOCUMENT_PRESETS[key];
+                        if (preset && key !== "custom") setTemplateSize({ width: preset.width, height: preset.height });
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    >
+                      {Object.entries(DOCUMENT_PRESETS).map(([key, p]) => (
+                        <option key={key} value={key}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Width (px)</label>
+                    <input type="number" min={100} max={5000} value={templateSize.width}
+                      onChange={(e) => { setSizePreset("custom"); setTemplateSize((s) => ({ ...s, width: Math.max(100, Number(e.target.value) || 100) })); }}
+                      className="w-28 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Height (px)</label>
+                    <input type="number" min={100} max={5000} value={templateSize.height}
+                      onChange={(e) => { setSizePreset("custom"); setTemplateSize((s) => ({ ...s, height: Math.max(100, Number(e.target.value) || 100) })); }}
+                      className="w-28 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Zoom</label>
+                    <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                      <option value={0.35}>35%</option><option value={0.5}>50%</option>
+                      <option value={0.55}>55%</option><option value={0.75}>75%</option>
+                      <option value={1}>100%</option>
+                    </select>
+                  </div>
+                  <p className="text-xs text-slate-500 pb-2">Canvas: {templateSize.width} × {templateSize.height} px · shown at {Math.round(zoom * 100)}%</p>
+                </div>
+                <div
+                  ref={canvasRef}
+                  className="relative border-2 border-slate-300 bg-white mx-auto"
+                  style={{ width: canvasWidth, height: canvasHeight }}
+                >
+                  <img
+                    ref={designImageRef}
+                    src={frontImage}
+                    alt="Card Design"
+                    className="absolute inset-0 h-full w-full"
+                    style={{ objectFit: "fill" }}
+                  />
 
                 {(() => {
                   const qrHandleStyle: React.CSSProperties = {
@@ -508,12 +558,12 @@ export default function CardSetupPage() {
                   return (
                 <Rnd
                   size={{
-                    width: (qrPos.w / 100) * canvasSize.width,
-                    height: (qrPos.h / 100) * canvasSize.height,
+                    width: (qrPos.w / 100) * canvasWidth,
+                    height: (qrPos.h / 100) * canvasHeight,
                   }}
                   position={{
-                    x: (qrPos.x / 100) * canvasSize.width,
-                    y: (qrPos.y / 100) * canvasSize.height,
+                    x: (qrPos.x / 100) * canvasWidth,
+                    y: (qrPos.y / 100) * canvasHeight,
                   }}
                   bounds="parent"
                   enableResizing={{
@@ -533,7 +583,7 @@ export default function CardSetupPage() {
                     bottomRight: qrHandleStyle,
                   }}
                   onDragStop={(_, d) => {
-                    const imageRect = designImageRef.current?.getBoundingClientRect();
+                    const imageRect = canvasRef.current?.getBoundingClientRect();
                     const boxRect = d.node.getBoundingClientRect();
                     if (!imageRect || !imageRect.width || !imageRect.height) return;
                     setQrPos((p) => ({
@@ -543,7 +593,7 @@ export default function CardSetupPage() {
                     }));
                   }}
                   onResizeStop={(_, __, ref) => {
-                    const imageRect = designImageRef.current?.getBoundingClientRect();
+                    const imageRect = canvasRef.current?.getBoundingClientRect();
                     const boxRect = ref.getBoundingClientRect();
                     if (!imageRect || !imageRect.width || !imageRect.height) return;
                     setQrPos((p) => ({
@@ -576,12 +626,12 @@ export default function CardSetupPage() {
                     <Rnd
                       key={key}
                       size={{
-                        width: (pos.w / 100) * canvasSize.width,
-                        height: (pos.h / 100) * canvasSize.height,
+                        width: (pos.w / 100) * canvasWidth,
+                        height: (pos.h / 100) * canvasHeight,
                       }}
                       position={{
-                        x: (pos.x / 100) * canvasSize.width,
-                        y: (pos.y / 100) * canvasSize.height,
+                        x: (pos.x / 100) * canvasWidth,
+                        y: (pos.y / 100) * canvasHeight,
                       }}
                       bounds="parent"
                       enableResizing={{
@@ -601,7 +651,7 @@ export default function CardSetupPage() {
                         bottomRight: handleStyle,
                       }}
                       onDragStop={(_, d) => {
-                        const imageRect = designImageRef.current?.getBoundingClientRect();
+                        const imageRect = canvasRef.current?.getBoundingClientRect();
                         const boxRect = d.node.getBoundingClientRect();
                         if (!imageRect || !imageRect.width || !imageRect.height) return;
                         setFieldPositions((prev) => ({
@@ -614,7 +664,7 @@ export default function CardSetupPage() {
                         }));
                       }}
                       onResizeStop={(_, __, ref) => {
-                        const imageRect = designImageRef.current?.getBoundingClientRect();
+                        const imageRect = canvasRef.current?.getBoundingClientRect();
                         const boxRect = ref.getBoundingClientRect();
                         if (!imageRect || !imageRect.width || !imageRect.height) return;
                         setFieldPositions((prev) => ({

@@ -235,6 +235,17 @@ async fn render_for_guest(
         .map_err(|_| AppError::BadRequest("Template background is not a supported raster image".to_string()))?
         .to_rgba8();
 
+    // The designer may choose an explicit document size (A4, A1, custom).
+    // Resize the background to that canvas so percentage-based field boxes
+    // land exactly where the designer placed them.
+    if let Some(size) = config.get("size").and_then(serde_json::Value::as_object) {
+        let w = size.get("width").and_then(serde_json::Value::as_f64).unwrap_or(f64::from(front.width())) as u32;
+        let h = size.get("height").and_then(serde_json::Value::as_f64).unwrap_or(f64::from(front.height())) as u32;
+        if w > 0 && h > 0 && (w != front.width() || h != front.height()) {
+            front = image::imageops::resize(&front, w, h, FilterType::Lanczos3);
+        }
+    }
+
     let position = config.get("qr_position").and_then(serde_json::Value::as_object)
         .ok_or_else(|| AppError::BadRequest("Template qr_position is missing".to_string()))?;
     let number = |key: &str| -> AppResult<f64> {

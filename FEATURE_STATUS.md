@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Card Studio explicit canvas (2026-11-27)
+- ✅ The designer now has a selectable document size (Card, A4/A4 landscape, A5, A3, A1 or custom width/height in px) and a zoom control. The canvas has explicit dimensions instead of being derived from the displayed image, so the editor no longer collapses to a small area and boxes stay at exact positions.
+- ✅ `theme_config.size` is saved and the renderer resizes the uploaded background to that canvas before stamping, keeping percentage-based QR/field placements accurate.
+
 ### Card Studio QR positioning fix (2026-11-27)
 - ✅ The QR box now uses the measured displayed-image size (`canvasSize`) for both position and dimensions, matching the field boxes. Dragging/resizing writes back percentages from the actual DOM rect, so the box no longer jumps off position when the image scales with the viewport. Corner-only resize handles added.
 
