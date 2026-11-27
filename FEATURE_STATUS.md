@@ -247,6 +247,10 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Card download fidelity (2026-11-27)
+- ✅ The check-in card PDF now mirrors the web preview: navy/gold header, guest identity, class/table, embedded card image and entry-code strip. Embedded images are downscaled to keep the PDF small.
+- ✅ Added "Save exact preview" on `/g/{token}` using `react-to-print` on the exact card DOM for a pixel-perfect PDF via the browser print dialog.
+
 ### Booking CRUD, imports & card studio (2026-11-27)
 - ✅ Bookings can be edited and deleted; registration links can be regenerated. Added CSV/XLSX import for bookings and passes with per-row error reports (`calamine` for spreadsheets).
 - ✅ Card Studio previews now fall back to `/api/v1/files/{front_file_id}` and support editing existing templates with a visual QR overlay.

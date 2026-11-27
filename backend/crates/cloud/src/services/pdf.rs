@@ -322,44 +322,57 @@ impl PdfService {
             .map_err(|e| AppError::GenericError(format!("PDF font error: {}", e)))?;
         let layer = doc.get_page(page1).get_layer(layer1);
 
-        layer.use_text("ROYALENTRY", 18.0, Mm(20.0), Mm(275.0), &bold);
-        layer.use_text("CHECK-IN CARD", 12.0, Mm(20.0), Mm(263.0), &bold);
-        let mut y = 248.0;
+        // Navy header band — matches the navy/gold card shown on the web page.
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.04, 0.09, 0.16, None)));
+        layer.add_rect(Rect::new(Mm(0.0), Mm(238.0), Mm(210.0), Mm(297.0)));
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.79, 0.66, 0.30, None)));
+        layer.use_text("CHECK-IN CARD", 11.0, Mm(20.0), Mm(278.0), &bold);
+        layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None)));
+        layer.use_text(&title, 18.0, Mm(20.0), Mm(262.0), &bold);
+        layer.use_text(&format!("{}  |  {}", date.format("%d %B %Y"), venue), 10.0, Mm(20.0), Mm(248.0), &font);
+
+        // White body: guest identity.
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.06, 0.10, 0.16, None)));
+        layer.use_text("GUEST", 9.0, Mm(20.0), Mm(224.0), &font);
+        layer.use_text(&name, 20.0, Mm(20.0), Mm(206.0), &bold);
+        let mut y = 190.0;
         for line in [
-            format!("Event: {}", title),
-            format!("Date: {}", date.format("%d %B %Y")),
-            format!("Venue: {}", venue),
-            format!("Guest: {}", name),
-            format!("Class: {}", category),
+            format!("Class: {}", if category.is_empty() { "Guest" } else { &category }),
             format!("Table: {}{}", table, if seat.is_empty() { String::new() } else { format!(", seat {}", seat) }),
             format!("Party size: {}", party),
-            format!("Entry code: {}", entry_code),
         ] {
             layer.use_text(&line, 11.0, Mm(20.0), Mm(y), &font);
-            y -= 7.0;
+            y -= 8.0;
         }
 
+        // QR image — the same rendered card image used by the web preview when
+        // a template exists, otherwise the plain QR PNG.
         if let Ok(dynamic) = image024::load_from_memory(&card_png) {
+            // Downscale before embedding — full-size card PNGs make tiny PDFs huge.
+            let dynamic = dynamic.resize(900, 900, image024::imageops::FilterType::Lanczos3);
             let img = printpdf::Image::from_dynamic_image(&dynamic);
             img.add_to_layer(
                 layer.clone(),
                 ImageTransform {
-                    translate_x: Some(Mm(20.0)),
-                    translate_y: Some(Mm(90.0)),
-                    scale_x: Some(0.45),
-                    scale_y: Some(0.45),
+                    translate_x: Some(Mm(58.0)),
+                    translate_y: Some(Mm(70.0)),
+                    scale_x: Some(0.32),
+                    scale_y: Some(0.32),
                     ..Default::default()
                 },
             );
         }
 
-        layer.use_text(
-            &format!("Card link: /g/{}", link),
-            9.0,
-            Mm(20.0),
-            Mm(20.0),
-            &font,
-        );
+        // Entry code strip.
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.96, 0.96, 0.94, None)));
+        layer.add_rect(Rect::new(Mm(20.0), Mm(42.0), Mm(190.0), Mm(62.0)));
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.06, 0.10, 0.16, None)));
+        layer.use_text("ENTRY CODE", 9.0, Mm(26.0), Mm(54.0), &font);
+        layer.use_text(entry_code, 16.0, Mm(26.0), Mm(46.0), &bold);
+
+        layer.use_text(&format!("Card: /g/{}", link), 8.0, Mm(20.0), Mm(28.0), &font);
+        layer.use_text("Show this QR or quote the entry code at the gate.", 8.0, Mm(20.0), Mm(18.0), &font);
+
         doc.save_to_bytes()
             .map_err(|e| AppError::GenericError(format!("PDF save error: {}", e)))
     }

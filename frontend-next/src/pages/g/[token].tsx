@@ -1,6 +1,7 @@
 "use client";
 // Public check-in card (/g/<short_link>) — the link printed on invitations.
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { useReactToPrint } from "react-to-print";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/router";
 import {
@@ -103,6 +104,8 @@ export default function CheckInCardPage() {
   const token = typeof router.query.token === "string" ? router.query.token : undefined;
   const [qrFailed, setQrFailed] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const printExactCard = useReactToPrint({ contentRef: cardRef });
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["check-in-card", token],
@@ -287,6 +290,11 @@ export default function CheckInCardPage() {
             <Button size="sm" variant="ghost" onClick={() => window.print()}>
               <Printer className="h-3.5 w-3.5" /> Print
             </Button>
+            <Button size="sm" variant="outline" onClick={() => printExactCard()} aria-label="Save this exact preview as PDF">
+              <FileDown className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Save exact preview</span>
+              <span className="sm:hidden">Exact PDF</span>
+            </Button>
             <Button size="sm" variant="outline" onClick={downloadQr} aria-label="Download QR code">
               <Download className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Download QR</span>
@@ -308,7 +316,7 @@ export default function CheckInCardPage() {
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-3xl bg-white shadow-2xl print:rounded-none print:shadow-none">
+        <div ref={cardRef} className="overflow-hidden rounded-3xl bg-white shadow-2xl print:rounded-none print:shadow-none">
           {/* Navy / gold header */}
           <div className="bg-gradient-to-br from-navy-950 to-navy-800 px-6 py-7 text-white">
             <div className="flex items-center gap-2 text-gold-400">
