@@ -824,6 +824,20 @@ function useSendCheckinMutations(eventId: string) {
   return { sendCheckinMutation, sendCheckinBulkMutation };
 }
 
+interface PledgePayment {
+  id: string;
+  pledge_id: string | null;
+  guest_id: string | null;
+  guest_name: string | null;
+  amount_tsh: number;
+  payment_method: string;
+  payment_reference: string | null;
+  notes: string | null;
+  batch_id: string | null;
+  recorded_by_name: string | null;
+  created_at: string;
+}
+
 // ============================================================================
 // MICHANGO TAB
 // ============================================================================
@@ -832,6 +846,13 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const qc = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState<string | null>(null);
+  const [bulkPayOpen, setBulkPayOpen] = useState(false);
+  const [bulkPayMethod, setBulkPayMethod] = useState("manual");
+  const [bulkPayReference, setBulkPayReference] = useState("");
+  const [bulkPayRows, setBulkPayRows] = useState<Record<string, { checked: boolean; amount: string }>>({});
+  const [bulkPayResult, setBulkPayResult] = useState<any | null>(null);
+  const [paymentHistorySearch, setPaymentHistorySearch] = useState("");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("");
   const [selectedPledgeGuestIds, setSelectedPledgeGuestIds] = useState<string[]>([]);
   const [pledgeGuestSearch, setPledgeGuestSearch] = useState("");
   const [pledgeAmount, setPledgeAmount] = useState("");
@@ -870,8 +891,20 @@ function MichangoTab({ eventId }: { eventId: string }) {
     queryFn: async () => (await api.get(`/events/${eventId}/guests?per_page=500`)).data.data,
   });
 
+  const { data: payments = [], isLoading: paymentHistoryLoading } = useQuery<PledgePayment[]>({
+    queryKey: ["pledge-payments", eventId],
+    queryFn: async () => {
+      const res = await api.get<{ data: PledgePayment[] }>(`/events/${eventId}/michango/payments`);
+      return res.data.data ?? [];
+    },
+    refetchInterval: 30000,
+  });
+
   const pledges = Array.isArray(response?.data) ? response.data : [];
   const guests = (guestsData ?? []) as any[];
+  const outstandingPledges = pledges.filter((p: any) =>
+    (p.remaining_amount ?? ((p.pledged_amount ?? 0) - (p.amount_paid ?? 0))) > 0
+  );
 
   const totalPledged = summary?.total_pledged_tsh ?? 0;
   const totalPaid = summary?.total_collected_tsh ?? 0;
@@ -915,10 +948,26 @@ function MichangoTab({ eventId }: { eventId: string }) {
       qc.invalidateQueries({ queryKey: ["michango", eventId] });
       qc.invalidateQueries({ queryKey: ["michango-summary", eventId] });
       qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
+      qc.invalidateQueries({ queryKey: ["pledge-payments", eventId] });
       setPaymentOpen(null);
       toast.success("Payment recorded");
     },
     onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? "Failed"),
+  });
+
+  const bulkPaymentMutation = useMutation({
+    mutationFn: (payload: { payments: Array<{ pledge_id: string; amount_paid: number; payment_method?: string; payment_reference?: string }> }) =>
+      api.post(`/events/${eventId}/michango/payments/bulk`, payload),
+    onSuccess: (r: any) => {
+      qc.invalidateQueries({ queryKey: ["michango", eventId] });
+      qc.invalidateQueries({ queryKey: ["michango-summary", eventId] });
+      qc.invalidateQueries({ queryKey: ["event-summary", eventId] });
+      qc.invalidateQueries({ queryKey: ["pledge-payments", eventId] });
+      const result = r?.data?.data ?? {};
+      setBulkPayResult(result);
+      toast.success(`Recorded ${result.recorded ?? 0} of ${result.total ?? 0} payment(s)${result.failed ? `, ${result.failed} failed` : ""}`);
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.error?.message ?? e?.message ?? "Failed to record bulk payments"),
   });
 
   // Per-guest card issuing: issue, approve (family override), withdraw approval.
@@ -1054,6 +1103,85 @@ function MichangoTab({ eventId }: { eventId: string }) {
   const detectedCategory = selectedGuest?.guest_category || "Regular";
   const detectedDefault = CATEGORY_PLEDGE_DEFAULTS[detectedCategory] ?? 50000;
 
+  const getBulkPayRow = (pledgeId: string) => bulkPayRows[pledgeId] ?? { checked: false, amount: "" };
+  const setBulkPayRow = (pledgeId: string, patch: Partial<{ checked: boolean; amount: string }>) =>
+    setBulkPayRows((prev) => ({
+      ...prev,
+      [pledgeId]: { ...(prev[pledgeId] ?? { checked: false, amount: "" }), ...patch },
+    }));
+
+  const bulkPayEntries: Array<{ pledge_id: string; amount_paid: number; payment_method?: string; payment_reference?: string }> = outstandingPledges
+    .filter((p: any) => getBulkPayRow(p.id).checked && Number(getBulkPayRow(p.id).amount) > 0)
+    .map((p: any) => ({
+      pledge_id: p.id,
+      amount_paid: Number(getBulkPayRow(p.id).amount),
+      payment_method: bulkPayMethod,
+      payment_reference: bulkPayReference.trim() || undefined,
+    }));
+  const bulkPayTotal = bulkPayEntries.reduce((sum, entry) => sum + entry.amount_paid, 0);
+
+  const openBulkPay = () => {
+    setBulkPayRows({});
+    setBulkPayResult(null);
+    setBulkPayOpen(true);
+  };
+  const closeBulkPay = () => {
+    setBulkPayOpen(false);
+    setBulkPayResult(null);
+    setBulkPayRows({});
+    setBulkPayReference("");
+  };
+  const submitBulkPay = () => {
+    if (bulkPayEntries.length === 0) {
+      toast.error("Select at least one guest with a positive amount");
+      return;
+    }
+    bulkPaymentMutation.mutate({ payments: bulkPayEntries });
+  };
+
+  const paymentStats = {
+    total: payments.length,
+    amount: payments.reduce((sum, p) => sum + (Number(p.amount_tsh) || 0), 0),
+    batches: new Set(payments.map((p) => p.batch_id).filter(Boolean)).size,
+    guests: new Set(payments.map((p) => p.guest_id ?? p.guest_name).filter(Boolean)).size,
+  };
+  const paymentNeedle = paymentHistorySearch.trim().toLowerCase();
+  const filteredPayments = payments.filter((p) => {
+    const matchesSearch = !paymentNeedle || [p.guest_name, p.payment_reference, p.notes]
+      .some((value) => String(value ?? "").toLowerCase().includes(paymentNeedle));
+    const matchesMethod = !paymentMethodFilter || p.payment_method === paymentMethodFilter;
+    return matchesSearch && matchesMethod;
+  });
+  const paymentColumns: ColumnDef<PledgePayment>[] = [
+    {
+      key: "created_at",
+      label: "Date/time",
+      render: (p) => (
+        <span className="block break-words text-slate-600">
+          {formatDate(p.created_at)}{" "}
+          <span className="text-slate-400">
+            {new Date(p.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        </span>
+      ),
+    },
+    { key: "guest_name", label: "Guest", render: (p) => <span className="block break-words font-medium text-slate-800">{p.guest_name ?? "—"}</span> },
+    { key: "amount_tsh", label: "Amount (TZS)", render: (p) => <span className="block break-words font-semibold text-slate-900">{formatTsh(p.amount_tsh ?? 0)}</span> },
+    { key: "payment_method", label: "Method", render: (p) => <Badge label={p.payment_method || "—"} variant="slate" /> },
+    { key: "payment_reference", label: "Reference", render: (p) => <span className="block break-words font-mono text-xs text-slate-600">{p.payment_reference ?? "—"}</span> },
+    { key: "recorded_by_name", label: "Recorded by", render: (p) => <span className="block break-words text-slate-600">{p.recorded_by_name ?? "—"}</span> },
+    {
+      key: "batch_id",
+      label: "Batch",
+      render: (p) => (
+        <span className="block break-words font-mono text-xs text-slate-600" title={p.batch_id ?? undefined}>
+          {p.batch_id ? p.batch_id.slice(0, 8) : "—"}
+        </span>
+      ),
+    },
+    { key: "notes", label: "Notes", render: (p) => <span className="block break-words text-slate-600">{p.notes ?? "—"}</span> },
+  ];
+
   return (
     <div className="space-y-6">
       <Card title="Quick Pledge Settings">
@@ -1067,6 +1195,9 @@ function MichangoTab({ eventId }: { eventId: string }) {
           </div>
           <Button size="sm" onClick={() => setAddOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Add Pledge
+          </Button>
+          <Button size="sm" variant="outline" onClick={openBulkPay}>
+            <Banknote className="mr-2 h-4 w-4" /> Bulk record payments
           </Button>
         </div>
       </Card>
@@ -1189,6 +1320,68 @@ function MichangoTab({ eventId }: { eventId: string }) {
         )}
       </Card>
 
+      <Card
+        title="Payment history"
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => qc.invalidateQueries({ queryKey: ["pledge-payments", eventId] })}
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </Button>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard title="Total payments" value={paymentStats.total} icon={CheckCircle} color="blue" />
+          <StatCard title="Total recorded" value={formatTsh(paymentStats.amount)} icon={Banknote} color="green" />
+          <StatCard title="Batches" value={paymentStats.batches} icon={FileText} color="gold" />
+          <StatCard title="Guests" value={paymentStats.guests} icon={Users} color="purple" />
+        </div>
+        <div className="mt-5 flex flex-wrap items-end gap-3">
+          <div className="min-w-[220px] flex-1">
+            <Input
+              label="Search payments"
+              value={paymentHistorySearch}
+              onChange={(e) => setPaymentHistorySearch(e.target.value)}
+              placeholder="Search guest, reference or notes"
+              className="w-full"
+            />
+          </div>
+          <div className="w-44">
+            <Select
+              label="Payment method"
+              value={paymentMethodFilter}
+              onChange={(e) => setPaymentMethodFilter(e.target.value)}
+              aria-label="Filter payment history by method"
+            >
+              <option value="">All</option>
+              <option value="manual">Manual</option>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="mpesa">M-Pesa</option>
+              <option value="card">Card</option>
+            </Select>
+          </div>
+        </div>
+        <div className="mt-4">
+          {paymentHistoryLoading ? (
+            <p className="py-8 text-center text-sm text-slate-500">Loading payment history...</p>
+          ) : (
+            <DataTable
+              data={filteredPayments}
+              columns={paymentColumns}
+              pageSize={300}
+              showCheckboxes={false}
+              showSearch={false}
+              showFilters={false}
+              sortField="created_at"
+              sortDir="desc"
+              emptyMessage="No payments recorded yet."
+            />
+          )}
+        </div>
+      </Card>
+
       <Modal isOpen={addOpen} onClose={resetPledgeForm} title="Add Pledge" size="md">
         <form onSubmit={handleAddPledge} className="space-y-4">
           <div>
@@ -1287,6 +1480,147 @@ function MichangoTab({ eventId }: { eventId: string }) {
             <Button type="submit" isLoading={paymentMutation.isPending}>Record Payment</Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={bulkPayOpen} onClose={closeBulkPay} title="Record payments in bulk" size="lg">
+        {bulkPayResult ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Total", value: bulkPayResult.total ?? 0 },
+                { label: "Recorded", value: bulkPayResult.recorded ?? 0 },
+                { label: "Failed", value: bulkPayResult.failed ?? 0 },
+              ].map((s) => (
+                <div key={s.label} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-medium uppercase text-slate-500">{s.label}</p>
+                  <p className="mt-1 text-xl font-bold text-slate-900">{s.value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <th className="px-3 py-2">Guest</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Status / message</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(bulkPayResult.results ?? []).map((r: any, i: number) => (
+                    <tr key={r.index ?? i} className="align-top">
+                      <td className="px-3 py-2 break-words">
+                        {r.guest_name ?? pledges.find((p: any) => p.id === r.pledge_id)?.guest_name ?? r.pledge_id ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">{formatTsh(r.amount_paid ?? r.new_amount_paid ?? 0)}</td>
+                      <td className="px-3 py-2 break-words">
+                        <span className={r.success ? "text-emerald-700" : "text-rose-700"}>
+                          {r.status ?? (r.success ? "Recorded" : "Failed")}
+                        </span>
+                        {r.message && <span className="block break-words text-xs text-slate-600">{r.message}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" onClick={closeBulkPay}>Close</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Select label="Payment method" value={bulkPayMethod} onChange={(e) => setBulkPayMethod(e.target.value)}>
+                <option value="manual">Manual</option>
+                <option value="bank_transfer">Bank transfer</option>
+                <option value="mpesa">M-Pesa</option>
+                <option value="card">Card</option>
+              </Select>
+              <Input
+                label="Payment reference (optional)"
+                value={bulkPayReference}
+                onChange={(e) => setBulkPayReference(e.target.value)}
+                placeholder="e.g. receipt or transaction ID"
+              />
+            </div>
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium text-slate-700">Pledges with an outstanding balance</span>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    type="button"
+                    onClick={() => setBulkPayRows(Object.fromEntries(outstandingPledges.map((p: any) => [
+                      p.id,
+                      { checked: true, amount: getBulkPayRow(p.id).amount },
+                    ])))}
+                  >
+                    Select all with remaining
+                  </Button>
+                  <Button size="sm" variant="ghost" type="button" onClick={() => setBulkPayRows({})}>Clear</Button>
+                </div>
+              </div>
+              <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase text-slate-500">
+                    <th className="px-3 py-2"><span className="sr-only">Include</span></th>
+                    <th className="px-3 py-2">Guest</th>
+                    <th className="px-3 py-2">Pledged</th>
+                    <th className="px-3 py-2">Paid</th>
+                    <th className="px-3 py-2">Remaining</th>
+                    <th className="px-3 py-2">Amount</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {outstandingPledges.length === 0 ? (
+                      <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">No pledges with an outstanding balance.</td></tr>
+                    ) : outstandingPledges.map((p: any) => {
+                      const remaining = p.remaining_amount ?? ((p.pledged_amount ?? 0) - (p.amount_paid ?? 0));
+                      const row = getBulkPayRow(p.id);
+                      return (
+                        <tr key={p.id} className="align-top">
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={row.checked}
+                              onChange={(e) => setBulkPayRow(p.id, { checked: e.target.checked })}
+                              className="h-4 w-4 rounded accent-gold-500"
+                              aria-label={`Include ${p.guest_name ?? "pledge"}`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 break-words">{p.guest_name ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{formatTsh(p.pledged_amount ?? 0)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{formatTsh(p.amount_paid ?? 0)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{formatTsh(remaining)}</td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min="1"
+                              value={row.amount}
+                              onChange={(e) => setBulkPayRow(p.id, { amount: e.target.value })}
+                              placeholder={String(remaining)}
+                              className="w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20"
+                              aria-label={`Amount for ${p.guest_name ?? "pledge"}`}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 text-sm">
+              <span className="font-medium text-slate-700">
+                Total to record ({bulkPayEntries.length} payment{bulkPayEntries.length === 1 ? "" : "s"})
+              </span>
+              <span className="font-bold text-slate-900">{formatTsh(bulkPayTotal)}</span>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={closeBulkPay}>Cancel</Button>
+              <Button onClick={submitBulkPay} isLoading={bulkPaymentMutation.isPending} disabled={bulkPayEntries.length === 0}>
+                Record payments
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal isOpen={!!issuedCard} onClose={() => setIssuedCard(null)} title="Check-in card issued" size="md">

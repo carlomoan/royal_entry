@@ -820,3 +820,67 @@ pub fn sms_segments(text: &str) -> SmsSegments {
         SmsSegments { count: len.div_ceil(multi), per_message: multi, unicode }
     }
 }
+
+impl Channels {
+    /// Send many personalised SMS in one provider request (NextSMS v2 multi).
+    /// Falls back to individual sends when no multi-capable provider is set.
+    pub async fn sms_multi(&self, messages: &[(String, String)]) -> AppResult<Vec<ProviderReceipt>> {
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.config.sms_sandbox {
+            let mut out = Vec::with_capacity(messages.len());
+            for (to, text) in messages {
+                out.push(self.log_sandbox("sms", to, text).await);
+            }
+            return Ok(out);
+        }
+        if !self.config.nextsms_token.is_empty() && !self.config.nextsms_sender.is_empty() {
+            let items: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|(to, text)| json!({
+                    "from": self.config.nextsms_sender,
+                    "to": normalize_tz_phone(to),
+                    "text": text,
+                }))
+                .collect();
+            let response = self.client
+                .post(format!("{}/api/sms/v2/text/multi", self.config.nextsms_base_url.trim_end_matches('/')))
+                .bearer_auth(&self.config.nextsms_token)
+                .header("Accept", "application/json")
+                .json(&json!({"messages": items, "reference": format!("re-batch-{}", Uuid::new_v4().simple())}))
+                .send().await
+                .map_err(|e| AppError::ExternalApiError(format!("NextSMS batch request failed: {}", e.without_url())))?;
+            let status = response.status();
+            let payload: serde_json::Value = response.json().await.unwrap_or_else(|_| json!({}));
+            if !status.is_success() {
+                let reason = payload.get("message").and_then(|v| v.as_str()).unwrap_or("batch rejected");
+                return Ok(messages.iter().map(|_| ProviderReceipt::fail("nextsms", reason.to_string())).collect());
+            }
+            let returned = payload.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            return Ok(messages.iter().enumerate().map(|(i, _)| {
+                match returned.get(i) {
+                    Some(entry) => {
+                        let group = entry.pointer("/status/groupName").and_then(|v| v.as_str()).unwrap_or("");
+                        let rejected = group.eq_ignore_ascii_case("REJECTED") || group.eq_ignore_ascii_case("FAILED");
+                        let id = entry.get("messageId").and_then(|v| v.as_str().map(String::from)
+                            .or_else(|| v.as_i64().map(|n| n.to_string())));
+                        if rejected || id.is_none() {
+                            let why = entry.pointer("/status/description").and_then(|v| v.as_str()).unwrap_or("rejected");
+                            ProviderReceipt::fail("nextsms", why.to_string())
+                        } else {
+                            ProviderReceipt::ok("nextsms", id)
+                        }
+                    }
+                    None => ProviderReceipt::fail("nextsms", "No status returned".to_string()),
+                }
+            }).collect());
+        }
+        let mut out = Vec::with_capacity(messages.len());
+        for (to, text) in messages {
+            let mut receipts = self.sms(&[to.clone()], text).await?;
+            out.push(receipts.pop().unwrap_or_else(|| ProviderReceipt::fail("sms", "No receipt".to_string())));
+        }
+        Ok(out)
+    }
+}

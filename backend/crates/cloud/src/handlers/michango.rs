@@ -334,7 +334,7 @@ pub async fn record_payment(
     }
 
     let row = sqlx::query(
-        r#"SELECT pt.pledged_amount, pt.amount_paid, pt.payment_deadline, g.full_name AS guest_name FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.id = $1 AND pt.event_id = $2"#,
+        r#"SELECT pt.pledged_amount, pt.amount_paid, pt.payment_deadline, g.id AS guest_id, g.full_name AS guest_name FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id WHERE pt.id = $1 AND pt.event_id = $2"#,
     )
     .bind(pledge_id)
     .bind(event_id)
@@ -346,6 +346,7 @@ pub async fn record_payment(
     let current_paid: i64 = row.try_get("amount_paid").unwrap_or(0);
     let payment_deadline: Option<NaiveDate> = row.try_get("payment_deadline").ok();
     let guest_name: String = row.try_get("guest_name").unwrap_or_else(|_| "Guest".to_string());
+    let guest_id: Uuid = row.try_get("guest_id").unwrap_or_default();
 
     let remaining_amount = (pledged_amount - current_paid).max(0);
     if payload.amount_paid > remaining_amount {
@@ -354,9 +355,10 @@ pub async fn record_payment(
     let new_amount_paid = current_paid + payload.amount_paid;
     let status = resolve_status(pledged_amount, new_amount_paid, payment_deadline);
 
-    let notes = payload.notes.unwrap_or_else(|| {
-        let method = payload.payment_method.unwrap_or_else(|| "manual".to_string());
-        match payload.payment_reference {
+    let method = payload.payment_method.clone().unwrap_or_else(|| "manual".to_string());
+    let reference = payload.payment_reference.clone();
+    let notes = payload.notes.clone().unwrap_or_else(|| {
+        match reference.as_deref() {
             Some(reference) if !reference.is_empty() => format!("Payment via {} ({})", method, reference),
             _ => format!("Payment via {}", method),
         }
@@ -369,9 +371,24 @@ pub async fn record_payment(
     .bind(event_id)
     .bind(new_amount_paid)
     .bind(&status)
-    .bind(notes)
+    .bind(&notes)
     .execute(state.db.pool())
     .await?;
+
+    let batch_id = Uuid::new_v4();
+    let _ = sqlx::query(
+        r#"INSERT INTO pledge_payments
+               (id, event_id, pledge_id, guest_id, amount_tsh, payment_method, payment_reference, notes, recorded_by, batch_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+    )
+    .bind(Uuid::new_v4()).bind(event_id).bind(pledge_id).bind(guest_id)
+    .bind(payload.amount_paid)
+    .bind(&method)
+    .bind(reference.as_deref())
+    .bind(Some(notes.as_str()))
+    .bind(Some(Uuid::parse_str(&claims.sub).unwrap_or_default()))
+    .bind(batch_id)
+    .execute(state.db.pool()).await;
 
     // Notify the event's organization about the received pledge payment.
     let notif_body = format!("TZS {} received from {} ({})", payload.amount_paid, guest_name, status);
@@ -628,4 +645,163 @@ pub async fn create_pledges_bulk(
         "success": true,
         "data": { "created": created, "skipped": skipped, "errors": errors }
     })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BulkPaymentItem {
+    pub pledge_id: Uuid,
+    pub amount_paid: i64,
+    pub payment_method: Option<String>,
+    pub payment_reference: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BulkPaymentRequest {
+    pub payments: Vec<BulkPaymentItem>,
+}
+
+/// POST /events/{eid}/michango/payments/bulk — record several guests' pledges
+/// in one request. Each row is validated independently so one bad amount does
+/// not block the rest; the response reports per-row results.
+pub async fn record_payments_bulk(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+    Json(payload): Json<BulkPaymentRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    let event = assert_event_ownership(&state, event_id, org_id).await?;
+    if payload.payments.is_empty() {
+        return Err(AppError::ValidationError("No payments supplied".to_string()));
+    }
+
+    let batch_id = Uuid::new_v4();
+    let mut recorded = 0usize;
+    let mut failed = 0usize;
+    let mut results = Vec::new();
+
+    for (index, item) in payload.payments.iter().enumerate() {
+        let mut fail = |message: String| {
+            results.push(json!({"index": index, "pledge_id": item.pledge_id, "success": false, "message": message}));
+            failed += 1;
+        };
+        if item.amount_paid <= 0 {
+            fail("Amount must be greater than zero".to_string());
+            continue;
+        }
+        let row = match sqlx::query(
+            r#"SELECT pt.pledged_amount, pt.amount_paid, pt.payment_deadline, g.id AS guest_id, g.full_name AS guest_name
+               FROM pledge_tracker pt JOIN guests g ON g.id = pt.guest_id
+               WHERE pt.id = $1 AND pt.event_id = $2"#,
+        )
+        .bind(item.pledge_id)
+        .bind(event_id)
+        .fetch_optional(state.db.pool())
+        .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => { fail("Pledge not found".to_string()); continue; }
+            Err(e) => { fail(format!("Database error: {}", e)); continue; }
+        };
+        let pledged: i64 = row.try_get("pledged_amount").unwrap_or(0);
+        let paid: i64 = row.try_get("amount_paid").unwrap_or(0);
+        let deadline: Option<NaiveDate> = row.try_get("payment_deadline").ok();
+        let guest_name: String = row.try_get("guest_name").unwrap_or_else(|_| "Guest".to_string());
+        let guest_id: Uuid = row.try_get("guest_id").unwrap_or_default();
+        let remaining = (pledged - paid).max(0);
+        if item.amount_paid > remaining {
+            fail(format!("Exceeds remaining TZS {}", remaining));
+            continue;
+        }
+        let new_paid = paid + item.amount_paid;
+        let status = resolve_status(pledged, new_paid, deadline);
+        let method = item.payment_method.clone().unwrap_or_else(|| "manual".to_string());
+        let notes = item.notes.clone().unwrap_or_else(|| {
+            match item.payment_reference.as_deref() {
+                Some(reference) if !reference.is_empty() => format!("Payment via {} ({})", method, reference),
+                _ => format!("Payment via {}", method),
+            }
+        });
+        match sqlx::query(
+            r#"UPDATE pledge_tracker SET amount_paid=$3, payment_status=$4,
+                   notes = CASE WHEN notes IS NULL OR notes='' THEN $5 ELSE notes || E'\n' || $5 END,
+                   updated_at=NOW() WHERE id=$1 AND event_id=$2"#,
+        )
+        .bind(item.pledge_id).bind(event_id).bind(new_paid).bind(&status).bind(&notes)
+        .execute(state.db.pool()).await
+        {
+            Ok(_) => {
+                recorded += 1;
+                let _ = sqlx::query(
+                    r#"INSERT INTO pledge_payments
+                           (id, event_id, pledge_id, guest_id, amount_tsh, payment_method, payment_reference, notes, recorded_by, batch_id)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+                )
+                .bind(Uuid::new_v4()).bind(event_id).bind(item.pledge_id).bind(guest_id)
+                .bind(item.amount_paid).bind(&method).bind(item.payment_reference.as_deref())
+                .bind(item.notes.as_deref())
+                .bind(Some(Uuid::parse_str(&claims.sub).unwrap_or_default()))
+                .bind(batch_id)
+                .execute(state.db.pool()).await;
+                results.push(json!({
+                    "index": index, "pledge_id": item.pledge_id, "success": true,
+                    "guest_name": guest_name, "amount_paid": item.amount_paid,
+                    "new_amount_paid": new_paid, "remaining": (pledged - new_paid).max(0),
+                    "status": status,
+                }));
+                let _ = crate::services::NotificationService::create_org(
+                    state.db.pool(), org_id, "payment.received", "Pledge payment received",
+                    Some(&format!("TZS {} received from {}", item.amount_paid, guest_name)),
+                    Some(&format!("/events/{event_id}")),
+                    Some(json!({"event_id": event_id, "amount_tsh": item.amount_paid, "status": status})),
+                ).await;
+            }
+            Err(e) => fail(format!("Database error: {}", e)),
+        }
+    }
+
+    Ok(Json(json!({
+        "success": true,
+        "data": { "total": payload.payments.len(), "recorded": recorded, "failed": failed, "results": results }
+    })))
+}
+
+/// GET /events/{eid}/michango/payments — individual payment history, including
+/// bulk batches, newest first.
+pub async fn list_pledge_payments(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(event_id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let org_id = Uuid::parse_str(&claims.org_id).map_err(|_| AppError::InvalidToken)?;
+    assert_event_ownership(&state, event_id, org_id).await?;
+    let rows = sqlx::query(
+        r#"SELECT pp.id, pp.pledge_id, pp.guest_id, g.full_name AS guest_name,
+                  pp.amount_tsh, pp.payment_method, pp.payment_reference, pp.notes,
+                  pp.batch_id, pp.created_at, u.full_name AS recorded_by_name
+           FROM pledge_payments pp
+           JOIN guests g ON g.id = pp.guest_id
+           LEFT JOIN users u ON u.id = pp.recorded_by
+           WHERE pp.event_id = $1
+           ORDER BY pp.created_at DESC
+           LIMIT 300"#,
+    )
+    .bind(event_id)
+    .fetch_all(state.db.pool())
+    .await?;
+    let items: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
+        "id": r.try_get::<Uuid, _>("id").unwrap_or_default(),
+        "pledge_id": r.try_get::<Uuid, _>("pledge_id").unwrap_or_default(),
+        "guest_id": r.try_get::<Uuid, _>("guest_id").unwrap_or_default(),
+        "guest_name": r.try_get::<String, _>("guest_name").unwrap_or_default(),
+        "amount_tsh": r.try_get::<i64, _>("amount_tsh").unwrap_or(0),
+        "payment_method": r.try_get::<String, _>("payment_method").unwrap_or_default(),
+        "payment_reference": r.try_get::<Option<String>, _>("payment_reference").ok().flatten(),
+        "notes": r.try_get::<Option<String>, _>("notes").ok().flatten(),
+        "batch_id": r.try_get::<Option<Uuid>, _>("batch_id").ok().flatten(),
+        "recorded_by_name": r.try_get::<Option<String>, _>("recorded_by_name").ok().flatten(),
+        "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
+    })).collect();
+    Ok(Json(json!({ "success": true, "data": items })))
 }

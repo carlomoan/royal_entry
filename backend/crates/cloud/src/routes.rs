@@ -535,6 +535,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(michango::create_pledges_bulk),
         )
         .route(
+            "/api/v1/events/{eid}/michango/payments/bulk",
+            post(michango::record_payments_bulk),
+        )
+        .route(
+            "/api/v1/events/{eid}/michango/payments",
+            get(michango::list_pledge_payments),
+        )
+        .route(
             "/api/v1/events/{eid}/michango/{id}/payment",
             post(michango::record_payment),
         )

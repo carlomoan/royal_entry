@@ -236,33 +236,56 @@ pub async fn send_broadcast(
     let mut sent = 0_i32;
     let mut failed = 0_i32;
 
-    for recipient in recipients {
+    // Build one personalised message per recipient first, then send SMS in a
+    // single provider batch (NextSMS v2 multi) instead of one request per guest.
+    let mut prepared: Vec<(Uuid, String, String)> = Vec::with_capacity(recipients.len());
+    for recipient in &recipients {
         let destination = if channel == "email" {
-            recipient.email.as_deref().ok_or_else(|| AppError::BadRequest("A selected guest has no email address".to_string()))?
+            match recipient.email.as_deref().filter(|e| !e.trim().is_empty()) {
+                Some(e) => e.to_string(),
+                None => { failed += 1; continue; }
+            }
         } else {
-            &recipient.phone
+            recipient.phone.clone()
         };
         let vars = broadcast_vars(&state, &event, recipient.guest_id).await?;
         let personalized = render_placeholders(&message, &vars);
-        let attempts = messaging.send(&channel, destination, &personalized).await?;
+        prepared.push((recipient.guest_id, destination, personalized));
+    }
+
+    let batch_id = Uuid::new_v4();
+    let mut receipts_by_guest: Vec<(Uuid, Vec<crate::services::messaging::DeliveryAttempt>)> = Vec::new();
+    if channel == "sms" {
+        let payloads: Vec<(String, String)> = prepared.iter().map(|(_, to, text)| (to.clone(), text.clone())).collect();
+        let receipts = state.channels.sms_multi(&payloads).await?;
+        for ((guest_id, _, _), receipt) in prepared.iter().zip(receipts.into_iter()) {
+            receipts_by_guest.push((*guest_id, vec![crate::services::messaging::DeliveryAttempt {
+                channel: "sms".to_string(), success: receipt.success,
+                provider_message_id: receipt.provider_id, error_message: receipt.error,
+            }]));
+        }
+    } else {
+        for (guest_id, destination, text) in &prepared {
+            let attempts = messaging.send(&channel, destination, text).await?;
+            receipts_by_guest.push((*guest_id, attempts));
+        }
+    }
+
+    for (guest_id, attempts) in receipts_by_guest {
         let recipient_success = attempts.iter().any(|attempt| attempt.success);
         if recipient_success { sent += 1; } else { failed += 1; }
-
         for attempt in attempts {
             sqlx::query(
                 r#"INSERT INTO broadcast_deliveries (id, campaign_id, guest_id, channel, status, provider_message_id, error_message, delivered_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())"#,
             )
-            .bind(Uuid::new_v4())
-            .bind(campaign_id)
-            .bind(recipient.guest_id)
+            .bind(Uuid::new_v4()).bind(campaign_id).bind(guest_id)
             .bind(&attempt.channel)
             .bind(if attempt.success { "sent" } else { "failed" })
-            .bind(attempt.provider_message_id)
-            .bind(attempt.error_message)
-            .execute(state.db.pool())
-            .await?;
+            .bind(attempt.provider_message_id).bind(attempt.error_message)
+            .execute(state.db.pool()).await?;
         }
     }
+    let _ = batch_id;
 
     let status = if failed == 0 { "sent" } else if sent > 0 { "partial" } else { "failed" };
 

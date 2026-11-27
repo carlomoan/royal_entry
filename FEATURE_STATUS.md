@@ -247,6 +247,14 @@
 - ✅ Gate dashboard page + `GET /events/{eid}/gate-dashboard` (expected/arrived counts, table occupancy, searchable guest list with company/package/party size/entries).
 - ✅ OTP gate enforcement from `otp_mode` — QR scan returns HTTP 428 `OTP_REQUIRED`, UI switches to SMS OTP mode; party-size entry counting; manual override `POST /events/{eid}/scan/override` with required reason (logged with operator id, amber UI panel); offline scans send `scan_source: qr_offline` and are flagged for review; arrival messages still sent after check-in.
 
+### Payment tracking & batch delivery (2026-11-27)
+- ✅ Every pledge payment (single or bulk) is recorded in `pledge_payments` with method, reference, notes, recorder and batch id. `GET /events/{eid}/michango/payments` provides searchable history with stats; the Michango tab shows it.
+- ✅ SMS broadcasts now use NextSMS v2 `/api/sms/v2/text/multi` — one request with personalised text per recipient. Verified: 13 recipients, 1 batch request, 13 sent / 0 failed.
+- ✅ Card Studio preview can render a real guest's card via `RoyalCard` with fetched event/guest data and the guest's invitation short link.
+
+### Bulk pledge payments (2026-11-27)
+- ✅ `POST /events/{eid}/michango/payments/bulk` records many guests' pledge payments in one request with per-row validation and results. The Michango tab has a bulk modal with per-guest amount inputs, select-all, live total, and an in-modal result report.
+
 ### Card download fidelity (2026-11-27)
 - ✅ The check-in card PDF now mirrors the web preview: navy/gold header, guest identity, class/table, embedded card image and entry-code strip. Embedded images are downscaled to keep the PDF small.
 - ✅ Added "Save exact preview" on `/g/{token}` using `react-to-print` on the exact card DOM for a pixel-perfect PDF via the browser print dialog.

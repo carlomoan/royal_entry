@@ -10,7 +10,8 @@ import { Rnd } from "react-rnd";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
 import { Button, Card, Badge, Modal } from "@/components/ui";
-import { QrPosition } from "@/types/cardTheme";
+import { RoyalCard } from "@/components/cards/RoyalCard";
+import { CardTemplateRecord, QrPosition } from "@/types/cardTheme";
 
 type SetupStep = "upload" | "position" | "review";
 
@@ -18,6 +19,17 @@ type TemplatePreviewSource = {
   theme_config?: { front_image_url?: unknown; front_file_id?: string } | null;
   background_file_id?: string | null;
 };
+
+type PreviewEvent = { id: string; title?: string };
+type PreviewGuest = {
+  id: string;
+  full_name?: string;
+  phone?: string;
+  table_number?: string | number | null;
+  guest_category?: string | null;
+  short_link?: string | null;
+};
+type PreviewInvitation = { guest_id?: string; short_link?: string | null };
 
 /** Stored file ids are authoritative; front_image_url is often stale. */
 function templateImageUrl(t: TemplatePreviewSource | null | undefined): string | null {
@@ -40,6 +52,8 @@ export default function CardSetupPage() {
   const [templateDescription, setTemplateDescription] = useState("");
   const [previewTemplate, setPreviewTemplate] = useState<any>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [previewEventId, setPreviewEventId] = useState("");
+  const [previewGuestId, setPreviewGuestId] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -50,6 +64,39 @@ export default function CardSetupPage() {
       const res = await api.get("/cards/templates");
       return res.data.data ?? [];
     },
+  });
+
+  // Real-data preview: events and guests used to stamp the card.
+  const { data: previewEvents = [], isLoading: previewEventsLoading } = useQuery({
+    queryKey: ["card-preview-events"],
+    queryFn: async () => {
+      const res = await api.get("/events", { params: { per_page: 100 } });
+      return (res.data?.data ?? []) as PreviewEvent[];
+    },
+    enabled: !!previewTemplate,
+  });
+
+  const { data: previewGuests = [], isLoading: previewGuestsLoading } = useQuery({
+    queryKey: ["card-preview-guests", previewEventId],
+    queryFn: async () => {
+      const res = await api.get(`/events/${previewEventId}/guests`, {
+        params: { per_page: 200 },
+      });
+      return (res.data?.data ?? []) as PreviewGuest[];
+    },
+    enabled: !!previewTemplate && !!previewEventId,
+  });
+
+  const previewGuest = previewGuests.find((g) => g.id === previewGuestId) ?? null;
+
+  // Guests don't always carry short_link; look it up from the event invitations.
+  const { data: previewInvitations = [] } = useQuery({
+    queryKey: ["card-preview-invitations", previewEventId],
+    queryFn: async () => {
+      const res = await api.get(`/events/${previewEventId}/invitations`);
+      return (res.data?.data ?? []) as PreviewInvitation[];
+    },
+    enabled: !!previewTemplate && !!previewEventId && !!previewGuest && !previewGuest.short_link,
   });
 
   // Upload mutation
@@ -188,6 +235,15 @@ export default function CardSetupPage() {
   const showPreviewQr = previewQr &&
     [previewQr.x, previewQr.y, previewQr.w, previewQr.h]
       .every((v: unknown) => typeof v === "number" && Number.isFinite(v));
+
+  const previewShortLink =
+    previewGuest?.short_link ||
+    previewInvitations.find((inv) => inv.guest_id === previewGuest?.id)?.short_link ||
+    previewGuest?.id ||
+    "";
+  const previewQrPayload = previewGuest && typeof window !== "undefined"
+    ? `${window.location.origin}/g/${previewShortLink}`
+    : "";
 
   const copyTemplateId = (id: string) => {
     navigator.clipboard.writeText(id);
@@ -559,27 +615,85 @@ export default function CardSetupPage() {
       >
         {previewTemplate && (
           <div className="space-y-4">
-            {previewImageUrl && (
-              <div className="relative w-full">
-                <img
-                  src={previewImageUrl}
-                  alt={previewTemplate.name}
-                  className="w-full rounded-lg border border-slate-200 block"
-                />
-                {showPreviewQr && (
-                  <div
-                    className="absolute border-2 border-dashed border-gold-500 bg-gold-500/20 flex items-center justify-center pointer-events-none"
-                    style={{
-                      left: `${previewQr.x}%`,
-                      top: `${previewQr.y}%`,
-                      width: `${previewQr.w}%`,
-                      height: `${previewQr.h}%`,
-                    }}
-                  >
-                    <QrCode className="h-5 w-5 text-gold-700 drop-shadow" />
-                  </div>
-                )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="card-preview-event" className="block text-xs font-semibold text-slate-600 mb-1">
+                  Event
+                </label>
+                <select
+                  id="card-preview-event"
+                  value={previewEventId}
+                  onChange={(e) => {
+                    setPreviewEventId(e.target.value);
+                    setPreviewGuestId("");
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-gold-500 focus:ring-2 focus:ring-gold-500/20 focus:outline-none"
+                >
+                  <option value="">{previewEventsLoading ? "Loading events…" : "Select an event"}</option>
+                  {previewEvents.map((event) => (
+                    <option key={event.id} value={event.id}>{event.title || "Untitled event"}</option>
+                  ))}
+                </select>
               </div>
+              <div>
+                <label htmlFor="card-preview-guest" className="block text-xs font-semibold text-slate-600 mb-1">
+                  Guest
+                </label>
+                <select
+                  id="card-preview-guest"
+                  value={previewGuestId}
+                  onChange={(e) => setPreviewGuestId(e.target.value)}
+                  disabled={!previewEventId}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-gold-500 focus:ring-2 focus:ring-gold-500/20 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                  <option value="">
+                    {!previewEventId ? "Select an event first" : previewGuestsLoading ? "Loading guests…" : "Select a guest"}
+                  </option>
+                  {previewGuests.map((guest) => (
+                    <option key={guest.id} value={guest.id}>
+                      {guest.full_name || guest.phone || "Unnamed guest"}
+                      {guest.table_number ? ` · Table ${guest.table_number}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              Preview uses real guest data — name and QR are stamped exactly as on the guest&apos;s card.
+            </p>
+            {previewGuest ? (
+              <div className="w-full overflow-x-auto">
+                <RoyalCard
+                  template={previewTemplate as CardTemplateRecord}
+                  qrPayload={previewQrPayload}
+                  guestName={previewGuest.full_name}
+                  qrPosition={previewQr as QrPosition | undefined}
+                  width={520}
+                />
+              </div>
+            ) : (
+              previewImageUrl && (
+                <div className="relative w-full">
+                  <img
+                    src={previewImageUrl}
+                    alt={previewTemplate.name}
+                    className="w-full rounded-lg border border-slate-200 block"
+                  />
+                  {showPreviewQr && (
+                    <div
+                      className="absolute border-2 border-dashed border-gold-500 bg-gold-500/20 flex items-center justify-center pointer-events-none"
+                      style={{
+                        left: `${previewQr.x}%`,
+                        top: `${previewQr.y}%`,
+                        width: `${previewQr.w}%`,
+                        height: `${previewQr.h}%`,
+                      }}
+                    >
+                      <QrCode className="h-5 w-5 text-gold-700 drop-shadow" />
+                    </div>
+                  )}
+                </div>
+              )
             )}
             <div className="bg-slate-50 rounded-lg p-4 space-y-2">
               <div>
